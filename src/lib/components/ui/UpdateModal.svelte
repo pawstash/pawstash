@@ -166,7 +166,7 @@
         </Button>
 
         <Button
-          variant="secondary"
+          variant="ghost"
           onclick={() => updateState.openReleasePage()}
         >
           <IconOpen class="w-4 h-4 mr-1.5 text-white/60" />
