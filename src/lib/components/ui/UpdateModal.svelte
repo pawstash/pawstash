@@ -10,6 +10,7 @@
   import IconTag from '~icons/fluent/tag-24-regular';
   import IconCalendar from '~icons/fluent/calendar-ltr-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import IconDismiss from '~icons/fluent/dismiss-24-regular';
 
   function formatPublishedDate(dateStr: string): string {
     if (!dateStr) return '';
@@ -24,6 +25,15 @@
       return dateStr;
     }
   }
+
+  const changelogLines = $derived.by(() => {
+    const raw = updateState.info?.release_notes?.trim();
+    if (!raw) return [];
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  });
 </script>
 
 {#if updateState.modalOpen && updateState.info}
@@ -32,36 +42,42 @@
     title={i18n.t('update_modal_title')}
     onclose={() => updateState.closeModal()}
   >
-    <div class="update-modal-content">
-      <div class="update-header-card">
-        <div class="update-icon-badge">
-          <IconSparkle class="w-6 h-6 text-accent" />
+    <div class="flex flex-col gap-4 w-full text-white">
+      <!-- Release Info Card -->
+      <div class="relative overflow-hidden flex items-start gap-3.5 p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] shadow-sm">
+        <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--accent-glow)]/20 text-[var(--accent)] shrink-0 border border-white/[0.08]">
+          <IconSparkle class="w-5 h-5" />
         </div>
-        <div class="update-header-info">
-          <div class="update-title-row">
-            <h3 class="update-release-name">
+
+        <div class="flex flex-col gap-1.5 min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h3 class="text-base font-semibold font-outfit text-white tracking-tight">
               {updateState.info.release_name || `v${updateState.info.latest_version}`}
             </h3>
             {#if updateState.info.is_prerelease}
-              <span class="badge-prerelease">
+              <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
                 {i18n.t('update_badge_prerelease')}
               </span>
             {/if}
           </div>
 
-          <div class="update-meta-row">
-            <span class="version-chip">
-              <IconTag class="w-3.5 h-3.5 opacity-60" />
-              v{updateState.info.current_version} &rarr; <strong>v{updateState.info.latest_version}</strong>
-            </span>
+          <div class="flex items-center gap-3 text-xs text-white/60 flex-wrap">
+            <div class="flex items-center gap-1.5 font-mono text-[11px] text-white/80 bg-white/[0.04] px-2 py-0.5 rounded-md border border-white/[0.06]">
+              <IconTag class="w-3 h-3 text-white/40" />
+              <span>v{updateState.info.current_version}</span>
+              <span class="text-white/40">&rarr;</span>
+              <span class="text-[var(--accent)] font-semibold">v{updateState.info.latest_version}</span>
+            </div>
+
             {#if updateState.info.published_at}
-              <span class="date-chip">
-                <IconCalendar class="w-3.5 h-3.5 opacity-60" />
-                {formatPublishedDate(updateState.info.published_at)}
-              </span>
+              <div class="flex items-center gap-1 text-[11px] text-white/50">
+                <IconCalendar class="w-3 h-3 text-white/40" />
+                <span>{formatPublishedDate(updateState.info.published_at)}</span>
+              </div>
             {/if}
+
             {#if updateState.info.asset_size}
-              <span class="size-chip">
+              <span class="font-mono text-[11px] text-white/50">
                 {formatBytes(updateState.info.asset_size)}
               </span>
             {/if}
@@ -69,35 +85,62 @@
         </div>
       </div>
 
-      <div class="changelog-container">
-        <div class="changelog-label">{i18n.t('update_changelog_label')}</div>
-        <div class="changelog-scroll">
-          {#if updateState.info.release_notes}
-            <pre class="changelog-text">{updateState.info.release_notes}</pre>
+      <!-- Changelog Section -->
+      <div class="flex flex-col gap-2">
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-white/50 font-outfit">
+          {i18n.t('update_changelog_label')}
+        </span>
+
+        <div class="max-h-48 overflow-y-auto rounded-xl bg-black/40 border border-white/[0.06] p-3.5 custom-scrollbar">
+          {#if changelogLines.length > 0}
+            <ul class="flex flex-col gap-2 text-xs leading-relaxed text-white/80">
+              {#each changelogLines as line}
+                {#if line.startsWith('###') || line.startsWith('##')}
+                  <li class="font-semibold text-white/90 pt-1 font-outfit text-xs border-b border-white/[0.06] pb-1">
+                    {line.replace(/^#+\s*/, '')}
+                  </li>
+                {:else if line.startsWith('-') || line.startsWith('*')}
+                  <li class="flex items-start gap-2 pl-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0 mt-1.5"></span>
+                    <span class="flex-1 font-sans">{line.replace(/^[-*]\s*/, '')}</span>
+                  </li>
+                {:else}
+                  <li class="text-white/70 font-sans">{line}</li>
+                {/if}
+              {/each}
+            </ul>
           {:else}
-            <p class="changelog-empty">{i18n.t('update_no_changelog')}</p>
+            <p class="text-xs text-white/40 italic py-2 text-center">
+              {i18n.t('update_no_changelog')}
+            </p>
           {/if}
         </div>
       </div>
 
+      <!-- Download Progress Bar (When downloading) -->
       {#if updateState.downloading}
-        <div class="update-progress-card">
-          <div class="progress-info-row">
-            <span class="progress-status-text">
+        <div class="flex flex-col gap-2 p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="text-xs font-medium text-white/90">
               {#if updateState.installing}
                 {i18n.t('update_installing')}
               {:else}
                 {i18n.t('update_downloading')}
               {/if}
             </span>
-            <span class="progress-percent">{updateState.downloadProgress}%</span>
+            <span class="font-mono text-xs font-semibold text-[var(--accent)]">
+              {updateState.downloadProgress}%
+            </span>
           </div>
 
-          <div class="progress-track">
-            <div class="progress-fill" style="width: {updateState.downloadProgress}%"></div>
+          <div class="w-full h-2 rounded-full bg-white/[0.07] overflow-hidden">
+            <div
+              class="h-full bg-[var(--accent)] transition-all duration-200 rounded-full"
+              style="width: {updateState.downloadProgress}%; box-shadow: 0 0 10px var(--accent-glow);"
+            ></div>
           </div>
 
-          <div class="progress-meta-row">
+          <div class="flex items-center justify-between text-[11px] font-mono text-white/50">
             <span>
               {#if updateState.totalBytes > 0}
                 {formatBytes(updateState.downloadedBytes)} / {formatBytes(updateState.totalBytes)}
@@ -106,13 +149,14 @@
               {/if}
             </span>
             {#if updateState.speedText}
-              <span class="progress-speed">{updateState.speedText}</span>
+              <span>{updateState.speedText}</span>
             {/if}
           </div>
         </div>
       {/if}
 
-      <div class="update-actions">
+      <!-- Modal Actions -->
+      <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-white/[0.06]">
         <Button
           variant="ghost"
           disabled={updateState.downloading && !updateState.installing}
@@ -121,8 +165,11 @@
           {i18n.t('update_action_later')}
         </Button>
 
-        <Button variant="ghost" onclick={() => updateState.openReleasePage()}>
-          <IconOpen class="w-4 h-4 mr-1.5" />
+        <Button
+          variant="secondary"
+          onclick={() => updateState.openReleasePage()}
+        >
+          <IconOpen class="w-4 h-4 mr-1.5 text-white/60" />
           {i18n.t('update_action_github')}
         </Button>
 
@@ -143,194 +190,3 @@
     </div>
   </Modal>
 {/if}
-
-<style>
-  .update-modal-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4, 16px);
-  }
-
-  .update-header-card {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4, 16px);
-    padding: var(--space-4, 16px);
-    background: var(--color-bg-card, rgba(255, 255, 255, 0.04));
-    border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
-    border-radius: var(--radius-lg, 12px);
-  }
-
-  .update-icon-badge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    background: var(--color-accent-subtle, rgba(255, 64, 128, 0.12));
-    border-radius: var(--radius-md, 8px);
-    color: var(--color-accent);
-    flex-shrink: 0;
-  }
-
-  .update-header-info {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .update-title-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .update-release-name {
-    font-size: var(--font-size-base, 15px);
-    font-weight: 600;
-    color: var(--color-text-primary, #fff);
-    margin: 0;
-  }
-
-  .badge-prerelease {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 2px 8px;
-    background: rgba(234, 179, 8, 0.16);
-    color: #facc15;
-    border: 1px solid rgba(234, 179, 8, 0.3);
-    border-radius: 9999px;
-  }
-
-  .update-meta-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: var(--font-size-xs, 12px);
-    color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
-    flex-wrap: wrap;
-  }
-
-  .version-chip,
-  .date-chip {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .size-chip {
-    font-weight: 500;
-    opacity: 0.8;
-  }
-
-  .changelog-container {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .changelog-label {
-    font-size: var(--font-size-xs, 12px);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
-  }
-
-  .changelog-scroll {
-    max-height: 200px;
-    overflow-y: auto;
-    background: var(--color-bg-input, rgba(0, 0, 0, 0.3));
-    border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
-    border-radius: var(--radius-md, 8px);
-    padding: var(--space-3, 12px);
-  }
-
-  .changelog-text {
-    font-family: inherit;
-    font-size: var(--font-size-sm, 13px);
-    line-height: 1.5;
-    color: var(--color-text-secondary, rgba(255, 255, 255, 0.85));
-    white-space: pre-wrap;
-    margin: 0;
-  }
-
-  .changelog-empty {
-    font-size: var(--font-size-sm, 13px);
-    color: var(--color-text-tertiary, rgba(255, 255, 255, 0.4));
-    font-style: italic;
-    margin: 0;
-  }
-
-  .update-progress-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: var(--space-3, 12px);
-    background: var(--color-bg-card, rgba(255, 255, 255, 0.04));
-    border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
-    border-radius: var(--radius-md, 8px);
-  }
-
-  .progress-info-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: var(--font-size-xs, 12px);
-  }
-
-  .progress-status-text {
-    font-weight: 500;
-    color: var(--color-text-primary, #fff);
-  }
-
-  .progress-percent {
-    font-weight: 600;
-    color: var(--color-accent);
-    font-feature-settings: 'tnum';
-  }
-
-  .progress-track {
-    width: 100%;
-    height: 6px;
-    background: var(--color-bg-input, rgba(255, 255, 255, 0.08));
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--color-accent, #ff4080);
-    border-radius: 9999px;
-    transition: width 150ms ease-out;
-    box-shadow: 0 0 10px var(--color-accent);
-  }
-
-  .progress-meta-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 11px;
-    color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
-    font-feature-settings: 'tnum';
-  }
-
-  .progress-speed {
-    color: var(--color-accent);
-    opacity: 0.9;
-  }
-
-  .update-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: var(--space-2, 8px);
-  }
-</style>
-

@@ -51,6 +51,12 @@ importers:
         specifier: ^3.0.1
         version: 3.6.0
     devDependencies:
+      '@fontsource/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/outfit':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@iconify-json/circle-flags':
         specifier: ^1.2.10
         version: 1.2.10
@@ -266,6 +272,12 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@fontsource/inter@5.3.0':
+    resolution: {integrity: sha512-RofMylZmjlJEfELXeNHFWBRcSs75rGU/6bV2S2jfnvv/3rPXPGe0LgUJTklcHZ9lM4OZmAVFhcJPnACfb91A3g==}
+
+  '@fontsource/outfit@5.3.0':
+    resolution: {integrity: sha512-0AVHzTTVJSxWDOxPKSfMeHhZeBFDU3cmgrcOb76ZEyhGo0+xgyG3GsLF3h9+X8w0IX7G4jzjJgFQEBiWdX6VgA==}
 
   '@iconify-json/circle-flags@1.2.10':
     resolution: {integrity: sha512-sZRxs689a281RtZvuAiKtV7pQHv8Tk0HkinSM7QvLgdLEK8xgGRCcbDvL09Rq+/KtemmsMzGhS9/qt+r3ca+Ug==}
@@ -1157,6 +1169,10 @@ snapshots:
       '@floating-ui/utils': 0.2.12
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@fontsource/inter@5.3.0': {}
+
+  '@fontsource/outfit@5.3.0': {}
 
   '@iconify-json/circle-flags@1.2.10':
     dependencies:

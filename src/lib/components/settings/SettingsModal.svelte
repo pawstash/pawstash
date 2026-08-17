@@ -1211,13 +1211,14 @@
               {/if}
             </Button>
             {#if updateState.info?.available}
-              <Button
-                variant="accent"
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-white bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.12] transition-all cursor-pointer shadow-sm active:scale-95"
                 onclick={() => updateState.openModal()}
               >
-                <IconSparkle class="w-4 h-4 mr-1.5" />
-                {i18n.t('settings.update_ready_btn', { version: updateState.info.latest_version })}
-              </Button>
+                <span class="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
+                <span>{i18n.t('settings.update_ready_btn', { version: updateState.info.latest_version })}</span>
+              </button>
             {/if}
           </div>
         </SettingItem>

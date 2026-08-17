@@ -512,15 +512,6 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
         }
     }
 
-    // Fallback: pick first available asset
-    if let Some(first) = assets.first() {
-        return (
-            Some(first.browser_download_url.clone()),
-            Some(first.name.clone()),
-            Some(first.size),
-        );
-    }
-
     (None, None, None)
 }
 
