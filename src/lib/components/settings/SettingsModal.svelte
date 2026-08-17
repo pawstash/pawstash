@@ -791,6 +791,25 @@
           />
         </SettingItem>
 
+        {#if !layoutState.isMobile}
+          <SettingItem
+            title={i18n.t('settings.titlebar_style')}
+            description={i18n.t('settings.titlebar_style_desc')}
+            icon={IconSparkle}
+            align="right"
+          >
+            <SegmentedControl
+              options={[
+                { value: 'auto', label: i18n.t('settings.titlebar_style_auto') },
+                { value: 'windows', label: 'Windows' },
+                { value: 'macos', label: 'macOS' }
+              ]}
+              value={settings.titlebar_style || 'auto'}
+              onchange={(value) => updateAndSaveSetting('titlebar_style', value)}
+            />
+          </SettingItem>
+        {/if}
+
         <SettingItem
           title={i18n.t('settings.toast_position')}
           description={i18n.t('settings.toast_position_desc')}

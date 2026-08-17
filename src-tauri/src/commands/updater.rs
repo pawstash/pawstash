@@ -357,18 +357,21 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
         }
     };
 
-    let package_name = if let Ok(val) = env.call_method(&context, "getPackageName", "()Ljava/lang/String;", &[]) {
-        if let Ok(obj) = val.l() {
-            let jstr: jni::objects::JString = obj.into();
-            let parsed = env.get_string(&jstr).map(|s| s.to_string_lossy().to_string());
-            parsed.unwrap_or_else(|_| "app.pawstash.client".to_string())
+    let package_name =
+        if let Ok(val) = env.call_method(&context, "getPackageName", "()Ljava/lang/String;", &[]) {
+            if let Ok(obj) = val.l() {
+                let jstr: jni::objects::JString = obj.into();
+                let parsed = env
+                    .get_string(&jstr)
+                    .map(|s| s.to_string_lossy().to_string());
+                parsed.unwrap_or_else(|_| "app.pawstash.client".to_string())
+            } else {
+                "app.pawstash.client".to_string()
+            }
         } else {
+            let _ = env.exception_clear();
             "app.pawstash.client".to_string()
-        }
-    } else {
-        let _ = env.exception_clear();
-        "app.pawstash.client".to_string()
-    };
+        };
     let authority_str = format!("{package_name}.fileprovider");
     let authority_jstring = match env.new_string(&authority_str) {
         Ok(s) => s,

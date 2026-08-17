@@ -299,10 +299,7 @@ impl DownloadRepository {
             .map_err(|e| e.to_string())?;
         let transaction = connection.transaction().map_err(|e| e.to_string())?;
         let changed = transaction
-            .execute(
-                "DELETE FROM download_jobs WHERE id = ?1",
-                params![id],
-            )
+            .execute("DELETE FROM download_jobs WHERE id = ?1", params![id])
             .map_err(|error| error.to_string())?
             > 0;
         if changed {

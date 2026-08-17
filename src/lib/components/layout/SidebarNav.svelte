@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
+  import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
   import { motion, tooltip } from '$lib/motion';
   import { syncState } from '$lib/state/syncState.svelte';
@@ -45,8 +49,39 @@
     { id: 'settings', labelKey: 'nav.settings', icon: IconSettings, iconActive: IconSettingsFilled }
   ];
 
+  const appWindow = getCurrentWindow();
+  let isMaximized = $state(false);
+  let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
   let isCompact = $state(false);
   let activeRoot = $derived(navigationState.activeRoot);
+
+  function minimize() {
+    appWindow.minimize();
+  }
+
+  function toggleMaximize() {
+    appWindow.toggleMaximize();
+  }
+
+  function close() {
+    appWindow.close();
+  }
+
+  onMount(() => {
+    void appWindow.isMaximized().then((val) => {
+      isMaximized = val;
+    });
+
+    const unlistenPromise = appWindow.onResized(() => {
+      void appWindow.isMaximized().then((val) => {
+        isMaximized = val;
+      });
+    });
+
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  });
 
   let profileName = $derived(
     syncState.status.account_id || i18n.t('profile.local')
@@ -75,7 +110,47 @@
   data-tauri-drag-region
   class="sidebar-aside"
   class:compact={isCompact}
+  class:mac-style={isMacStyle}
 >
+  {#if isMacStyle}
+    <div class="sidebar-traffic-lights" data-tauri-drag-region="false">
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t('actions.close')}
+        onclick={close}
+        class="mac-light mac-close"
+        aria-label={i18n.t('actions.close')}
+      >
+        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M1 1L5 5M5 1L1 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t('actions.minimize')}
+        onclick={minimize}
+        class="mac-light mac-minimize"
+        aria-label={i18n.t('actions.minimize')}
+      >
+        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0.75 3H5.25" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
+        onclick={toggleMaximize}
+        class="mac-light mac-maximize"
+        aria-label={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
+      >
+        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M1 1H4L1 4V1Z" fill="currentColor"/>
+          <path d="M5 5H2L5 2V5Z" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+  {/if}
+
   <button
     data-tauri-drag-region="false"
     use:motion={'sidebar-item'}
@@ -505,5 +580,83 @@
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
+  }
+
+  .sidebar-aside.mac-style {
+    padding-top: 38px;
+  }
+
+  .sidebar-aside.compact.mac-style {
+    padding-top: 38px;
+  }
+
+  /* macOS Traffic Lights */
+  .sidebar-traffic-lights {
+    position: absolute;
+    top: 11px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 50;
+  }
+
+  .mac-light {
+    position: relative;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: filter 120ms ease;
+  }
+
+  .mac-light:active {
+    filter: brightness(0.82);
+  }
+
+  .mac-close {
+    background-color: var(--color-mac-close, #ff5f57);
+    border-color: var(--color-mac-close-border, rgba(224, 68, 62, 0.6));
+  }
+
+  .mac-close:active {
+    background-color: var(--color-mac-close-active, #bf4942);
+  }
+
+  .mac-minimize {
+    background-color: var(--color-mac-minimize, #febc2e);
+    border-color: var(--color-mac-minimize-border, rgba(216, 158, 36, 0.6));
+  }
+
+  .mac-minimize:active {
+    background-color: var(--color-mac-minimize-active, #be8e25);
+  }
+
+  .mac-maximize {
+    background-color: var(--color-mac-maximize, #28c840);
+    border-color: var(--color-mac-maximize-border, rgba(26, 171, 41, 0.6));
+  }
+
+  .mac-maximize:active {
+    background-color: var(--color-mac-maximize-active, #1f9a31);
+  }
+
+  .mac-glyph {
+    width: 6px;
+    height: 6px;
+    color: var(--color-mac-icon, rgba(0, 0, 0, 0.72));
+    opacity: 0;
+    transition: opacity 120ms ease;
+    pointer-events: none;
+  }
+
+  .sidebar-traffic-lights:hover .mac-glyph {
+    opacity: 1;
   }
 </style>

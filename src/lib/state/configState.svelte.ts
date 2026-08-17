@@ -31,7 +31,8 @@ export class ConfigState {
     toast_position: 'auto',
     auto_check_updates: true,
     include_prereleases: false,
-    scroll_edge_mask: true
+    scroll_edge_mask: true,
+    titlebar_style: 'auto'
   });
 
   updateSettings(newSettings: AppSettings) {

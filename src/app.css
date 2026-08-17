@@ -18,7 +18,12 @@
 }
 
 @layer base {
-  html, body, button, input, select, textarea {
+  html,
+  body,
+  button,
+  input,
+  select,
+  textarea {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -26,18 +31,12 @@
   }
 
   :root {
-    /* ---------------------------------------------------- */
-    /* 1. Layout & Container Dimensions                     */
-    /* ---------------------------------------------------- */
     --titlebar-height: 30px;
     --header-height: 52px;
     --sidebar-width-expanded: 208px;
     --sidebar-width-collapsed: 56px;
     --mobile-nav-height: 64px;
 
-    /* ---------------------------------------------------- */
-    /* Safe Area & Mobile Insets                            */
-    /* ---------------------------------------------------- */
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left: env(safe-area-inset-left, 0px);
@@ -46,20 +45,17 @@
     --toast-top-offset: 24px;
     --toast-bottom-offset: 24px;
 
-    /* ---------------------------------------------------- */
-    /* 2. Typography & Font Scale Tokens                    */
-    /* ---------------------------------------------------- */
     --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
     --font-display: 'Outfit', 'Inter', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-    --text-2xs: 0.65rem;   /* 10.4px */
-    --text-xs: 0.75rem;    /* 12px   */
-    --text-sm: 0.875rem;   /* 14px   */
-    --text-base: 1rem;     /* 16px   */
-    --text-lg: 1.125rem;   /* 18px   */
-    --text-xl: 1.25rem;    /* 20px   */
-    --text-2xl: 1.5rem;    /* 24px   */
+    --text-2xs: 0.65rem;
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.25rem;
+    --text-2xl: 1.5rem;
 
     --font-weight-normal: 400;
     --font-weight-medium: 500;
@@ -70,19 +66,13 @@
     --leading-normal: 1.5;
     --leading-relaxed: 1.625;
 
-    /* ---------------------------------------------------- */
-    /* 3. Spacing & Padding Tokens                          */
-    /* ---------------------------------------------------- */
-    --space-1: 0.25rem;  /* 4px  */
-    --space-2: 0.5rem;   /* 8px  */
-    --space-3: 0.75rem;  /* 12px */
-    --space-4: 1rem;     /* 16px */
-    --space-6: 1.5rem;   /* 24px */
-    --space-8: 2rem;     /* 32px */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
 
-    /* ---------------------------------------------------- */
-    /* 4. Border & Radius Tokens                            */
-    /* ---------------------------------------------------- */
     --border-width: 1px;
     --border-color: rgba(255, 255, 255, 0.08);
     --border-color-hover: rgba(255, 255, 255, 0.18);
@@ -95,9 +85,6 @@
     --radius-xl: 20px;
     --radius-full: 9999px;
 
-    /* ---------------------------------------------------- */
-    /* 5. Color & Transparency Tokens                       */
-    /* ---------------------------------------------------- */
     --bg-base: transparent;
     --bg-surface: rgba(14, 16, 20, 0.6);
     --bg-surface-hover: rgba(26, 28, 34, 0.8);
@@ -113,26 +100,28 @@
     --accent-primary-hover: #e5e7eb;
     --accent-glow: rgba(255, 255, 255, 0.12);
 
-    /* ---------------------------------------------------- */
-    /* 6. Opacity & Glass Layer Tokens                      */
-    /* ---------------------------------------------------- */
+    --color-mac-close: #ff5f57;
+    --color-mac-close-border: rgba(224, 68, 62, 0.6);
+    --color-mac-close-active: #bf4942;
+    --color-mac-minimize: #febc2e;
+    --color-mac-minimize-border: rgba(216, 158, 36, 0.6);
+    --color-mac-minimize-active: #be8e25;
+    --color-mac-maximize: #28c840;
+    --color-mac-maximize-border: rgba(26, 171, 41, 0.6);
+    --color-mac-maximize-active: #1f9a31;
+    --color-mac-icon: rgba(0, 0, 0, 0.72);
+
     --opacity-disabled: 0.4;
     --opacity-hover: 0.08;
     --opacity-active: 0.16;
     --glass-tint: rgba(255, 255, 255, 0.03);
 
-    /* ---------------------------------------------------- */
-    /* 7. Animation Durations & Easings                     */
-    /* ---------------------------------------------------- */
     --duration-fast: 120ms;
     --duration-normal: 220ms;
     --duration-slow: 400ms;
     --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1);
 
-    /* ---------------------------------------------------- */
-    /* 8. Z-Index Layer Hierarchy                           */
-    /* ---------------------------------------------------- */
     --z-base: 0;
     --z-sticky: 10;
     --z-titlebar: 50;
@@ -141,22 +130,17 @@
     --z-tooltip: 500;
     --z-toast: 1000;
 
-    /* ---------------------------------------------------- */
-    /* 9. Scrollbar Tokens                                  */
-    /* ---------------------------------------------------- */
     --scrollbar-size: 6px;
     --scrollbar-thumb: rgba(255, 255, 255, 0.12);
     --scrollbar-thumb-hover: var(--accent-primary);
 
-    /* ---------------------------------------------------- */
-    /* 10. Glassmorphism & Shadow Tokens                    */
-    /* ---------------------------------------------------- */
     --backdrop-blur: 24px;
     --shadow-card: 0 12px 30px -8px rgba(0, 0, 0, 0.8);
     --shadow-glow: 0 0 20px -5px var(--accent-glow);
   }
 
-  html, body {
+  html,
+  body {
     background-color: transparent !important;
     color: var(--text-primary);
     font-family: var(--font-sans);
@@ -170,7 +154,6 @@
     overflow: hidden;
   }
 
-  /* Custom FAANG Scrollbar */
   ::-webkit-scrollbar {
     width: var(--scrollbar-size);
     height: var(--scrollbar-size);
@@ -219,13 +202,12 @@
   box-shadow: var(--shadow-card), var(--shadow-glow);
 }
 
-/* Custom FAANG OverlayScrollbars Styling overrides */
 .os-scrollbar {
   transition: opacity 150ms ease, visibility 150ms ease !important;
 }
 
 .os-scrollbar-vertical {
-  width: 13px !important; /* 5px thumb + 8px padding (4px left, 4px right) */
+  width: 13px !important;
   padding: 4px 4px 4px 4px !important;
   right: 0 !important;
   top: 0 !important;
@@ -233,7 +215,7 @@
 }
 
 .os-scrollbar-horizontal {
-  height: 13px !important; /* 5px thumb + 8px padding (4px top, 4px bottom) */
+  height: 13px !important;
   padding: 4px 4px 4px 4px !important;
   bottom: 0 !important;
   left: 0 !important;
@@ -258,17 +240,17 @@
   height: 5px !important;
 }
 
-.os-scrollbar-thumb:hover, .os-scrollbar-thumb:active {
+.os-scrollbar-thumb:hover,
+.os-scrollbar-thumb:active {
   background: var(--scrollbar-thumb-hover) !important;
 }
 
-/* ── Custom Select Dropdown (Global) ── */
 .select-panel {
   max-height: 240px;
   overflow: hidden;
-  background: var(--bg-dropdown) !important; /* Strict token usage for dropdown background */
+  background: var(--bg-dropdown) !important;
   border: var(--border-width) solid var(--border-color) !important;
-  border-radius: var(--radius-xl) !important; /* Dynamic corner radius following system settings */
+  border-radius: var(--radius-xl) !important;
   padding: 6px !important;
   z-index: 99999 !important;
   box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.75) !important;
@@ -281,6 +263,7 @@
     opacity: 0;
     transform: translateY(-4px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -303,7 +286,7 @@
   border: none !important;
   outline: none !important;
   background: transparent !important;
-  border-radius: var(--radius-lg) !important; /* Mathematical match to container's inner curve */
+  border-radius: var(--radius-lg) !important;
   color: var(--text-secondary, #9ca3af) !important;
   font-size: 13.5px !important;
   font-family: var(--font-sans, sans-serif) !important;
@@ -311,7 +294,7 @@
   text-align: left !important;
   box-sizing: border-box !important;
   transition: background var(--duration-fast) var(--ease-expo),
-              color var(--duration-fast) var(--ease-expo) !important;
+    color var(--duration-fast) var(--ease-expo) !important;
 }
 
 .select-option:hover {
@@ -325,18 +308,16 @@
   font-weight: var(--font-weight-medium, 500) !important;
 }
 
-/* ── Keyboard Focus Outline Accessibility ── */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
   outline: 1.5px solid var(--accent-primary) !important;
-  outline-offset: -1.5px !important; /* Inset outline to completely prevent parent overflow:hidden cropping */
+  outline-offset: -1.5px !important;
   box-shadow: none !important;
 }
 
-/* ── Custom View Transition Reveal overrides ── */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none !important;
@@ -353,17 +334,18 @@ select:focus-visible,
   z-index: 1 !important;
 }
 
-/* ── Custom CSS Variable Animate Properties (Chromium/Tauri v2 support) ── */
 @property --accent-primary {
   syntax: '<color>';
   inherits: true;
   initial-value: #8b5cf6;
 }
+
 @property --accent-primary-hover {
   syntax: '<color>';
   inherits: true;
   initial-value: #7c3aed;
 }
+
 @property --accent-glow {
   syntax: '<color>';
   inherits: true;
@@ -376,31 +358,37 @@ select:focus-visible,
     --accent-primary-hover: #e0241b;
     --accent-glow: rgba(255, 59, 48, 0.35);
   }
+
   16% {
     --accent-primary: #ff9500;
     --accent-primary-hover: #e07b00;
     --accent-glow: rgba(255, 149, 0, 0.35);
   }
+
   33% {
     --accent-primary: #ffcc00;
     --accent-primary-hover: #e0b300;
     --accent-glow: rgba(255, 204, 0, 0.35);
   }
+
   50% {
     --accent-primary: #34c759;
     --accent-primary-hover: #24a845;
     --accent-glow: rgba(52, 199, 89, 0.35);
   }
+
   66% {
     --accent-primary: #007aff;
     --accent-primary-hover: #0062cc;
     --accent-glow: rgba(0, 122, 255, 0.35);
   }
+
   83% {
     --accent-primary: #af52de;
     --accent-primary-hover: #9638c4;
     --accent-glow: rgba(175, 82, 222, 0.35);
   }
+
   100% {
     --accent-primary: #ff3b30;
     --accent-primary-hover: #e0241b;
@@ -412,7 +400,6 @@ select:focus-visible,
   animation: rgb-cycle 10s linear infinite !important;
 }
 
-/* ── Svelte Sonner Toast Styling Overrides ── */
 [data-sonner-toaster] {
   z-index: 999999 !important;
 }
@@ -490,9 +477,6 @@ select:focus-visible,
   transform: scale(0.98) !important;
 }
 
-/* ---------------------------------------------------- */
-/* Grid Tile System (Shared by Posts & Creators)        */
-/* ---------------------------------------------------- */
 .grid-tile {
   position: relative;
   min-width: 0;
@@ -502,10 +486,6 @@ select:focus-visible,
   border-radius: 0 !important;
   background: #000000;
   isolation: isolate;
-}
-
-.grid-tile:hover {
-  /* Flat borderless look, zero shadows */
 }
 
 .grid-tile-open {
@@ -529,6 +509,10 @@ select:focus-visible,
   inset: 0;
   width: 100%;
   height: 100%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
 }
 
 .grid-tile-media {
@@ -539,19 +523,12 @@ select:focus-visible,
   object-fit: cover;
   z-index: 1;
   transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
-              filter 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    filter 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .grid-tile:hover .grid-tile-media {
   transform: scale(1.05);
   filter: brightness(0.9);
-}
-
-.grid-tile-placeholder {
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
 }
 
 .grid-tile-shade {
@@ -561,13 +538,11 @@ select:focus-visible,
   height: 100%;
   z-index: 2;
   pointer-events: none;
-  background: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.95) 0%,
-    rgba(0, 0, 0, 0.75) 30%,
-    rgba(0, 0, 0, 0.2) 65%,
-    transparent 100%
-  );
+  background: linear-gradient(to top,
+      rgba(0, 0, 0, 0.95) 0%,
+      rgba(0, 0, 0, 0.75) 30%,
+      rgba(0, 0, 0, 0.2) 65%,
+      transparent 100%);
   transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -650,7 +625,7 @@ select:focus-visible,
   left: calc(12px * var(--grid-scale, 1));
   right: calc(12px * var(--grid-scale, 1));
   display: flex;
-  flex-direction: column; /* Stack author and metadata into two clean lines */
+  flex-direction: column;
   align-items: flex-start;
   gap: calc(6px * var(--grid-scale, 1));
   z-index: 5;
@@ -698,7 +673,7 @@ select:focus-visible,
   bottom: auto !important;
   display: flex;
   align-items: center;
-  justify-content: space-between; /* Space out date on left and stats on right */
+  justify-content: space-between;
   width: 100%;
   color: rgba(255, 255, 255, 0.45) !important;
   font-size: calc(10px * var(--grid-scale, 1)) !important;
@@ -736,7 +711,6 @@ select:focus-visible,
   pointer-events: none;
 }
 
-/* ── Individual Stash Pills ── */
 .grid-tile-stash-pills {
   display: flex;
   align-items: center;
@@ -765,8 +739,8 @@ select:focus-visible,
   max-width: 150px;
   box-shadow: none;
   transition: background var(--duration-fast) var(--ease-expo),
-              border-color var(--duration-fast) var(--ease-expo),
-              transform var(--duration-fast) var(--ease-expo);
+    border-color var(--duration-fast) var(--ease-expo),
+    transform var(--duration-fast) var(--ease-expo);
   flex-shrink: 0;
 }
 
@@ -787,7 +761,6 @@ select:focus-visible,
   line-height: 1;
 }
 
-/* ── Unsaved Round Icon Button ── */
 .grid-tile-action {
   position: relative;
   z-index: 4;
@@ -805,9 +778,9 @@ select:focus-visible,
   pointer-events: auto;
   box-shadow: none;
   transition: opacity var(--duration-fast) var(--ease-expo),
-              background var(--duration-fast) var(--ease-expo),
-              border-color var(--duration-fast) var(--ease-expo),
-              transform var(--duration-fast) var(--ease-expo);
+    background var(--duration-fast) var(--ease-expo),
+    border-color var(--duration-fast) var(--ease-expo),
+    transform var(--duration-fast) var(--ease-expo);
   flex-shrink: 0;
 }
 
@@ -838,7 +811,6 @@ select:focus-visible,
   transform: scale(0.94);
 }
 
-/* ── Selection Mode Tile Styles ── */
 .grid-tile.selected {
   outline: 3px solid var(--accent-primary) !important;
   outline-offset: -3px;
@@ -891,9 +863,6 @@ select:focus-visible,
   height: calc(16px * var(--grid-scale, 1));
 }
 
-/* ---------------------------------------------------- */
-/* Unified filter menu shared by Feed/Library/etc.      */
-/* ---------------------------------------------------- */
 .unified-filter-menu {
   width: min(330px, calc(100vw - 32px)) !important;
   max-height: min(620px, calc(100vh - 32px));
@@ -940,7 +909,7 @@ select:focus-visible,
   text-transform: uppercase;
 }
 
-.unified-filter-menu .filter-heading + .filter-label {
+.unified-filter-menu .filter-heading+.filter-label {
   margin-top: 0 !important;
   padding-top: 4px !important;
   border-top: 0;
@@ -1014,7 +983,7 @@ select:focus-visible,
 }
 
 .unified-filter-menu .attachment-filter-label,
-.unified-filter-menu .filter-checkbox-row > button {
+.unified-filter-menu .filter-checkbox-row>button {
   flex: 1;
   min-width: 0;
   padding: 0 !important;
@@ -1069,10 +1038,10 @@ select:focus-visible,
   display: inline-flex !important;
 }
 
-.unified-filter-menu .view-option > button:not(.checkbox-root),
-.unified-filter-menu .view-option > span:not(.option-icon):not(.checkbox-root),
-.unified-filter-menu .settings-menu-option > span:not(.settings-menu-option-icon),
-.unified-filter-menu .popover-option-card > span:not(.option-icon) {
+.unified-filter-menu .view-option>button:not(.checkbox-root),
+.unified-filter-menu .view-option>span:not(.option-icon):not(.checkbox-root),
+.unified-filter-menu .settings-menu-option>span:not(.settings-menu-option-icon),
+.unified-filter-menu .popover-option-card>span:not(.option-icon) {
   min-width: 0;
   display: flex;
   flex: 1;

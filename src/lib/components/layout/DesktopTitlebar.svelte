@@ -3,6 +3,8 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { tooltip } from '$lib/motion';
   import { i18n } from '$lib/i18n';
+  import { configState } from '$lib/state/configState.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import IconArrowRight from '~icons/fluent/arrow-right-24-regular';
@@ -14,6 +16,7 @@
   const appWindow = getCurrentWindow();
   let isMaximized = $state(false);
   let isOffline = $state(false);
+  let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
 
   function minimize() {
     appWindow.minimize();
@@ -55,7 +58,9 @@
 
 <div
   data-tauri-drag-region
-  class="h-[34px] w-full flex items-center justify-between pl-2 pr-0 select-none bg-transparent text-xs text-gray-400 z-50 shrink-0 relative cursor-default"
+  class="h-[34px] w-full flex items-center justify-between pr-0 select-none bg-transparent text-xs text-gray-400 z-50 shrink-0 relative cursor-default"
+  class:pl-2={!isMacStyle}
+  class:pl-6={isMacStyle}
 >
   <div class="flex items-center space-x-1 z-10" data-tauri-drag-region="false">
     <button
@@ -86,39 +91,41 @@
     {/if}
   </div>
 
-  <div class="flex items-center z-10 ml-auto h-full" data-tauri-drag-region="false">
-    <button
-      data-tauri-drag-region="false"
-      use:tooltip={i18n.t('actions.minimize')}
-      onclick={minimize}
-      class="control-button"
-      aria-label={i18n.t('actions.minimize')}
-    >
-      <IconMinimize class="w-[16px] h-[16px]" />
-    </button>
-    <button
-      data-tauri-drag-region="false"
-      use:tooltip={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
-      onclick={toggleMaximize}
-      class="control-button"
-      aria-label={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
-    >
-      {#if isMaximized}
-        <IconRestore class="w-[16px] h-[16px]" />
-      {:else}
-        <IconMaximize class="w-[16px] h-[16px]" />
-      {/if}
-    </button>
-    <button
-      data-tauri-drag-region="false"
-      use:tooltip={i18n.t('actions.close')}
-      onclick={close}
-      class="control-button control-close"
-      aria-label={i18n.t('actions.close')}
-    >
-      <IconClose class="w-[16px] h-[16px]" />
-    </button>
-  </div>
+  {#if !isMacStyle}
+    <div class="flex items-center z-10 ml-auto h-full" data-tauri-drag-region="false">
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t('actions.minimize')}
+        onclick={minimize}
+        class="control-button"
+        aria-label={i18n.t('actions.minimize')}
+      >
+        <IconMinimize class="w-[16px] h-[16px]" />
+      </button>
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
+        onclick={toggleMaximize}
+        class="control-button"
+        aria-label={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
+      >
+        {#if isMaximized}
+          <IconRestore class="w-[16px] h-[16px]" />
+        {:else}
+          <IconMaximize class="w-[16px] h-[16px]" />
+        {/if}
+      </button>
+      <button
+        data-tauri-drag-region="false"
+        use:tooltip={i18n.t('actions.close')}
+        onclick={close}
+        class="control-button control-close"
+        aria-label={i18n.t('actions.close')}
+      >
+        <IconClose class="w-[16px] h-[16px]" />
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>

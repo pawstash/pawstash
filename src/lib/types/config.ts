@@ -29,4 +29,5 @@ export interface AppSettings {
   auto_check_updates?: boolean;
   include_prereleases?: boolean;
   scroll_edge_mask?: boolean;
+  titlebar_style?: 'auto' | 'windows' | 'macos';
 }

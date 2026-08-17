@@ -61,6 +61,7 @@ pub struct AppSettings {
     pub auto_check_updates: bool,
     pub include_prereleases: bool,
     pub scroll_edge_mask: bool,
+    pub titlebar_style: String,
 }
 
 impl Default for AppSettings {
@@ -108,6 +109,7 @@ impl Default for AppSettings {
             auto_check_updates: true,
             include_prereleases: false,
             scroll_edge_mask: true,
+            titlebar_style: "auto".to_string(),
         }
     }
 }
@@ -266,6 +268,7 @@ impl AppSettings {
             ("auto_check_updates", self.auto_check_updates.to_string()),
             ("include_prereleases", self.include_prereleases.to_string()),
             ("scroll_edge_mask", self.scroll_edge_mask.to_string()),
+            ("titlebar_style", self.titlebar_style.clone()),
         ]
     }
 
@@ -294,6 +297,7 @@ impl AppSettings {
         string!(proxy_url);
         string!(proxy_username);
         string!(layout_mode);
+        string!(titlebar_style);
         if let Some(value) = get("sync_enabled").and_then(|v| v.parse().ok()) {
             self.sync_enabled = value;
         }
@@ -364,6 +368,9 @@ impl AppSettings {
         self.grid_scale = self.grid_scale.clamp(60, 160);
         if !matches!(self.layout_mode.as_str(), "auto" | "mobile" | "desktop") {
             self.layout_mode = "auto".to_string();
+        }
+        if !matches!(self.titlebar_style.as_str(), "auto" | "windows" | "macos") {
+            self.titlebar_style = "auto".to_string();
         }
     }
 }
