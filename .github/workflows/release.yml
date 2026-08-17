@@ -132,7 +132,7 @@ jobs:
 
       - name: Apply App Icons to Android Project
         run: |
-          pnpm tauri icon app-icon.png
+          pnpm tauri icon src-tauri/icons/icon-manifest.json -o src-tauri/icons
           cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/ || true
 
       - name: Build Android APKs (Universal & Per-ABI)
