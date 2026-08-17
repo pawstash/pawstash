@@ -166,17 +166,34 @@ jobs:
           pnpm tauri android build --aab --target aarch64 --target armv7 --target x86_64
 
       - name: Sign Android APKs
+        shell: bash
         env:
           SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        if: env.SIGNING_KEY != ''
-        id: sign_apk
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: src-tauri/gen/android/app/build/outputs/apk
-          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          alias: ${{ secrets.ANDROID_KEY_ALIAS || 'pawstash' }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'pawstash' }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "Signing with repository secret keystore..."
+            echo "$SIGNING_KEY" | base64 --decode > /tmp/release.keystore
+            find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | while read -r apk; do
+              "$APKSIGNER" sign --ks /tmp/release.keystore --ks-key-alias "$KEY_ALIAS" --ks-pass "pass:$KEYSTORE_PASS" --key-pass "pass:$KEY_PASS" "$apk" || true
+            done
+            rm -f /tmp/release.keystore
+          else
+            echo "Signing with Android debug keystore..."
+            mkdir -p "$HOME/.android"
+            DEBUG_KS="$HOME/.android/debug.keystore"
+            if [ ! -f "$DEBUG_KS" ]; then
+              keytool -genkey -v -keystore "$DEBUG_KS" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | while read -r apk; do
+              "$APKSIGNER" sign --ks "$DEBUG_KS" --ks-pass "pass:android" --key-pass "pass:android" "$apk" || true
+            done
+          fi
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
