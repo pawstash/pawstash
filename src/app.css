@@ -461,22 +461,33 @@ select:focus-visible,
 }
 
 [data-sonner-toast] [data-button] {
-  background: var(--accent) !important;
-  color: #ffffff !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 32px !important;
+  padding: 0 14px !important;
   font-family: var(--font-sans) !important;
-  font-weight: 600 !important;
   font-size: 12px !important;
+  font-weight: 500 !important;
   border-radius: var(--radius-full) !important;
-  padding: 5px 13px !important;
-  border: none !important;
-  box-shadow: 0 2px 8px var(--accent-glow) !important;
-  transition: opacity 150ms ease, transform 150ms ease !important;
+  background: var(--bg-card) !important;
+  border: var(--border-width) solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+  transition: all var(--duration-fast) var(--ease-expo) !important;
   cursor: pointer !important;
+  outline: none !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 
 [data-sonner-toast] [data-button]:hover {
-  opacity: 0.9 !important;
-  transform: translateY(-1px) !important;
+  background: var(--bg-card-hover) !important;
+  border-color: var(--border-color-hover) !important;
+}
+
+[data-sonner-toast] [data-button]:active {
+  transform: scale(0.98) !important;
 }
 
 /* ---------------------------------------------------- */

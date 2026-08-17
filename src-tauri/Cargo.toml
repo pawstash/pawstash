@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.8.1-1"
+version = "26.8.1-2"
 description = "High-Performance Cross-Platform Client for Pawchive API"
 authors = ["nichind"]
 license = "GPL-3.0-or-later"

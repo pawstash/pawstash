@@ -1196,29 +1196,28 @@
           description={i18n.t('settings.version_desc', { version: APP_VERSION })}
           icon={IconSparkle}
         >
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-2.5">
             <Button
               variant="ghost"
               disabled={updateState.checking}
               onclick={() => updateState.check(false)}
             >
               {#if updateState.checking}
-                <IconLoading class="w-4 h-4 mr-1.5" />
-                {i18n.t('settings.checking_updates')}
+                <IconLoading class="w-4 h-4 mr-1.5 shrink-0" />
+                <span>{i18n.t('settings.checking_updates')}</span>
               {:else}
-                <IconArrowSync class="w-4 h-4 mr-1.5" />
-                {i18n.t('settings.check_updates_now')}
+                <IconArrowSync class="w-4 h-4 mr-1.5 shrink-0" />
+                <span>{i18n.t('settings.check_updates_now')}</span>
               {/if}
             </Button>
             {#if updateState.info?.available}
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-white bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.12] transition-all cursor-pointer shadow-sm active:scale-95"
+              <Button
+                variant="accent"
                 onclick={() => updateState.openModal()}
               >
-                <span class="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
+                <IconSparkle class="w-4 h-4 mr-1.5 shrink-0" />
                 <span>{i18n.t('settings.update_ready_btn', { version: updateState.info.latest_version })}</span>
-              </button>
+              </Button>
             {/if}
           </div>
         </SettingItem>
