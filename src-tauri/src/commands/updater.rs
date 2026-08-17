@@ -148,10 +148,11 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
                         ) {
                             if let Ok(path_obj) = path_val.l() {
                                 let jstr: jni::objects::JString = path_obj.into();
-                                if let Ok(path_str) = env.get_string(&jstr) {
-                                    return Ok(std::path::PathBuf::from(
-                                        path_str.to_string_lossy().to_string(),
-                                    ));
+                                let owned = env
+                                    .get_string(&jstr)
+                                    .map(|s| s.to_string_lossy().to_string());
+                                if let Ok(path_string) = owned {
+                                    return Ok(std::path::PathBuf::from(path_string));
                                 }
                             }
                         }
