@@ -117,6 +117,61 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
     })
 }
 
+fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        let ctx = ndk_context::android_context();
+        let vm_ptr = ctx.vm();
+        let context_ptr = ctx.context();
+        if vm_ptr.is_null() || context_ptr.is_null() {
+            return Ok(std::env::temp_dir());
+        }
+        let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()).map_err(|e| e.to_string())? };
+        let mut env = vm
+            .attach_current_thread_as_daemon()
+            .map_err(|e| e.to_string())?;
+        let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
+
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+        }
+
+        match env.call_method(&context, "getCacheDir", "()Ljava/io/File;", &[]) {
+            Ok(val) => {
+                if let Ok(file_obj) = val.l() {
+                    if !file_obj.is_null() {
+                        if let Ok(path_val) = env.call_method(
+                            &file_obj,
+                            "getAbsolutePath",
+                            "()Ljava/lang/String;",
+                            &[],
+                        ) {
+                            if let Ok(path_obj) = path_val.l() {
+                                let jstr: jni::objects::JString = path_obj.into();
+                                if let Ok(path_str) = env.get_string(&jstr) {
+                                    return Ok(std::path::PathBuf::from(
+                                        path_str.to_string_lossy().to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                let _ = env.exception_clear();
+            }
+        }
+
+        Ok(std::env::temp_dir())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(std::env::temp_dir())
+    }
+}
+
 #[tauri::command]
 pub async fn download_and_install_update(
     app_handle: tauri::AppHandle,
@@ -129,7 +184,7 @@ pub async fn download_and_install_update(
         return Err("Only HTTPS download URLs are permitted".to_string());
     }
 
-    let temp_dir = std::env::temp_dir();
+    let temp_dir = get_update_temp_dir()?;
     let safe_name = if asset_name.trim().is_empty() {
         "pawstash-update".to_string()
     } else {
@@ -211,6 +266,19 @@ pub async fn download_and_install_update(
         .await
         .map_err(|e| format!("Failed to flush downloaded file: {e}"))?;
     drop(file);
+
+    let meta = tokio::fs::metadata(&target_path)
+        .await
+        .map_err(|e| format!("Downloaded file missing: {e}"))?;
+    if meta.len() == 0 {
+        return Err("Downloaded update file is empty (0 bytes)".to_string());
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o644));
+    }
 
     launch_installer_and_exit(app_handle, &target_path)?;
 
@@ -314,7 +382,9 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
         return Err("Android context not initialized".to_string());
     }
     let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()).map_err(|e| e.to_string())? };
-    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let mut env = vm
+        .attach_current_thread_as_daemon()
+        .map_err(|e| e.to_string())?;
     let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
 
     if env.exception_check().unwrap_or(false) {
