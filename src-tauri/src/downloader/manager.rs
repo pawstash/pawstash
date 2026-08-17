@@ -130,6 +130,7 @@ impl DownloadManager {
             control.cancel();
         } else {
             let _ = std::fs::remove_file(&job.temp_path);
+            let _ = std::fs::remove_file(format!("{}.aria2", job.temp_path));
         }
         Ok(job)
     }
@@ -175,32 +176,49 @@ impl DownloadManager {
     }
 
     pub fn remove(&self, id: &str) -> Result<bool, String> {
-        if self
+        let control = self
             .active
             .lock()
             .map_err(|error| error.to_string())?
-            .contains_key(id)
-        {
-            return Err("Stop the download before removing it".to_string());
+            .remove(id);
+        if let Some(ctrl) = control {
+            ctrl.cancel();
         }
-        let job = self
-            .repository
-            .get(id)?
-            .ok_or_else(|| "Download job not found".to_string())?;
-        let output_root =
-            std::fs::canonicalize(&job.output_dir).map_err(|error| error.to_string())?;
 
-        if job.status == "completed" {
-            Self::remove_download_file(&output_root, Path::new(&job.final_path))?;
-        } else if Path::new(&job.temp_path).exists() {
-            Self::remove_download_file(&output_root, Path::new(&job.temp_path))?;
+        let job = match self.repository.get(id)? {
+            Some(j) => j,
+            None => return Ok(false),
+        };
+        let output_root = std::fs::canonicalize(&job.output_dir).ok();
+
+        if let Some(root) = output_root.as_deref() {
+            if job.status == "completed" {
+                let _ = Self::remove_download_file(root, Path::new(&job.final_path));
+            } else {
+                let temp_path = Path::new(&job.temp_path);
+                if temp_path.exists() {
+                    let _ = Self::remove_download_file(root, temp_path);
+                }
+                let aria2_path = PathBuf::from(format!("{}.aria2", job.temp_path));
+                if aria2_path.exists() {
+                    let _ = Self::remove_download_file(root, &aria2_path);
+                }
+            }
+        } else {
+            let _ = std::fs::remove_file(&job.temp_path);
+            let _ = std::fs::remove_file(format!("{}.aria2", job.temp_path));
+            if job.status == "completed" {
+                let _ = std::fs::remove_file(&job.final_path);
+            }
         }
 
         let changed = self.repository.remove(id)?;
         if changed {
             if let Some(sha256) = job.sha256.as_deref() {
                 if let Some(relative_path) = self.repository.take_orphan_blob(sha256)? {
-                    Self::remove_download_file(&output_root, &output_root.join(relative_path))?;
+                    if let Some(root) = output_root.as_deref() {
+                        let _ = Self::remove_download_file(root, &root.join(relative_path));
+                    }
                 }
             }
         }

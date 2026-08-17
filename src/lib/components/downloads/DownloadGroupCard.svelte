@@ -10,6 +10,7 @@
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
   import IconDelete from '~icons/fluent/delete-20-regular';
+  import IconDismiss from '~icons/fluent/dismiss-20-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
@@ -65,12 +66,15 @@
     {:else}
       {#if pausableItems.length}
         <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausableItems, (id) => downloadState.pause(id))} title={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
       {:else if pausedItems.length}
         <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausedItems, (id) => downloadState.resume(id))} title={i18n.t('downloads.resume')} aria-label={i18n.t('downloads.resume')}><IconPlay /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {:else if retryItems.length}
         <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} title={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {:else if completedItems.length === items.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {/if}
     {/if}
   </div>

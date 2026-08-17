@@ -91,12 +91,12 @@
     });
   });
   let sortedDownloads = $derived.by(() => [...visibleDownloads].sort((a, b) => {
-    if (sortBy === 'oldest') return a.id.localeCompare(b.id);
+    if (sortBy === 'oldest') return (a.created_at || '').localeCompare(b.created_at || '') || a.id.localeCompare(b.id);
     if (sortBy === 'name_asc') return (a.filename || '').localeCompare(b.filename || '');
     if (sortBy === 'name_desc') return (b.filename || '').localeCompare(a.filename || '');
     if (sortBy === 'size_desc') return (b.total_bytes || 0) - (a.total_bytes || 0);
     if (sortBy === 'size_asc') return (a.total_bytes || 0) - (b.total_bytes || 0);
-    return b.id.localeCompare(a.id);
+    return (b.created_at || '').localeCompare(a.created_at || '') || b.id.localeCompare(a.id);
   }));
 
   let groupedDownloads = $derived.by(() => {

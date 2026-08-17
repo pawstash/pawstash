@@ -300,8 +300,7 @@ impl DownloadRepository {
         let transaction = connection.transaction().map_err(|e| e.to_string())?;
         let changed = transaction
             .execute(
-                "DELETE FROM download_jobs
-                 WHERE id = ?1 AND status IN ('completed', 'failed', 'cancelled', 'missing')",
+                "DELETE FROM download_jobs WHERE id = ?1",
                 params![id],
             )
             .map_err(|error| error.to_string())?
