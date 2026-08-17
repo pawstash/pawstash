@@ -349,30 +349,59 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
         }
     };
 
-    let uri_class = match env.find_class("android/net/Uri") {
+    let file_provider_class = match env.find_class("androidx/core/content/FileProvider") {
         Ok(c) => c,
         Err(e) => {
             let _ = env.exception_clear();
-            return Err(format!("Find Uri: {e}"));
+            return Err(format!("Find FileProvider class: {e}"));
+        }
+    };
+
+    let package_name = match env.call_method(&context, "getPackageName", "()Ljava/lang/String;", &[]) {
+        Ok(val) => match val.l() {
+            Ok(obj) => {
+                let jstr: jni::objects::JString = obj.into();
+                match env.get_string(&jstr) {
+                    Ok(s) => s.to_string_lossy().to_string(),
+                    Err(_) => "app.pawstash.client".to_string(),
+                }
+            }
+            Err(_) => "app.pawstash.client".to_string(),
+        },
+        Err(_) => {
+            let _ = env.exception_clear();
+            "app.pawstash.client".to_string()
+        }
+    };
+    let authority_str = format!("{package_name}.fileprovider");
+    let authority_jstring = match env.new_string(&authority_str) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("Authority string: {e}"));
         }
     };
 
     let uri_obj = match env.call_static_method(
-        &uri_class,
-        "fromFile",
-        "(Ljava/io/File;)Landroid/net/Uri;",
-        &[jni::objects::JValue::Object(&file_obj)],
+        &file_provider_class,
+        "getUriForFile",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
+        &[
+            jni::objects::JValue::Object(&context),
+            jni::objects::JValue::Object(&authority_jstring),
+            jni::objects::JValue::Object(&file_obj),
+        ],
     ) {
         Ok(val) => match val.l() {
             Ok(obj) => obj,
             Err(e) => {
                 let _ = env.exception_clear();
-                return Err(format!("Get Uri obj: {e}"));
+                return Err(format!("Get Uri obj from FileProvider: {e}"));
             }
         },
         Err(e) => {
             let _ = env.exception_clear();
-            return Err(format!("Uri.fromFile: {e}"));
+            return Err(format!("FileProvider.getUriForFile: {e}"));
         }
     };
 
