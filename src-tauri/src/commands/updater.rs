@@ -317,69 +317,102 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
 
-    let file_class = env
-        .find_class("java/io/File")
-        .map_err(|e| format!("Find File: {e}"))?;
-    let apk_path_str = env
-        .new_string(apk_path.to_string_lossy())
-        .map_err(|e| e.to_string())?;
-    let file_obj = env
-        .new_object(
-            &file_class,
-            "(Ljava/lang/String;)V",
-            &[jni::objects::JValue::Object(&apk_path_str)],
-        )
-        .map_err(|e| format!("New File: {e}"))?;
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
 
-    let pkg_name_obj = env
-        .call_method(&context, "getPackageName", "()Ljava/lang/String;", &[])
-        .map_err(|e| format!("Get pkg name: {e}"))?
-        .l()
-        .map_err(|e| e.to_string())?;
-    let pkg_name_jstr: jni::objects::JString = pkg_name_obj.into();
-    let pkg_name: String = env
-        .get_string(&pkg_name_jstr)
-        .map_err(|e| e.to_string())?
-        .into();
-    let authority = format!("{}.fileprovider", pkg_name);
-    let auth_str = env.new_string(authority).map_err(|e| e.to_string())?;
+    let file_class = match env.find_class("java/io/File") {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("Find File class: {e}"));
+        }
+    };
 
-    let fp_class = env
-        .find_class("androidx/core/content/FileProvider")
-        .map_err(|e| format!("Find FileProvider: {e}"))?;
-    let uri_obj = env
-        .call_static_method(
-            &fp_class,
-            "getUriForFile",
-            "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
-            &[
-                jni::objects::JValue::Object(&context),
-                jni::objects::JValue::Object(&auth_str),
-                jni::objects::JValue::Object(&file_obj),
-            ],
-        )
-        .map_err(|e| format!("FileProvider.getUriForFile: {e}"))?
-        .l()
-        .map_err(|e| e.to_string())?;
+    let apk_path_str = match env.new_string(apk_path.to_string_lossy()) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("APK path string: {e}"));
+        }
+    };
 
-    let intent_class = env
-        .find_class("android/content/Intent")
-        .map_err(|e| format!("Find Intent: {e}"))?;
-    let action_view = env
-        .new_string("android.intent.action.VIEW")
-        .map_err(|e| e.to_string())?;
-    let intent_obj = env
-        .new_object(
-            &intent_class,
-            "(Ljava/lang/String;)V",
-            &[jni::objects::JValue::Object(&action_view)],
-        )
-        .map_err(|e| format!("New Intent: {e}"))?;
+    let file_obj = match env.new_object(
+        &file_class,
+        "(Ljava/lang/String;)V",
+        &[jni::objects::JValue::Object(&apk_path_str)],
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("New File: {e}"));
+        }
+    };
 
-    let mime_str = env
-        .new_string("application/vnd.android.package-archive")
-        .map_err(|e| e.to_string())?;
-    env.call_method(
+    let uri_class = match env.find_class("android/net/Uri") {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("Find Uri: {e}"));
+        }
+    };
+
+    let uri_obj = match env.call_static_method(
+        &uri_class,
+        "fromFile",
+        "(Ljava/io/File;)Landroid/net/Uri;",
+        &[jni::objects::JValue::Object(&file_obj)],
+    ) {
+        Ok(val) => match val.l() {
+            Ok(obj) => obj,
+            Err(e) => {
+                let _ = env.exception_clear();
+                return Err(format!("Get Uri obj: {e}"));
+            }
+        },
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("Uri.fromFile: {e}"));
+        }
+    };
+
+    let intent_class = match env.find_class("android/content/Intent") {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("Find Intent: {e}"));
+        }
+    };
+
+    let action_view = match env.new_string("android.intent.action.VIEW") {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(e.to_string());
+        }
+    };
+
+    let intent_obj = match env.new_object(
+        &intent_class,
+        "(Ljava/lang/String;)V",
+        &[jni::objects::JValue::Object(&action_view)],
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("New Intent: {e}"));
+        }
+    };
+
+    let mime_str = match env.new_string("application/vnd.android.package-archive") {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(e.to_string());
+        }
+    };
+
+    if let Err(e) = env.call_method(
         &intent_obj,
         "setDataAndType",
         "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
@@ -387,25 +420,35 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
             jni::objects::JValue::Object(&uri_obj),
             jni::objects::JValue::Object(&mime_str),
         ],
-    )
-    .map_err(|e| format!("setDataAndType: {e}"))?;
+    ) {
+        let _ = env.exception_clear();
+        return Err(format!("setDataAndType: {e}"));
+    }
 
     let flags: i32 = 1 | 0x10000000;
-    env.call_method(
+    if let Err(e) = env.call_method(
         &intent_obj,
         "addFlags",
         "(I)Landroid/content/Intent;",
         &[jni::objects::JValue::Int(flags)],
-    )
-    .map_err(|e| format!("addFlags: {e}"))?;
+    ) {
+        let _ = env.exception_clear();
+        return Err(format!("addFlags: {e}"));
+    }
 
-    env.call_method(
+    if let Err(e) = env.call_method(
         &context,
         "startActivity",
         "(Landroid/content/Intent;)V",
         &[jni::objects::JValue::Object(&intent_obj)],
-    )
-    .map_err(|e| format!("startActivity: {e}"))?;
+    ) {
+        let _ = env.exception_clear();
+        return Err(format!("startActivity: {e}"));
+    }
+
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
 
     Ok(())
 }

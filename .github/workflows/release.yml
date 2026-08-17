@@ -70,24 +70,15 @@ jobs:
         run: |
           mkdir -p dist-binaries
           if [ "${{ matrix.platform }}" = "windows-x64" ]; then
-            cp src-tauri/target/release/pawstash.exe dist-binaries/Pawstash-portable.exe
-            if compgen -G "src-tauri/target/release/bundle/nsis/*.exe" > /dev/null; then
-              cp src-tauri/target/release/bundle/nsis/*.exe dist-binaries/Pawstash-Setup.exe
-            fi
-            if compgen -G "src-tauri/target/release/bundle/msi/*.msi" > /dev/null; then
-              cp src-tauri/target/release/bundle/msi/*.msi dist-binaries/Pawstash.msi
-            fi
+            find src-tauri/target -name "pawstash.exe" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-portable.exe || true
+            find src-tauri/target -name "*.exe" | grep -i "setup" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-Setup.exe || true
+            find src-tauri/target -name "*.msi" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.msi || true
           elif [ "${{ matrix.platform }}" = "linux-x64" ]; then
-            if compgen -G "src-tauri/target/release/bundle/appimage/*.AppImage" > /dev/null; then
-              cp src-tauri/target/release/bundle/appimage/*.AppImage dist-binaries/Pawstash.AppImage
-            fi
-            if compgen -G "src-tauri/target/release/bundle/deb/*.deb" > /dev/null; then
-              cp src-tauri/target/release/bundle/deb/*.deb dist-binaries/Pawstash.deb
-            fi
+            find src-tauri/target -name "*.AppImage" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.AppImage || true
+            find src-tauri/target -name "*.deb" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.deb || true
           elif [ "${{ matrix.platform }}" = "macos-universal" ]; then
-            if compgen -G "src-tauri/target/release/bundle/dmg/*.dmg" > /dev/null; then
-              cp src-tauri/target/release/bundle/dmg/*.dmg dist-binaries/Pawstash.dmg
-            fi
+            find src-tauri/target -name "*.dmg" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.dmg || true
+            find src-tauri/target -name "*.app.tar.gz" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.app.tar.gz || true
           fi
 
       - name: Upload Desktop Artifacts
@@ -201,6 +192,10 @@ jobs:
             cp dist-binaries/Pawstash-universal.apk dist-binaries/Pawstash.apk
           elif [ -f "dist-binaries/Pawstash-arm64-v8a.apk" ]; then
             cp dist-binaries/Pawstash-arm64-v8a.apk dist-binaries/Pawstash.apk
+          fi
+
+          if [ -f "dist-binaries/Pawstash-arm64-v8a.apk" ]; then
+            cp dist-binaries/Pawstash-arm64-v8a.apk dist-binaries/Pawstash-arm64.apk
           fi
 
       - name: Upload Android Artifacts
