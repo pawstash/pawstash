@@ -51,7 +51,7 @@ export class FeedState {
     this.scheduleSearch();
   }
 
-  isSearchActive = $derived(this._searchQuery.trim().length >= 2);
+  isSearchActive = $derived(this.mode === 'recent' && this._searchQuery.trim().length >= 2);
 
   getPopularBucket(period: PopularPeriod, date: string) {
     const key = `${period}:${date || 'current'}`;
@@ -92,8 +92,15 @@ export class FeedState {
 
       let matchesQuery = true;
       const q = this._searchQuery.trim().toLowerCase();
-      if (q && q.length < 2) {
-        matchesQuery = post.title.toLowerCase().includes(q) || post.content?.toLowerCase().includes(q) || false;
+      if (q) {
+        if (this.mode === 'popular' || q.length < 2) {
+          matchesQuery = (
+            post.title?.toLowerCase().includes(q) ||
+            post.content?.toLowerCase().includes(q) ||
+            post.user?.toLowerCase().includes(q) ||
+            false
+          );
+        }
       }
 
       return matchesService && matchesAttachments && matchesFormat && matchesFavorites && matchesQuery;
@@ -104,6 +111,9 @@ export class FeedState {
     if (this.searchTimer) {
       clearTimeout(this.searchTimer);
       this.searchTimer = undefined;
+    }
+    if (this.mode !== 'recent') {
+      return;
     }
     const query = this._searchQuery.trim();
     if (query.length < 2) {
@@ -147,6 +157,11 @@ export class FeedState {
 
   async setMode(mode: FeedMode) {
     this.mode = mode;
+    if (this._searchQuery.trim().length >= 2) {
+      if (mode === 'recent') {
+        this.scheduleSearch();
+      }
+    }
     if (!this.current.loaded) await this.refresh();
   }
 
