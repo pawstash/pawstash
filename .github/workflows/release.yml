@@ -210,6 +210,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository for changelog
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Commit Changelog
+        id: changelog
+        shell: bash
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "${{ github.ref_name || inputs.tag_name }}" | head -n 1)
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG..HEAD")
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" -n 50)
+          fi
+          {
+            echo "body<<EOF"
+            echo "### Changes in ${{ github.ref_name || inputs.tag_name }}"
+            echo ""
+            echo "$COMMITS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download all built binaries
         uses: actions/download-artifact@v4
         with:
@@ -227,7 +250,8 @@ jobs:
         with:
           name: 'Pawstash ${{ github.ref_name || inputs.tag_name }}'
           tag_name: ${{ github.ref_name || inputs.tag_name }}
+          body: ${{ steps.changelog.outputs.body }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-pre') || contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: release-dist/*
