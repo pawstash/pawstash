@@ -28,6 +28,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Create dist directory placeholder
+        run: mkdir -p dist
       - name: Install system dependencies (Linux)
         run: |
           sudo apt-get update
@@ -40,4 +42,5 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml
       - name: Cargo Test
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
 
