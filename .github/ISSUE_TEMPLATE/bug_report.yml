@@ -1,0 +1,48 @@
+name: Bug Report
+description: Report an issue or unexpected behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11
+        - Windows 10
+        - Android
+        - Linux (AppImage / DEB)
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App Version
+      placeholder: e.g. 26.8.1-pre1
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      placeholder: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open '...'
+        2. Click '...'
+        3. See error
+    validations:
+      required: false
+  - type: textarea
+    id: logs_or_screenshots
+    attributes:
+      label: Screenshots or Logs
+      placeholder: Paste error logs or drag-and-drop screenshots here.
+    validations:
+      required: false

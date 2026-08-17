@@ -1,0 +1,278 @@
+<script lang="ts">
+  import type { PawchivePost } from '$lib/types/pawchive';
+  import { configState } from '$lib/state/configState.svelte';
+  import { contentState } from '$lib/state/contentState.svelte';
+  import { navigationState } from '$lib/state/navigationState.svelte';
+  import { libraryState } from '$lib/state/libraryState.svelte';
+  import { creatorsState } from '$lib/state/creatorsState.svelte';
+  import { selectionState } from '$lib/state/selectionState.svelte';
+  import { i18n } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
+  import { formatDate } from '$lib/utils/formatters';
+  import { isVideoUrl, postAttachmentCount, postMediaUrl, postThumbnailUrl } from '$lib/utils/media';
+  import ServiceIcon from './ServiceIcon.svelte';
+  import IconImage from '~icons/fluent/image-24-regular';
+  import IconAttach from '~icons/fluent/attach-24-regular';
+  import IconHeart from '~icons/fluent/heart-24-filled';
+  import IconSave from '~icons/fluent/bookmark-add-24-regular';
+  import IconDelete from '~icons/fluent/delete-24-regular';
+  import IconFolderDismiss from '~icons/fluent/folder-dismiss-24-regular';
+  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
+  import IconLoading from '~icons/svg-spinners/3-dots-fade';
+
+  interface Props {
+    post: PawchivePost;
+    showCreator?: boolean;
+    orderedKeys?: string[];
+    itemsMap?: Map<string, PawchivePost>;
+  }
+
+  let { post, showCreator = true, orderedKeys, itemsMap }: Props = $props();
+
+  const ratios = {
+    square: '1 / 1',
+    portrait: '4 / 5',
+    landscape: '3 / 2',
+    widescreen: '16 / 9'
+  } as const;
+
+  let postKey = $derived(`${(post.service || '').toLowerCase()}:${post.user}:${post.id}`);
+  let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
+  let selected = $derived(isSelectionActive && selectionState.isSelected(postKey));
+
+  let mediaUrl = $derived(postMediaUrl(post));
+  let thumbnailUrl = $derived(postThumbnailUrl(post));
+  let video = $derived(isVideoUrl(mediaUrl));
+  let attachments = $derived(postAttachmentCount(post));
+  let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
+  let saved = $derived(libraryState.isSaved(post));
+  let saving = $derived(libraryState.isPending(post));
+  let customStashes = $derived(libraryState.getCustomPostStashes(post));
+  let customStashNames = $derived(libraryState.getPostStashNames(post));
+  let isInsideSpecificLibraryCategory = $derived(
+    navigationState.route.name === 'library' && libraryState.selectedCollectionId !== null
+  );
+
+  let creatorName = $derived.by(() => {
+    const serviceLower = post.service.toLowerCase();
+    const userIdLower = post.user.toLowerCase();
+    const cacheKey = `${serviceLower}:${userIdLower}`;
+
+    const name = creatorsState.creatorsMap.get(cacheKey);
+    if (name) return name;
+
+    const cached = contentState.creators[cacheKey];
+    if (cached?.profile?.name) return cached.profile.name;
+
+    return post.user;
+  });
+
+  function handleCardClick(event: MouseEvent) {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      selectionState.toggle('posts', postKey, post, orderedKeys, false, itemsMap);
+      return;
+    }
+
+    if (isSelectionActive) {
+      event.preventDefault();
+      event.stopPropagation();
+      selectionState.toggle('posts', postKey, post, orderedKeys, event.shiftKey, itemsMap);
+      return;
+    }
+
+    openPost();
+  }
+
+  function handleSelectCheckbox(event: MouseEvent) {
+    event.stopPropagation();
+    selectionState.toggle('posts', postKey, post, orderedKeys, event.shiftKey, itemsMap);
+  }
+
+  function openPost() {
+    contentState.seedPost(post);
+    navigationState.openPost(post.service, post.user, post.id);
+  }
+
+  function openCreator(event: MouseEvent) {
+    event.stopPropagation();
+    navigationState.openCreator(post.service, post.user);
+  }
+
+  async function quickSave(event: MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      await libraryState.save(post);
+      toast.success(i18n.t('library.saved') || 'Saved to library');
+    } catch (error) {
+      toast.error(i18n.t('library.save_error'), {
+        description: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  async function handleRemoveFromCurrentCategory(event: MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    const collectionId = libraryState.selectedCollectionId;
+    if (!collectionId) return;
+
+    try {
+      if (libraryState.selectedCollection?.kind === 'stash') {
+        await libraryState.removeFromStash(collectionId, post);
+        toast.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+      } else {
+        await libraryState.remove(post);
+        toast.success(i18n.t('library.removed') || 'Removed from library');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function openStashInLibrary(event: MouseEvent, stashId?: string) {
+    event.stopPropagation();
+    event.preventDefault();
+    if (stashId) {
+      void libraryState.selectCollection(stashId);
+    } else {
+      void libraryState.selectCollection(null);
+    }
+    navigationState.navigateRoot('library');
+  }
+</script>
+
+<article
+  class="grid-tile"
+  class:selected={selected}
+  style:aspect-ratio={ratio}
+  data-post-key={postKey}
+>
+  <button class="grid-tile-open" type="button" onclick={handleCardClick} aria-label={post.title}></button>
+
+  {#if isSelectionActive}
+    <button
+      type="button"
+      class="grid-tile-select-checkbox"
+      class:checked={selected}
+      onclick={handleSelectCheckbox}
+      aria-label="Select post"
+    >
+      {#if selected}
+        <IconCheckmark class="w-[14px] h-[14px]" />
+      {/if}
+    </button>
+  {:else}
+    <div class="grid-tile-top-actions">
+      {#if isInsideSpecificLibraryCategory}
+        <button
+          type="button"
+          class="grid-tile-action grid-tile-action-danger"
+          disabled={saving}
+          onclick={handleRemoveFromCurrentCategory}
+          title={i18n.t(libraryState.selectedCollection?.kind === 'stash' ? 'library.remove_from_stash' : 'library.remove')}
+          aria-label={i18n.t(libraryState.selectedCollection?.kind === 'stash' ? 'library.remove_from_stash' : 'library.remove')}
+        >
+          {#if saving}
+            <IconLoading />
+          {:else if libraryState.selectedCollection?.kind === 'stash'}
+            <IconFolderDismiss />
+          {:else}
+            <IconDelete />
+          {/if}
+        </button>
+      {:else if saved}
+        <div class="grid-tile-stash-pills">
+          {#if customStashNames.length === 0}
+            <button
+              type="button"
+              class="grid-tile-stash-pill"
+              onclick={(e) => openStashInLibrary(e)}
+              title={`${i18n.t('library.saved')}: ${i18n.t('library.inbox')}`}
+            >
+              <span class="stash-pill-text">{i18n.t('library.inbox') || 'Inbox'}</span>
+            </button>
+          {:else}
+            {#each customStashes as stashId, i}
+              {@const name = customStashNames[i] || stashId}
+              <button
+                type="button"
+                class="grid-tile-stash-pill"
+                onclick={(e) => openStashInLibrary(e, stashId)}
+                title={name}
+              >
+                <span class="stash-pill-text">{name}</span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="grid-tile-action"
+          disabled={saving}
+          onclick={quickSave}
+          title={i18n.t('library.save')}
+          aria-label={i18n.t('library.save')}
+        >
+          {#if saving}
+            <IconLoading />
+          {:else}
+            <IconSave />
+          {/if}
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  {#if thumbnailUrl}
+    <img class="grid-tile-media" src={thumbnailUrl} alt="" loading="lazy" decoding="async" />
+  {:else if video}
+    <video class="grid-tile-media" src={mediaUrl ?? undefined} muted preload="metadata"></video>
+  {:else if mediaUrl}
+    <img class="grid-tile-media" src={mediaUrl} alt="" loading="lazy" decoding="async" />
+  {:else}
+    <div class="grid-tile-placeholder"><IconImage /></div>
+  {/if}
+
+  <div class="grid-tile-shade"></div>
+  <h2 class="grid-tile-title">{post.title || i18n.t('feed.untitled')}</h2>
+
+  <div class="grid-tile-footer">
+    <div class="grid-tile-author">
+      <button
+        type="button"
+        class="grid-tile-logo inline-logo"
+        onclick={openCreator}
+        title={i18n.t('feed.open_creator')}
+        aria-label={`${i18n.t('feed.open_creator')}: ${post.service}`}
+      >
+        <ServiceIcon service={post.service} />
+      </button>
+
+      {#if showCreator}
+        <span
+          role="link"
+          tabindex="0"
+          class="grid-tile-author-name"
+          onclick={openCreator}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && openCreator(e as unknown as MouseEvent)}
+        >
+          {creatorName}
+        </span>
+      {/if}
+    </div>
+
+    <div class="grid-tile-meta">
+      <span>{formatDate(post.published || post.added)}</span>
+      <div class="grid-tile-meta-stats">
+        <span class="grid-tile-meta-row"><IconAttach /> {attachments}</span>
+        {#if post.favorite_count !== undefined && post.favorite_count > 0}
+          <span class="grid-tile-meta-row"><IconHeart /> {post.favorite_count}</span>
+        {/if}
+      </div>
+    </div>
+  </div>
+</article>

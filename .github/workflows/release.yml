@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    name: Build Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+            args: ""
+          - platform: macos-universal
+            os: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: linux-x64
+            os: ubuntu-22.04
+            args: ""
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libayatana-appindicator3-dev
+
+      - name: Setup Node.js & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Build Tauri Desktop App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name || inputs.tag_name }}
+          releaseName: 'Pawstash ${{ github.ref_name || inputs.tag_name }}'
+          releaseBody: 'See release notes and changelog in DEVELOPMENT_LOG.md'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Package Canonical Release Binaries
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "windows-x64" ]; then
+            cp src-tauri/target/release/pawstash.exe Pawstash-portable.exe
+            if compgen -G "src-tauri/target/release/bundle/nsis/*.exe" > /dev/null; then
+              cp src-tauri/target/release/bundle/nsis/*.exe Pawstash-Setup.exe
+            fi
+            if compgen -G "src-tauri/target/release/bundle/msi/*.msi" > /dev/null; then
+              cp src-tauri/target/release/bundle/msi/*.msi Pawstash.msi
+            fi
+          elif [ "${{ matrix.platform }}" = "linux-x64" ]; then
+            if compgen -G "src-tauri/target/release/bundle/appimage/*.AppImage" > /dev/null; then
+              cp src-tauri/target/release/bundle/appimage/*.AppImage Pawstash.AppImage
+            fi
+            if compgen -G "src-tauri/target/release/bundle/deb/*.deb" > /dev/null; then
+              cp src-tauri/target/release/bundle/deb/*.deb Pawstash.deb
+            fi
+          elif [ "${{ matrix.platform }}" = "macos-universal" ]; then
+            if compgen -G "src-tauri/target/release/bundle/dmg/*.dmg" > /dev/null; then
+              cp src-tauri/target/release/bundle/dmg/*.dmg Pawstash.dmg
+            fi
+          fi
+
+      - name: Attach Canonical Binaries to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            Pawstash-portable.exe
+            Pawstash-Setup.exe
+            Pawstash.msi
+            Pawstash.AppImage
+            Pawstash.deb
+            Pawstash.dmg
+
+
+
+  build-android:
+    name: Build Android (APK & AAB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK (r26b)
+        run: |
+          sdkmanager "ndk;26.1.10909125"
+
+      - name: Setup Node.js & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Build Android APKs (All Architectures)
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+        run: |
+          pnpm tauri android build --apk --target aarch64,armv7,x86_64
+
+      - name: Build Android AAB (Google Play Bundle)
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+        run: |
+          pnpm tauri android build --target aarch64,armv7,x86_64
+
+      - name: Sign Android APKs
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        id: sign_apk
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: src-tauri/gen/android/app/build/outputs/apk
+          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          alias: ${{ secrets.ANDROID_KEY_ALIAS || 'pawstash' }}
+          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+
+      - name: Package Canonical Android Binaries
+        shell: bash
+        run: |
+          find src-tauri/gen/android/app/build/outputs/apk -name "*arm64-v8a*.apk" | head -n 1 | xargs -I {} cp {} Pawstash-arm64-v8a.apk || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*armeabi-v7a*.apk" | head -n 1 | xargs -I {} cp {} Pawstash-armeabi-v7a.apk || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*x86_64*.apk" | head -n 1 | xargs -I {} cp {} Pawstash-x86_64.apk || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*universal*.apk" | head -n 1 | xargs -I {} cp {} Pawstash-universal.apk || true
+          find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -n 1 | xargs -I {} cp {} Pawstash.aab || true
+
+          if [ -f "Pawstash-universal.apk" ]; then
+            cp Pawstash-universal.apk Pawstash.apk
+          elif [ -f "Pawstash-arm64-v8a.apk" ]; then
+            cp Pawstash-arm64-v8a.apk Pawstash.apk
+          fi
+
+      - name: Attach Android Assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            Pawstash.apk
+            Pawstash-arm64-v8a.apk
+            Pawstash-armeabi-v7a.apk
+            Pawstash-x86_64.apk
+            Pawstash-universal.apk
+            Pawstash.aab
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+
+

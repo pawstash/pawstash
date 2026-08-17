@@ -1,0 +1,32 @@
+export interface AppSettings {
+  download_dir: string;
+  cache_max_mb: number;
+  api_domain: string;
+  file_domain: string;
+  image_domain: string;
+  session_cookie: string;
+  pawchive_username: string;
+  theme: string;
+  use_aria2c: boolean;
+  aria2_connections: number;
+  proxy_mode: 'none' | 'system' | 'custom';
+  proxy_url: string;
+  proxy_username: string;
+  proxy_password: string;
+  proxy_bypass_local: boolean;
+  grid_scale: number;
+  grid_aspect_ratio: 'square' | 'portrait' | 'landscape' | 'widescreen';
+  dynamic_accent: boolean;
+  sticky_header: boolean;
+  layout_mode: 'auto' | 'mobile' | 'desktop';
+  sync_enabled: boolean;
+  sync_auto: boolean;
+  sync_on_change: boolean;
+  sync_pawchive_session: boolean;
+  sync_pull_interval_seconds: number;
+  sync_push_interval_seconds: number;
+  toast_position: 'auto' | 'top-center' | 'top-right' | 'top-left' | 'bottom-center' | 'bottom-right' | 'bottom-left';
+  auto_check_updates?: boolean;
+  include_prereleases?: boolean;
+  scroll_edge_mask?: boolean;
+}

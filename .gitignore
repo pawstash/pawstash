@@ -1,0 +1,50 @@
+# Dependencies & Build artifacts
+node_modules/
+dist/
+.svelte-kit/
+.turbo/
+.vercel/
+.output/
+.nuxt/
+*.tsbuildinfo
+
+# Tauri & Rust
+src-tauri/target/
+src-tauri/gen/
+*.pdb
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & Environment
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.env
+.env.*
+!.env.example
+
+# Local Agent, AI Contexts & Internal Planning Docs
+.agents/
+.gemini/
+.cursor/
+.claude/
+.codebase-memory/
+AGENTS.md
+GEMINI.md
+CLAUDE.md
+docs/
+
+# Keystore & Android Release Signing Secrets
+*.keystore
+*.jks
+keystore-credentials.txt
+keystore-base64.txt
+
