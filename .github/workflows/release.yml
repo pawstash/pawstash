@@ -163,7 +163,9 @@ jobs:
           pnpm tauri android build --target aarch64,armv7,x86_64
 
       - name: Sign Android APKs
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        if: env.SIGNING_KEY != ''
         id: sign_apk
         uses: r0adkll/sign-android-release@v1
         with:
