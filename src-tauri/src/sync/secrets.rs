@@ -73,7 +73,7 @@ impl SecretStore {
 
     #[cfg(target_os = "android")]
     fn set(name: &str, value: &[u8]) -> Result<(), String> {
-        let encrypted = android_keystore::encrypt(value)?;
+        let encrypted = android_vault::encrypt(value)?;
         let path = Self::secret_path(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -88,11 +88,7 @@ impl SecretStore {
             return Ok(None);
         }
         let raw = std::fs::read(&path).map_err(|e| e.to_string())?;
-        let decrypted = android_keystore::decrypt(&raw)?;
-        // If legacy unencrypted format was detected, re-encrypt on disk
-        if !raw.starts_with(android_keystore::MAGIC_HEADER) {
-            let _ = Self::set(name, &decrypted);
-        }
+        let decrypted = android_vault::decrypt(&raw)?;
         Ok(Some(decrypted))
     }
 
@@ -137,355 +133,85 @@ impl SecretStore {
 }
 
 #[cfg(target_os = "android")]
-mod android_keystore {
-    use jni::objects::{JObject, JValue};
-    use jni::{JNIEnv, JavaVM};
+mod android_vault {
+    use chacha20poly1305::{
+        aead::{Aead, Payload},
+        KeyInit, XChaCha20Poly1305, XNonce,
+    };
+    use rand::{rngs::OsRng, RngCore};
+    use std::path::PathBuf;
 
-    const KEY_ALIAS: &str = "app.pawstash.keystore.vault_key_v1";
-    const ANDROID_KEY_STORE: &str = "AndroidKeyStore";
-    const CIPHER_TRANSFORMATION: &str = "AES/GCM/NoPadding";
-    pub const MAGIC_HEADER: &[u8] = b"PWSEC1";
-    const TAG_LENGTH_BITS: i32 = 128;
+    pub const MAGIC_HEADER: &[u8] = b"PWSEC2";
+    const KEY_FILE: &str = ".device_key";
 
-    fn get_vm() -> Result<JavaVM, String> {
-        let ctx = ndk_context::android_context();
-        let vm_ptr = ctx.vm();
-        if vm_ptr.is_null() {
-            return Err("Android JavaVM context is not initialized".to_string());
-        }
-        unsafe { JavaVM::from_raw(vm_ptr.cast()).map_err(|e| format!("Invalid JavaVM: {e}")) }
+    fn vault_dir() -> PathBuf {
+        crate::db::storage::data_root().join(".vault")
     }
 
-    fn ensure_master_key(env: &mut JNIEnv) -> Result<(), String> {
-        let ks_class = env
-            .find_class("java/security/KeyStore")
-            .map_err(|e| format!("Find KeyStore: {e}"))?;
-        let ks_type = env
-            .new_string(ANDROID_KEY_STORE)
-            .map_err(|e| format!("New string KeyStore type: {e}"))?;
-        let key_store = env
-            .call_static_method(
-                &ks_class,
-                "getInstance",
-                "(Ljava/lang/String;)Ljava/security/KeyStore;",
-                &[JValue::Object(&ks_type)],
-            )
-            .map_err(|e| format!("KeyStore.getInstance: {e}"))?
-            .l()
-            .map_err(|e| format!("KeyStore instance cast: {e}"))?;
-
-        env.call_method(
-            &key_store,
-            "load",
-            "(Ljava/security/KeyStore$LoadStoreParameter;)V",
-            &[JValue::Object(&JObject::null())],
-        )
-        .map_err(|e| format!("KeyStore.load: {e}"))?;
-
-        let alias_jstr = env
-            .new_string(KEY_ALIAS)
-            .map_err(|e| format!("New string alias: {e}"))?;
-        let contains_key = env
-            .call_method(
-                &key_store,
-                "containsAlias",
-                "(Ljava/lang/String;)Z",
-                &[JValue::Object(&alias_jstr)],
-            )
-            .map_err(|e| format!("KeyStore.containsAlias: {e}"))?
-            .z()
-            .map_err(|e| format!("containsAlias cast: {e}"))?;
-
-        if !contains_key {
-            let kg_class = env
-                .find_class("javax/crypto/KeyGenerator")
-                .map_err(|e| format!("Find KeyGenerator: {e}"))?;
-            let aes_str = env
-                .new_string("AES")
-                .map_err(|e| format!("New string AES: {e}"))?;
-            let key_gen = env
-                .call_static_method(
-                    &kg_class,
-                    "getInstance",
-                    "(Ljava/lang/String;Ljava/lang/String;)Ljavax/crypto/KeyGenerator;",
-                    &[JValue::Object(&aes_str), JValue::Object(&ks_type)],
-                )
-                .map_err(|e| format!("KeyGenerator.getInstance: {e}"))?
-                .l()
-                .map_err(|e| format!("KeyGenerator instance cast: {e}"))?;
-
-            // PURPOSE_ENCRYPT = 1, PURPOSE_DECRYPT = 2 -> 3
-            let builder_class = env
-                .find_class("android/security/keystore/KeyGenParameterSpec$Builder")
-                .map_err(|e| format!("Find KeyGenParameterSpec$Builder: {e}"))?;
-            let builder = env
-                .new_object(
-                    &builder_class,
-                    "(Ljava/lang/String;I)V",
-                    &[JValue::Object(&alias_jstr), JValue::Int(1 | 2)],
-                )
-                .map_err(|e| format!("New KeyGenParameterSpec$Builder: {e}"))?;
-
-            let gcm_str = env
-                .new_string("GCM")
-                .map_err(|e| format!("New string GCM: {e}"))?;
-            let string_array = env
-                .new_object_array(1, "java/lang/String", &gcm_str)
-                .map_err(|e| format!("New object array GCM: {e}"))?;
-            env.call_method(
-                &builder,
-                "setBlockModes",
-                "([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;",
-                &[JValue::Object(&string_array)],
-            )
-            .map_err(|e| format!("Builder.setBlockModes: {e}"))?;
-
-            let nopadding_str = env
-                .new_string("NoPadding")
-                .map_err(|e| format!("New string NoPadding: {e}"))?;
-            let padding_array = env
-                .new_object_array(1, "java/lang/String", &nopadding_str)
-                .map_err(|e| format!("New object array NoPadding: {e}"))?;
-            env.call_method(
-                &builder,
-                "setEncryptionPaddings",
-                "([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;",
-                &[JValue::Object(&padding_array)],
-            )
-            .map_err(|e| format!("Builder.setEncryptionPaddings: {e}"))?;
-
-            env.call_method(
-                &builder,
-                "setKeySize",
-                "(I)Landroid/security/keystore/KeyGenParameterSpec$Builder;",
-                &[JValue::Int(256)],
-            )
-            .map_err(|e| format!("Builder.setKeySize: {e}"))?;
-
-            let spec = env
-                .call_method(
-                    &builder,
-                    "build",
-                    "()Landroid/security/keystore/KeyGenParameterSpec;",
-                    &[],
-                )
-                .map_err(|e| format!("Builder.build: {e}"))?
-                .l()
-                .map_err(|e| format!("Spec cast: {e}"))?;
-
-            env.call_method(
-                &key_gen,
-                "init",
-                "(Ljava/security/spec/AlgorithmParameterSpec;)V",
-                &[JValue::Object(&spec)],
-            )
-            .map_err(|e| format!("KeyGenerator.init: {e}"))?;
-
-            env.call_method(&key_gen, "generateKey", "()Ljavax/crypto/SecretKey;", &[])
-                .map_err(|e| format!("KeyGenerator.generateKey: {e}"))?;
+    fn get_or_create_device_key() -> Result<[u8; 32], String> {
+        let dir = vault_dir();
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         }
-
-        Ok(())
-    }
-
-    fn get_secret_key<'a>(env: &mut JNIEnv<'a>) -> Result<JObject<'a>, String> {
-        ensure_master_key(env)?;
-
-        let ks_class = env
-            .find_class("java/security/KeyStore")
-            .map_err(|e| format!("Find KeyStore: {e}"))?;
-        let ks_type = env
-            .new_string(ANDROID_KEY_STORE)
-            .map_err(|e| format!("New string KeyStore type: {e}"))?;
-        let key_store = env
-            .call_static_method(
-                &ks_class,
-                "getInstance",
-                "(Ljava/lang/String;)Ljava/security/KeyStore;",
-                &[JValue::Object(&ks_type)],
-            )
-            .map_err(|e| format!("KeyStore.getInstance: {e}"))?
-            .l()
-            .map_err(|e| format!("KeyStore instance cast: {e}"))?;
-
-        env.call_method(
-            &key_store,
-            "load",
-            "(Ljava/security/KeyStore$LoadStoreParameter;)V",
-            &[JValue::Object(&JObject::null())],
-        )
-        .map_err(|e| format!("KeyStore.load: {e}"))?;
-
-        let alias_jstr = env
-            .new_string(KEY_ALIAS)
-            .map_err(|e| format!("New string alias: {e}"))?;
-
-        let key = env
-            .call_method(
-                &key_store,
-                "getKey",
-                "(Ljava/lang/String;[C)Ljava/security/Key;",
-                &[
-                    JValue::Object(&alias_jstr),
-                    JValue::Object(&JObject::null()),
-                ],
-            )
-            .map_err(|e| format!("KeyStore.getKey: {e}"))?
-            .l()
-            .map_err(|e| format!("Key cast: {e}"))?;
-
+        let key_path = dir.join(KEY_FILE);
+        if key_path.exists() {
+            let bytes = std::fs::read(&key_path).map_err(|e| e.to_string())?;
+            if bytes.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                return Ok(key);
+            }
+        }
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+        std::fs::write(&key_path, key).map_err(|e| e.to_string())?;
         Ok(key)
     }
 
     pub fn encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
-        let vm = get_vm()?;
-        let mut env = vm
-            .attach_current_thread()
-            .map_err(|e| format!("Attach JNI thread: {e}"))?;
-
-        let key = get_secret_key(&mut env)?;
-
-        let cipher_class = env
-            .find_class("javax/crypto/Cipher")
-            .map_err(|e| format!("Find Cipher: {e}"))?;
-        let trans_str = env
-            .new_string(CIPHER_TRANSFORMATION)
-            .map_err(|e| format!("New string Cipher transformation: {e}"))?;
-        let cipher = env
-            .call_static_method(
-                &cipher_class,
-                "getInstance",
-                "(Ljava/lang/String;)Ljavax/crypto/Cipher;",
-                &[JValue::Object(&trans_str)],
+        let key = get_or_create_device_key()?;
+        let mut nonce = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce);
+        let cipher = XChaCha20Poly1305::new((&key).into());
+        let encrypted = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: b"pawstash:android:vault:v2",
+                },
             )
-            .map_err(|e| format!("Cipher.getInstance: {e}"))?
-            .l()
-            .map_err(|e| format!("Cipher instance cast: {e}"))?;
+            .map_err(|e| format!("Encryption error: {e}"))?;
 
-        env.call_method(
-            &cipher,
-            "init",
-            "(ILjava/security/Key;)V",
-            &[JValue::Int(1), JValue::Object(&key)],
-        )
-        .map_err(|e| format!("Cipher.init (ENCRYPT): {e}"))?;
-
-        let iv_obj = env
-            .call_method(&cipher, "getIV", "()[B", &[])
-            .map_err(|e| format!("Cipher.getIV: {e}"))?
-            .l()
-            .map_err(|e| format!("IV cast: {e}"))?;
-        let iv_array: &jni::objects::JByteArray = (&iv_obj).into();
-        let iv_bytes = env
-            .convert_byte_array(iv_array)
-            .map_err(|e| format!("convert_byte_array IV: {e}"))?;
-
-        let pt_array = env
-            .byte_array_from_slice(plaintext)
-            .map_err(|e| format!("byte_array_from_slice: {e}"))?;
-        let ct_obj = env
-            .call_method(&cipher, "doFinal", "([B)[B", &[JValue::Object(&pt_array)])
-            .map_err(|e| format!("Cipher.doFinal: {e}"))?
-            .l()
-            .map_err(|e| format!("CT cast: {e}"))?;
-        let ct_array: &jni::objects::JByteArray = (&ct_obj).into();
-        let ct_bytes = env
-            .convert_byte_array(ct_array)
-            .map_err(|e| format!("convert_byte_array CT: {e}"))?;
-
-        let mut envelope =
-            Vec::with_capacity(MAGIC_HEADER.len() + 1 + iv_bytes.len() + ct_bytes.len());
+        let mut envelope = Vec::with_capacity(MAGIC_HEADER.len() + 24 + encrypted.len());
         envelope.extend_from_slice(MAGIC_HEADER);
-        envelope.push(iv_bytes.len() as u8);
-        envelope.extend_from_slice(&iv_bytes);
-        envelope.extend_from_slice(&ct_bytes);
-
+        envelope.extend_from_slice(&nonce);
+        envelope.extend_from_slice(&encrypted);
         Ok(envelope)
     }
 
     pub fn decrypt(envelope: &[u8]) -> Result<Vec<u8>, String> {
-        if !envelope.starts_with(MAGIC_HEADER) {
-            return Ok(envelope.to_vec());
+        if envelope.starts_with(MAGIC_HEADER) {
+            let key = get_or_create_device_key()?;
+            let header_len = MAGIC_HEADER.len();
+            if envelope.len() < header_len + 24 {
+                return Err("Corrupted vault entry (too short)".to_string());
+            }
+            let nonce = &envelope[header_len..header_len + 24];
+            let ciphertext = &envelope[header_len + 24..];
+            let cipher = XChaCha20Poly1305::new((&key).into());
+            cipher
+                .decrypt(
+                    XNonce::from_slice(nonce),
+                    Payload {
+                        msg: ciphertext,
+                        aad: b"pawstash:android:vault:v2",
+                    },
+                )
+                .map_err(|e| format!("Decryption error: {e}"))
+        } else {
+            // Unencrypted legacy fallback
+            Ok(envelope.to_vec())
         }
-
-        let header_len = MAGIC_HEADER.len();
-        if envelope.len() <= header_len + 1 {
-            return Err("Envelope is too short".to_string());
-        }
-
-        let iv_len = envelope[header_len] as usize;
-        let iv_start = header_len + 1;
-        let iv_end = iv_start + iv_len;
-        if envelope.len() < iv_end {
-            return Err("Invalid IV length in envelope".to_string());
-        }
-
-        let iv_bytes = &envelope[iv_start..iv_end];
-        let ct_bytes = &envelope[iv_end..];
-
-        let vm = get_vm()?;
-        let mut env = vm
-            .attach_current_thread()
-            .map_err(|e| format!("Attach JNI thread: {e}"))?;
-
-        let key = get_secret_key(&mut env)?;
-
-        let gcm_spec_class = env
-            .find_class("javax/crypto/spec/GCMParameterSpec")
-            .map_err(|e| format!("Find GCMParameterSpec: {e}"))?;
-        let iv_array = env
-            .byte_array_from_slice(iv_bytes)
-            .map_err(|e| format!("byte_array_from_slice IV: {e}"))?;
-        let gcm_spec = env
-            .new_object(
-                &gcm_spec_class,
-                "(I[B)V",
-                &[JValue::Int(TAG_LENGTH_BITS), JValue::Object(&iv_array)],
-            )
-            .map_err(|e| format!("New GCMParameterSpec: {e}"))?;
-
-        let cipher_class = env
-            .find_class("javax/crypto/Cipher")
-            .map_err(|e| format!("Find Cipher: {e}"))?;
-        let trans_str = env
-            .new_string(CIPHER_TRANSFORMATION)
-            .map_err(|e| format!("New string Cipher transformation: {e}"))?;
-        let cipher = env
-            .call_static_method(
-                &cipher_class,
-                "getInstance",
-                "(Ljava/lang/String;)Ljavax/crypto/Cipher;",
-                &[JValue::Object(&trans_str)],
-            )
-            .map_err(|e| format!("Cipher.getInstance: {e}"))?
-            .l()
-            .map_err(|e| format!("Cipher instance cast: {e}"))?;
-
-        env.call_method(
-            &cipher,
-            "init",
-            "(ILjava/security/Key;Ljava/security/spec/AlgorithmParameterSpec;)V",
-            &[
-                JValue::Int(2),
-                JValue::Object(&key),
-                JValue::Object(&gcm_spec),
-            ],
-        )
-        .map_err(|e| format!("Cipher.init (DECRYPT): {e}"))?;
-
-        let ct_array = env
-            .byte_array_from_slice(ct_bytes)
-            .map_err(|e| format!("byte_array_from_slice CT: {e}"))?;
-        let pt_obj = env
-            .call_method(&cipher, "doFinal", "([B)[B", &[JValue::Object(&ct_array)])
-            .map_err(|e| format!("Cipher.doFinal: {e}"))?
-            .l()
-            .map_err(|e| format!("Plaintext cast: {e}"))?;
-        let pt_array: &jni::objects::JByteArray = (&pt_obj).into();
-        let pt_bytes = env
-            .convert_byte_array(pt_array)
-            .map_err(|e| format!("convert_byte_array PT: {e}"))?;
-
-        Ok(pt_bytes)
     }
 }
