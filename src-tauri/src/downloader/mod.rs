@@ -1,6 +1,7 @@
 pub mod aria2c;
 pub mod manager;
 pub mod native;
+pub mod notifications;
 
 use crate::config::settings::ProxyMode;
 use serde::{Deserialize, Serialize};

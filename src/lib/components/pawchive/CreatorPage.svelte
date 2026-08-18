@@ -48,12 +48,14 @@
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
+  import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
+  import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
 
   interface Props {
     service: string;
@@ -244,6 +246,19 @@
     void apiFetchCreatorArtworkDataUrl(service, creatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {});
   });
 
+  async function refreshCreator() {
+    try {
+      await Promise.all([
+        contentState.refreshCreator(service, creatorId),
+        apiFetchCreatorArtworkDataUrl(service, creatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {}),
+        apiFetchCreatorArtworkDataUrl(service, creatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {}),
+        checkFavoriteStatus()
+      ]);
+    } catch (error) {
+      notify.error(i18n.t('feed.refresh_failed') || 'Failed to refresh', error);
+    }
+  }
+
   $effect(() => {
     if (service && creatorId) {
       void checkFavoriteStatus();
@@ -342,12 +357,12 @@
       }
 
       if (!authenticated) {
-        toast.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
+        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
       } else {
-        toast.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'));
+        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), creatorName);
       }
     } catch (error) {
-      toast.error(i18n.t('post.favorite_failed'), { description: String(error) });
+      notify.error(i18n.t('post.favorite_failed'), error);
     } finally {
       favoritingPending = false;
     }
@@ -376,9 +391,9 @@
         download_scope: 'primary',
         poll_interval_minutes: 30
       });
-      toast.success(i18n.t('subscriptions.saved'));
+      notify.success(i18n.t('subscriptions.saved'), creatorName);
     } catch (error) {
-      toast.error(i18n.t('subscriptions.action_error'), { description: String(error) });
+      notify.error(i18n.t('subscriptions.action_error'), error);
     } finally {
       saving = false;
     }
@@ -398,9 +413,9 @@
         poll_interval_minutes: interval
       });
       subscriptionMenuOpen = false;
-      toast.success(i18n.t('subscriptions.saved'));
+      notify.success(i18n.t('subscriptions.saved'), creatorName);
     } catch (error) {
-      toast.error(i18n.t('subscriptions.action_error'), { description: String(error) });
+      notify.error(i18n.t('subscriptions.action_error'), error);
     } finally {
       saving = false;
     }
@@ -412,9 +427,9 @@
     try {
       await subscriptionState.remove(subscription.id);
       subscriptionMenuOpen = false;
-      toast.success(i18n.t('library.removed') || 'Unsubscribed successfully');
+      notify.success(i18n.t('library.removed') || 'Unsubscribed successfully', creatorName);
     } catch (error) {
-      toast.error(i18n.t('subscriptions.action_error'), { description: String(error) });
+      notify.error(i18n.t('subscriptions.action_error'), error);
     } finally {
       saving = false;
     }
@@ -464,15 +479,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        toast.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
     }
   }
 
@@ -484,9 +499,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
     }
   }
 
@@ -497,10 +512,13 @@
       for (const post of items) {
         await libraryState.save(post);
       }
-      toast.success(i18n.t('selection.save_to_library') || `Saved ${items.length} posts to library`);
+      notify.success(
+        i18n.t('selection.save_to_library') || 'Saved to library',
+        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('library.save_error') || 'Failed to save to library', err);
     }
   }
 
@@ -516,10 +534,13 @@
           count++;
         }
       }
-      toast.success(i18n.t('selection.download_all') || `Queued ${count} files for download`);
+      notify.success(
+        i18n.t('selection.download_all') || 'Queued downloads',
+        `${count} ${count === 1 ? 'file' : 'files'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
     }
   }
 
@@ -530,11 +551,14 @@
       for (const post of items) {
         await apiSetPostFavorite(post.service, post.user, post.id, isFav);
       }
-      toast.success(i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || `Updated favorites for ${items.length} posts`);
+      notify.success(
+        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || 'Updated favorites',
+        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+      );
       await accountState.fetchFavorites('post');
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
     }
   }
 </script>
@@ -741,7 +765,7 @@
   </div>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
+<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={refreshCreator}>
   {#snippet overlay()}
     <StickyHeader threshold={120} back={true}>
       {#snippet leading()}
@@ -790,6 +814,21 @@
           >
             {@render filterInnerContent()}
           </PopoverMenu>
+
+          <Button
+            variant="ghost"
+            class="btn-icon"
+            onclick={refreshCreator}
+            disabled={entry.loading}
+            title={i18n.t('feed.refresh') || 'Refresh'}
+            aria-label="Refresh"
+          >
+            {#if entry.loading}
+              <IconLoading class="w-5 h-5" />
+            {:else}
+              <IconArrowClockwise class="w-5 h-5" />
+            {/if}
+          </Button>
 
           <Button
             variant={isSelectionActive ? 'accent' : 'ghost'}
@@ -848,6 +887,21 @@
         >
           {@render filterInnerContent()}
         </PopoverMenu>
+
+        <Button
+          variant="ghost"
+          class="btn-icon"
+          onclick={refreshCreator}
+          disabled={entry.loading}
+          title={i18n.t('feed.refresh') || 'Refresh'}
+          aria-label="Refresh"
+        >
+          {#if entry.loading}
+            <IconLoading class="w-5 h-5" />
+          {:else}
+            <IconArrowClockwise class="w-5 h-5" />
+          {/if}
+        </Button>
 
         <Button
           variant={isSelectionActive ? 'accent' : 'ghost'}

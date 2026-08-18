@@ -18,7 +18,7 @@
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
   import { creatorAvatarUrl } from '$lib/utils/media';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
@@ -268,10 +268,13 @@
           poll_interval_minutes: 30
         });
       }
-      toast.success(i18n.t('selection.subscribe') || `Subscribed to ${items.length} creators`);
+      notify.success(
+        i18n.t('selection.subscribe') || 'Subscribed',
+        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('subscriptions.action_error') || 'Failed to subscribe', err);
     }
   }
 
@@ -285,10 +288,13 @@
           await subscriptionState.remove(sub.id);
         }
       }
-      toast.success(i18n.t('selection.unsubscribe') || `Unsubscribed from ${items.length} creators`);
+      notify.success(
+        i18n.t('selection.unsubscribe') || 'Unsubscribed',
+        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('subscriptions.action_error') || 'Failed to unsubscribe', err);
     }
   }
 
@@ -299,11 +305,14 @@
       for (const creator of items) {
         await apiSetCreatorFavorite(creator.service, creator.id, isFav);
       }
-      toast.success(i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || `Updated favorites for ${items.length} creators`);
+      notify.success(
+        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || 'Updated favorites',
+        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
+      );
       await accountState.fetchFavorites('creator');
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
     }
   }
 </script>
@@ -419,7 +428,7 @@
   </HeaderActions>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
+<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={handleRefresh}>
   {#snippet overlay()}
     <StickyHeader threshold={120} title={i18n.t('creators.title') || 'Creators'}>
       {#snippet center()}

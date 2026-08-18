@@ -23,7 +23,7 @@
   import { getPostDownloadTargets } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import type { PawchivePost } from '$lib/types/pawchive';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
@@ -78,15 +78,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        toast.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
     }
   }
 
@@ -98,9 +98,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
     }
   }
 
@@ -118,10 +118,13 @@
       for (const post of items) {
         await libraryState.save(post);
       }
-      toast.success(i18n.t('selection.save_to_library') || `Saved ${items.length} posts to library`);
+      notify.success(
+        i18n.t('selection.save_to_library') || 'Saved to library',
+        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('library.save_error') || 'Failed to save to library', err);
     }
   }
 
@@ -137,10 +140,13 @@
           count++;
         }
       }
-      toast.success(i18n.t('selection.download_all') || `Queued ${count} files for download`);
+      notify.success(
+        i18n.t('selection.download_all') || 'Queued downloads',
+        `${count} ${count === 1 ? 'file' : 'files'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
     }
   }
 
@@ -151,11 +157,14 @@
       for (const post of items) {
         await apiSetPostFavorite(post.service, post.user, post.id, isFav);
       }
-      toast.success(i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || `Updated favorites for ${items.length} posts`);
+      notify.success(
+        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || 'Updated favorites',
+        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+      );
       await accountState.fetchFavorites('post');
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
     }
   }
 
@@ -570,7 +579,7 @@
   </HeaderActions>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
+<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => feedState.refresh()}>
   {#snippet overlay()}
     <StickyHeader threshold={120} title={i18n.t('feed.title') || 'Feed'}>
       {#snippet center()}

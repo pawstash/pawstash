@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.8.1-10"
+version = "26.8.1-11"
 description = "High-Performance Cross-Platform Client for Pawchive API"
 authors = ["nichind"]
 license = "GPL-3.0-or-later"
@@ -55,7 +55,6 @@ keyring = { version = "3.6", default-features = false, features = ["sync-secret-
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
-ndk-context = "0.1"
 
 [features]
 default = ["custom-protocol"]

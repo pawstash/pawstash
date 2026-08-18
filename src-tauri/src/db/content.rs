@@ -728,11 +728,16 @@ impl ContentRepository {
         let rows = statement
             .query_map(params![entity_kind, account_id], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
-        rows.map(|row| {
-            row.map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
-        })
-        .collect()
+        let mut favorites = Vec::new();
+        for json in rows.flatten() {
+            match serde_json::from_str::<Favorite>(&json) {
+                Ok(fav) => favorites.push(fav),
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize favorite {}: {}", entity_kind, e);
+                }
+            }
+        }
+        Ok(favorites)
     }
 
     pub fn store_artwork_data_url(

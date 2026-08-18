@@ -144,6 +144,23 @@ impl NativeDownloader {
                 if let Ok(job) = repository.update_progress(&task.id, downloaded, total_size, speed)
                 {
                     let _ = app_handle.emit("download-job-updated", job);
+                    if let Ok((
+                        active,
+                        total_queued,
+                        downloaded_total,
+                        expected_total,
+                        speed_total,
+                    )) = repository.queue_progress_stats()
+                    {
+                        crate::downloader::notifications::update_download_notification(
+                            active,
+                            total_queued,
+                            downloaded_total,
+                            expected_total,
+                            speed_total,
+                            &task.filename,
+                        );
+                    }
                 }
             }
         }

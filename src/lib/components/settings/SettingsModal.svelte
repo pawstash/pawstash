@@ -23,8 +23,8 @@
     type CacheStats
   } from '$lib/utils/ipc';
   import { formatBytes } from '$lib/utils/formatters';
-  import { APP_VERSION } from '$lib/version';
-  import { toast } from 'svelte-sonner';
+  import { APP_VERSION, BUILD_TIME, COMMIT_HASH } from '$lib/version';
+  import { notify } from '$lib/utils/toast';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import SectionTitle from '$lib/components/layout/SectionTitle.svelte';
@@ -75,6 +75,7 @@
   import IconDiscord from '~icons/simple-icons/discord';
   import IconReddit from '~icons/simple-icons/reddit';
   import IconGithub from '~icons/simple-icons/github';
+  import IconHeart from '~icons/fluent/heart-24-filled';
 
   let settings = $state({ ...configState.settings });
   let resetPending = $state(false);
@@ -101,6 +102,22 @@
       return 'active';
     }
     return 'offline';
+  });
+
+  let formattedBuildTime = $derived.by(() => {
+    try {
+      const d = new Date(BUILD_TIME);
+      if (isNaN(d.getTime())) return BUILD_TIME;
+      return d.toLocaleString(i18n.currentLocale === 'ru' ? 'ru-RU' : 'en-US', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return BUILD_TIME;
+    }
   });
 
   const toastPositionOptions = $derived([
@@ -133,7 +150,7 @@
       settings = { ...loaded };
       await loadCacheStats();
     } catch (err) {
-      toast.error(`Failed to load settings: ${err}`);
+      notify.error(i18n.t('settings.load_failed') || 'Failed to load settings', err);
     }
   });
 
@@ -163,24 +180,41 @@
     };
   });
 
+  let bgImageInput = $state<HTMLInputElement | null>(null);
+  let bgVideoInput = $state<HTMLInputElement | null>(null);
+
   async function selectDownloadDir() {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select Download Directory'
-      });
-      if (selected && typeof selected === 'string') {
-        settings.download_dir = selected;
-        updateAndSaveSetting('download_dir', selected);
-        toast.success(`Download path updated!`);
+      if (layoutState.isMobile) {
+        const selected = await invoke<string | null>('pick_folder');
+        if (selected && typeof selected === 'string') {
+          settings.download_dir = selected;
+          updateAndSaveSetting('download_dir', selected);
+          notify.success(i18n.t('settings.download_path_updated'), selected);
+        }
+      } else {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: i18n.t('settings.download_dir')
+        });
+        if (selected && typeof selected === 'string') {
+          settings.download_dir = selected;
+          updateAndSaveSetting('download_dir', selected);
+          notify.success(i18n.t('settings.download_path_updated'), selected);
+        }
       }
     } catch (err) {
-      toast.error(`Folder selection failed: ${err}`);
+      notify.error(i18n.t('settings.download_dir'), err);
     }
   }
 
   async function selectCustomBackground(kind: 'image' | 'video') {
+    if (layoutState.isMobile) {
+      if (kind === 'image') bgImageInput?.click();
+      else bgVideoInput?.click();
+      return;
+    }
     try {
       const selected = await open({
         multiple: false,
@@ -196,9 +230,44 @@
         const storedPath = await invoke<string>('store_custom_background', { sourcePath: selected, kind });
         if (kind === 'image') backgroundState.setImageUrl(storedPath);
         else backgroundState.setVideoUrl(storedPath);
+        notify.success(
+          i18n.t(kind === 'image' ? 'settings.background_saved' : 'settings.background_video_saved'),
+          storedPath.split(/[/\\]/).pop() || storedPath
+        );
       }
+    } catch {
+      if (kind === 'image') bgImageInput?.click();
+      else bgVideoInput?.click();
+    }
+  }
+
+  async function handleFileInputChange(event: Event, kind: 'image' | 'video') {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+    try {
+      const reader = new FileReader();
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = (e) => reject(e);
+        reader.readAsDataURL(file);
+      });
+      const ext = file.name.split('.').pop() || (kind === 'image' ? 'png' : 'mp4');
+      const storedPath = await invoke<string>('store_custom_background_bytes', {
+        dataBase64: base64Data,
+        extension: ext,
+        kind
+      });
+      if (kind === 'image') backgroundState.setImageUrl(storedPath);
+      else backgroundState.setVideoUrl(storedPath);
+      notify.success(
+        i18n.t(kind === 'image' ? 'settings.background_saved' : 'settings.background_video_saved'),
+        file.name
+      );
     } catch (error) {
-      toast.error(i18n.t('settings.background_file_failed'), { description: String(error) });
+      notify.error(i18n.t('settings.background_file_failed'), error);
+    } finally {
+      target.value = '';
     }
   }
 
@@ -206,7 +275,7 @@
     try {
       cacheStats = await apiGetCacheStats();
     } catch (error) {
-      toast.error(i18n.t('settings.cache_stats_failed'), { description: String(error) });
+      notify.error(i18n.t('settings.cache_stats_failed'), error);
     }
   }
 
@@ -215,9 +284,12 @@
     cacheBusy = scope;
     try {
       cacheStats = scope === 'all' ? await apiClearAllContentCache() : await apiClearContentCache();
-      toast.success(i18n.t(scope === 'all' ? 'settings.cache_all_cleared' : 'settings.cache_cleared'));
+      notify.success(
+        i18n.t(scope === 'all' ? 'settings.cache_all_cleared' : 'settings.cache_cleared'),
+        i18n.t('settings.cache_usage_desc')
+      );
     } catch (error) {
-      toast.error(i18n.t('settings.cache_clear_failed'), { description: String(error) });
+      notify.error(i18n.t('settings.cache_clear_failed'), error);
     } finally {
       cacheBusy = null;
     }
@@ -238,7 +310,7 @@
     } catch (err: any) {
       (settings as any)[key] = previousValue;
       configState.updateSettings({ ...settings });
-      toast.error(`Failed to save: ${err}`);
+      notify.error(i18n.t('settings.save_failed') || 'Failed to save settings', err);
     }
   }
 
@@ -290,9 +362,12 @@
       backgroundState.reset();
       await loadCacheStats();
       showResetConfirm = false;
-      toast.success(i18n.t('settings.reset_success'));
+      notify.success(
+        i18n.t('settings.reset_success'),
+        i18n.t('settings.reset_all_desc')
+      );
     } catch (e) {
-      toast.error(i18n.t('settings.reset_failed'));
+      notify.error(i18n.t('settings.reset_failed'), e);
     } finally {
       resetPending = false;
     }
@@ -307,11 +382,14 @@
       const stats = await apiWipeAllData();
       cacheStats = stats;
       showWipeConfirm = false;
-      toast.success(i18n.t('settings.wipe_all_data_success'));
+      notify.success(
+        i18n.t('settings.wipe_all_data_success'),
+        i18n.t('settings.wipe_all_data_desc')
+      );
       await loadCacheStats();
       await downloadState.refresh();
     } catch (e: any) {
-      toast.error(i18n.t('settings.wipe_all_data_failed') + (e ? `: ${e}` : ''));
+      notify.error(i18n.t('settings.wipe_all_data_failed'), e);
     } finally {
       wipePending = false;
     }
@@ -324,45 +402,37 @@
 
       switch (sectionId) {
         case 'appearance':
+          themeState.reset();
+          backgroundState.reset();
           next.theme = defaults.theme;
           next.dynamic_accent = defaults.dynamic_accent;
           next.sticky_header = defaults.sticky_header;
-          next.scroll_edge_mask = defaults.scroll_edge_mask ?? true;
           next.layout_mode = defaults.layout_mode;
+          next.scroll_edge_mask = defaults.scroll_edge_mask;
+          next.titlebar_style = defaults.titlebar_style;
           next.toast_position = defaults.toast_position;
-          themeState.reset();
-          i18n.setLocale('en');
           break;
 
         case 'grid':
-          next.grid_scale = defaults.grid_scale;
           next.grid_aspect_ratio = defaults.grid_aspect_ratio;
+          next.grid_scale = defaults.grid_scale;
           break;
 
-        case 'proxy':
+        case 'downloads':
+          next.aria2_connections = defaults.aria2_connections;
+          next.use_aria2c = defaults.use_aria2c;
+          next.download_dir = defaults.download_dir;
+          break;
+
+        case 'network':
           next.proxy_mode = defaults.proxy_mode;
           next.proxy_url = defaults.proxy_url;
           next.proxy_username = defaults.proxy_username;
           next.proxy_password = defaults.proxy_password;
           next.proxy_bypass_local = defaults.proxy_bypass_local;
-          break;
-
-        case 'background':
-          backgroundState.reset();
-          break;
-
-        case 'network':
           next.api_domain = defaults.api_domain;
           next.file_domain = defaults.file_domain;
           next.image_domain = defaults.image_domain;
-          next.session_cookie = defaults.session_cookie;
-          next.pawchive_username = defaults.pawchive_username;
-          break;
-
-        case 'downloads':
-          next.use_aria2c = defaults.use_aria2c;
-          next.aria2_connections = defaults.aria2_connections;
-          next.download_dir = defaults.download_dir;
           break;
 
         case 'cache':
@@ -378,9 +448,12 @@
       settings = next;
       configState.updateSettings(next);
       await apiSaveSettings(next);
-      toast.success(i18n.t('settings.reset_section_success'));
+      notify.success(
+        i18n.t('settings.reset_section_success'),
+        i18n.t(`settings.section_${sectionId}`)
+      );
     } catch (err) {
-      toast.error(i18n.t('settings.reset_failed'), { description: String(err) });
+      notify.error(i18n.t('settings.reset_failed'), err);
     }
   }
 
@@ -515,6 +588,43 @@
   {/if}
 {/snippet}
 
+{#snippet authorBuildBar()}
+  <div class="flex flex-col items-center justify-center text-center w-full mt-2">
+    <div class="flex items-center justify-center gap-2 text-[16px] font-bold text-white/95 font-outfit">
+      <span>{i18n.t('settings.made_with')}</span>
+      <IconHeart class="w-4 h-4 text-[var(--color-danger,#f43f5e)] fill-current shrink-0" />
+      <span>{i18n.t('settings.by_nichind')}</span>
+    </div>
+    <span class="text-[13px] text-white/50 mt-1 mb-3 font-outfit select-none">
+      {i18n.t('settings.check_out_my_pages')}
+    </span>
+
+    <div class="grid grid-cols-2 gap-2.5 w-full">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        onclick={() => openExternalUrl('https://nichind.dev')}
+      >
+        <svg viewBox="0 0 106 78" fill="currentColor" class="w-5 h-4 opacity-70 shrink-0">
+          <path d="M106 78H71.7471L30.3184 30.6006V78H0V0H41.4277L106 78ZM106 24.375H87.873L67.7383 0H106V24.375Z" />
+        </svg>
+        <span class="truncate">nichind.dev</span>
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        onclick={() => openExternalUrl('https://github.com/nichind')}
+      >
+        <IconGithub class="w-5 h-5 opacity-70 shrink-0" />
+        <span class="truncate">GitHub</span>
+      </Button>
+    </div>
+  </div>
+{/snippet}
+
 <PageShell scrollable={true} scrollKey={navigationState.entryKey}>
   {#snippet overlay()}
     <StickyHeader threshold={120}>
@@ -531,136 +641,144 @@
       {@render settingsMenu('main')}
     </div>
 
+    {#if !layoutState.isMobile}
+      {@render authorBuildBar()}
+    {/if}
+
     {#if layoutState.isMobile}
-      <button
-        type="button"
-        class="mobile-profile-hero"
-        onclick={() => navigationState.navigateRoot('profile')}
-      >
-        <div class="mobile-hero-grid">
-          <div class="mobile-hero-pillar">
-            <div class="relative flex items-center justify-center">
-              <svg viewBox="0 0 602 602" fill="none" class="w-10 h-10" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="logo-settings-hero" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
-                    <stop stop-color="#FCD8D2"/>
-                    <stop offset="1" stop-color="#FEB8AD"/>
-                  </linearGradient>
-                </defs>
-                <g transform="translate(0, 8.5)">
-                  <path fill="url(#logo-settings-hero)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
-                </g>
-              </svg>
-              <span
-                class="mobile-hero-dot"
-                class:active={syncDotStatus === 'active'}
-                class:locked={syncDotStatus === 'locked'}
-                class:syncing={syncDotStatus === 'syncing'}
-                class:offline={syncDotStatus === 'offline'}
-              ></span>
-            </div>
-            <div class="mobile-pillar-meta">
-              <span class="mobile-pillar-tag">{i18n.t('profile.pawstash_sync')}</span>
-              <span class="mobile-pillar-name truncate">{cloudAccountName}</span>
-              <span class="mobile-pillar-sub truncate">
-                {#if syncState.status.configured}
-                  {#if syncState.busy}
-                    {i18n.t('sync.status_syncing')}
-                  {:else if !syncState.status.unlocked}
-                    {i18n.t('sync.locked')}
+      <div class="flex flex-col gap-3.5 w-full">
+        <button
+          type="button"
+          class="mobile-profile-hero"
+          onclick={() => navigationState.navigateRoot('profile')}
+        >
+          <div class="mobile-hero-grid">
+            <div class="mobile-hero-pillar">
+              <div class="relative flex items-center justify-center">
+                <svg viewBox="0 0 602 602" fill="none" class="w-10 h-10" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="logo-settings-hero" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#FCD8D2"/>
+                      <stop offset="1" stop-color="#FEB8AD"/>
+                    </linearGradient>
+                  </defs>
+                  <g transform="translate(0, 8.5)">
+                    <path fill="url(#logo-settings-hero)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
+                  </g>
+                </svg>
+                <span
+                  class="mobile-hero-dot"
+                  class:active={syncDotStatus === 'active'}
+                  class:locked={syncDotStatus === 'locked'}
+                  class:syncing={syncDotStatus === 'syncing'}
+                  class:offline={syncDotStatus === 'offline'}
+                ></span>
+              </div>
+              <div class="mobile-pillar-meta">
+                <span class="mobile-pillar-tag">{i18n.t('profile.pawstash_sync')}</span>
+                <span class="mobile-pillar-name truncate">{cloudAccountName}</span>
+                <span class="mobile-pillar-sub truncate">
+                  {#if syncState.status.configured}
+                    {#if syncState.busy}
+                      {i18n.t('sync.status_syncing')}
+                    {:else if !syncState.status.unlocked}
+                      {i18n.t('sync.locked')}
+                    {:else}
+                      rev {syncState.status.revision} · {i18n.t('profile.synced')}
+                    {/if}
                   {:else}
-                    rev {syncState.status.revision} · {i18n.t('profile.synced')}
+                    {i18n.t('profile.offline_session')}
                   {/if}
-                {:else}
-                  {i18n.t('profile.offline_session')}
-                {/if}
-              </span>
+                </span>
+              </div>
+            </div>
+
+            <div class="mobile-hero-divider"></div>
+
+            <div class="mobile-hero-pillar">
+              <div class="relative flex items-center justify-center">
+                <img src={pawchiveLogo} alt="Pawchive" class="w-10 h-10 object-contain" />
+                <span
+                  class="mobile-hero-dot"
+                  class:active={accountState.session.authenticated}
+                  class:offline={!accountState.session.authenticated}
+                ></span>
+              </div>
+              <div class="mobile-pillar-meta">
+                <span class="mobile-pillar-tag">Pawchive</span>
+                <span class="mobile-pillar-name truncate">
+                  {accountState.session.authenticated && accountState.session.username
+                    ? `@${accountState.session.username}`
+                    : i18n.t('profile.not_connected')}
+                </span>
+                <span class="mobile-pillar-sub truncate">
+                  {#if accountState.session.authenticated && (configState.settings.sync_pawchive_session || syncState.status.configured)}
+                    {i18n.t('profile.favorites_synced')}
+                  {:else}
+                    {i18n.t('profile.local_favorites')}
+                  {/if}
+                </span>
+              </div>
             </div>
           </div>
 
-          <div class="mobile-hero-divider"></div>
-
-          <div class="mobile-hero-pillar">
-            <div class="relative flex items-center justify-center">
-              <img src={pawchiveLogo} alt="Pawchive" class="w-10 h-10 object-contain" />
-              <span
-                class="mobile-hero-dot"
-                class:active={accountState.session.authenticated}
-                class:offline={!accountState.session.authenticated}
-              ></span>
-            </div>
-            <div class="mobile-pillar-meta">
-              <span class="mobile-pillar-tag">Pawchive</span>
-              <span class="mobile-pillar-name truncate">
-                {accountState.session.authenticated && accountState.session.username
-                  ? `@${accountState.session.username}`
-                  : i18n.t('profile.not_connected')}
-              </span>
-              <span class="mobile-pillar-sub truncate">
-                {#if accountState.session.authenticated && (configState.settings.sync_pawchive_session || syncState.status.configured)}
-                  {i18n.t('profile.favorites_synced')}
-                {:else}
-                  {i18n.t('profile.local_favorites')}
-                {/if}
-              </span>
-            </div>
+          <div class="mobile-hero-footer">
+            <span>{i18n.t('profile.title')}</span>
+            <IconChevronRight class="w-3.5 h-3.5 text-[var(--accent)]" />
           </div>
+        </button>
+
+        <div class="flex items-center justify-center gap-3 w-full mt-0.5">
+          <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-white/35 font-outfit select-none">
+            {i18n.t('settings.community')}
+          </span>
+          <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
         </div>
 
-        <div class="mobile-hero-footer">
-          <span>{i18n.t('profile.title')}</span>
-          <IconChevronRight class="w-3.5 h-3.5 text-[var(--accent)]" />
+        <div class="grid grid-cols-2 gap-2.5 w-full">
+          <Button
+            variant="ghost"
+            size="md"
+            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            onclick={() => openExternalUrl('https://t.me/pawstashapp')}
+          >
+            <IconTelegram class="w-5 h-5 opacity-70 shrink-0" />
+            <span class="truncate">Telegram</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="md"
+            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
+          >
+            <IconDiscord class="w-5 h-5 opacity-70 shrink-0" />
+            <span class="truncate">Discord</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="md"
+            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
+          >
+            <IconReddit class="w-5 h-5 opacity-70 shrink-0" />
+            <span class="truncate">r/pawstash</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="md"
+            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            onclick={() => openExternalUrl('https://github.com/pawstash')}
+          >
+            <IconGithub class="w-5 h-5 opacity-70 shrink-0" />
+            <span class="truncate">{i18n.t('settings.contribute')}</span>
+          </Button>
         </div>
-      </button>
 
-      <div class="flex items-center justify-center gap-3 w-full mt-1 mb-1">
-        <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-white/35 font-outfit select-none">
-          {i18n.t('settings.community')}
-        </span>
-        <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
-      </div>
-
-      <div class="grid grid-cols-2 gap-2.5 w-full mb-1">
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
-          onclick={() => openExternalUrl('https://t.me/pawstashapp')}
-        >
-          <IconTelegram class="w-5 h-5 opacity-70 shrink-0" />
-          <span class="truncate">Telegram</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
-          onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
-        >
-          <IconDiscord class="w-5 h-5 opacity-70 shrink-0" />
-          <span class="truncate">Discord</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
-          onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
-        >
-          <IconReddit class="w-5 h-5 opacity-70 shrink-0" />
-          <span class="truncate">r/pawstash</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
-          onclick={() => openExternalUrl('https://github.com/pawstash')}
-        >
-          <IconGithub class="w-5 h-5 opacity-70 shrink-0" />
-          <span class="truncate">{i18n.t('settings.contribute')}</span>
-        </Button>
+        {@render authorBuildBar()}
       </div>
     {/if}
 
@@ -1280,6 +1398,15 @@
         </SettingItem>
       </div>
     </div>
+
+    <div class="flex flex-col items-center justify-center text-center w-full pt-4 pb-6 opacity-40 select-none">
+      <span class="text-[12px] font-mono tracking-wider font-semibold text-white/90">
+        Pawstash v{APP_VERSION} ({COMMIT_HASH})
+      </span>
+      <span class="text-[11.5px] text-white/70 mt-0.5 font-outfit">
+        {i18n.t('settings.built_on')} {formattedBuildTime}
+      </span>
+    </div>
   </div>
 </PageShell>
 
@@ -1362,6 +1489,22 @@
     </div>
   </div>
 </Modal>
+
+<input
+  bind:this={bgImageInput}
+  type="file"
+  accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+  class="hidden"
+  onchange={(e) => void handleFileInputChange(e, 'image')}
+/>
+
+<input
+  bind:this={bgVideoInput}
+  type="file"
+  accept="video/mp4,video/webm"
+  class="hidden"
+  onchange={(e) => void handleFileInputChange(e, 'video')}
+/>
 
 <style>
   .settings-page {

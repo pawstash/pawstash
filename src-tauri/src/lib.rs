@@ -91,6 +91,12 @@ pub fn run() {
             subscription_manager.start(app.handle().clone());
             sync_manager.start(app.handle().clone());
 
+            #[cfg(desktop)]
+            let _ = setup_desktop_tray(app);
+
+            #[cfg(target_os = "android")]
+            commands::set_android_app_handle(app.handle().clone());
+
             app.manage(AppState {
                 axum_port,
                 pawchive_client: pawchive_client.clone(),
@@ -105,6 +111,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_pending_deep_link,
             get_axum_port,
             check_aria2c_installed,
             probe_download_size,
@@ -115,9 +122,12 @@ pub fn run() {
             clear_all_content_cache,
             wipe_all_data,
             store_custom_background,
+            store_custom_background_bytes,
             clear_custom_background,
             open_in_browser,
             open_downloads_folder,
+            open_download_file,
+            pick_folder,
             save_settings,
             get_account_session,
             login_account,
@@ -189,4 +199,59 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(desktop)]
+fn setup_desktop_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::{
+        menu::{Menu, MenuItem},
+        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    };
+
+    let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        let _tray = TrayIconBuilder::with_id("pawstash-tray")
+            .icon(icon)
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .tooltip("Pawstash")
+            .on_menu_event(move |app_handle, event| match event.id.as_ref() {
+                "show" => {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                }
+                "quit" => {
+                    app_handle.exit(0);
+                }
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let app = tray.app_handle();
+                    if let Some(window) = app.get_webview_window("main") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                        } else {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                }
+            })
+            .build(app)?;
+    }
+
+    Ok(())
 }

@@ -2,7 +2,7 @@ export type RootRouteName = 'feed' | 'favorites' | 'library' | 'creators' | 'dow
 
 export type AppRoute =
   | { name: RootRouteName }
-  | { name: 'post'; service: string; creatorId: string; postId: string }
+  | { name: 'post'; service: string; creatorId: string; postId: string; initialMedia?: string; openViewer?: boolean }
   | { name: 'creator'; service: string; creatorId: string };
 
 interface HistoryEntry {
@@ -21,9 +21,20 @@ function encode(value: string) {
 }
 
 function parseRoute(hash: string): AppRoute {
-  const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  const [routePath, queryString] = hash.replace(/^#\/?/, '').split('?');
+  const parts = routePath.split('/').filter(Boolean).map(decodeURIComponent);
+  const searchParams = new URLSearchParams(queryString || '');
   if (parts[0] === 'post' && parts.length >= 4) {
-    return { name: 'post', service: parts[1], creatorId: parts[2], postId: parts[3] };
+    const initialMedia = searchParams.get('media') || undefined;
+    const openViewer = searchParams.get('viewer') === '1' ? true : undefined;
+    return {
+      name: 'post',
+      service: parts[1],
+      creatorId: parts[2],
+      postId: parts[3],
+      initialMedia,
+      openViewer
+    };
   }
   if (parts[0] === 'creator' && parts.length >= 3) {
     return { name: 'creator', service: parts[1], creatorId: parts[2] };
@@ -43,7 +54,11 @@ function parseRoute(hash: string): AppRoute {
 
 function routeHash(route: AppRoute) {
   if (route.name === 'post') {
-    return `#/post/${encode(route.service)}/${encode(route.creatorId)}/${encode(route.postId)}`;
+    const params = new URLSearchParams();
+    if (route.initialMedia) params.set('media', route.initialMedia);
+    if (route.openViewer) params.set('viewer', '1');
+    const qs = params.toString();
+    return `#/post/${encode(route.service)}/${encode(route.creatorId)}/${encode(route.postId)}${qs ? `?${qs}` : ''}`;
   }
   if (route.name === 'creator') {
     return `#/creator/${encode(route.service)}/${encode(route.creatorId)}`;
@@ -157,8 +172,8 @@ export class NavigationState {
     this.navigate({ name });
   }
 
-  openPost(service: string, creatorId: string, postId: string) {
-    this.navigate({ name: 'post', service, creatorId, postId });
+  openPost(service: string, creatorId: string, postId: string, initialMedia?: string, openViewer?: boolean) {
+    this.navigate({ name: 'post', service, creatorId, postId, initialMedia, openViewer });
   }
 
   openCreator(service: string, creatorId: string) {

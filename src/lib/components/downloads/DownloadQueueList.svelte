@@ -37,7 +37,7 @@
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
   import IconDelete from '~icons/fluent/delete-20-regular';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
 
   interface DownloadIdentity {
     service: string;
@@ -116,8 +116,8 @@
     return { service: item.service, creatorId: item.creator_id, postId: item.post_id, key: `${item.service}:${item.creator_id}:${item.post_id}` };
   }
 
-  function openPost(identity?: DownloadIdentity) {
-    if (identity) navigationState.openPost(identity.service, identity.creatorId, identity.postId);
+  function openPost(identity?: DownloadIdentity, initialMedia?: string, openViewer?: boolean) {
+    if (identity) navigationState.openPost(identity.service, identity.creatorId, identity.postId, initialMedia, openViewer);
   }
 
   function previewItem(items: DownloadItem[]) {
@@ -189,7 +189,7 @@
     try {
       await apiOpenDownloadsFolder();
     } catch (error) {
-      toast.error(i18n.t('downloads.open_folder_failed'), { description: String(error) });
+      notify.error(i18n.t('downloads.open_folder_failed'), error);
     }
   }
 
@@ -223,10 +223,13 @@
           await downloadState.pause(item.id);
         }
       }
-      toast.success(i18n.t('downloads.pause') || 'Paused selected downloads');
+      notify.success(
+        i18n.t('downloads.pause') || 'Paused',
+        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Failed to pause downloads', err);
     }
   }
 
@@ -239,10 +242,13 @@
           await downloadState.resume(item.id);
         }
       }
-      toast.success(i18n.t('downloads.resume') || 'Resumed selected downloads');
+      notify.success(
+        i18n.t('downloads.resume') || 'Resumed',
+        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Failed to resume downloads', err);
     }
   }
 
@@ -255,10 +261,13 @@
           await downloadState.retry(item.id);
         }
       }
-      toast.success(i18n.t('downloads.retry') || 'Retried selected downloads');
+      notify.success(
+        i18n.t('downloads.retry') || 'Retrying',
+        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Failed to retry downloads', err);
     }
   }
 
@@ -269,10 +278,13 @@
       for (const item of items) {
         await downloadState.remove(item.id);
       }
-      toast.success(i18n.t('downloads.remove') || 'Removed selected downloads');
+      notify.success(
+        i18n.t('downloads.remove') || 'Removed',
+        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+      );
       selectionState.exit();
     } catch (err) {
-      toast.error(String(err));
+      notify.error(i18n.t('downloads.action_error') || 'Failed to remove downloads', err);
     }
   }
 
@@ -405,7 +417,7 @@
   </HeaderActions>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
+<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => downloadState.refresh()}>
   {#snippet overlay()}
     <StickyHeader threshold={120} title={i18n.t('downloads.title') || 'Downloads'}>
       {#snippet center()}
@@ -447,7 +459,7 @@
             {item}
             previewUrl={previewUrl(item)}
             postTitle={item.post_title}
-            onopen={identity ? () => openPost(identity) : undefined}
+            onopen={identity ? (openViewer) => openPost(identity, item.url || item.filename || item.media_id, openViewer) : undefined}
             orderedKeys={downloadKeys}
             itemsMap={downloadsMap}
           />

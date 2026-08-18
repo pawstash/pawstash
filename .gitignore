@@ -10,8 +10,17 @@ dist/
 
 # Tauri & Rust
 src-tauri/target/
-src-tauri/gen/
 *.pdb
+
+# Android build artifacts (tracks custom Kotlin/Manifest/Res in git, ignores build outputs)
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/**/build/
+src-tauri/gen/android/**/.cxx/
+src-tauri/gen/android/**/bin/
+src-tauri/gen/android/**/*.apk
+src-tauri/gen/android/**/*.aab
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/**/jniLibs/
 
 # IDE & OS files
 .vscode/

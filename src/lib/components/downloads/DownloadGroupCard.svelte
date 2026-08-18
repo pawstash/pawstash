@@ -4,7 +4,7 @@
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
@@ -44,7 +44,7 @@
     if (busy || !jobs.length) return;
     busy = true;
     try { await Promise.all(jobs.map((item) => operation(item.id))); }
-    catch (error) { toast.error(i18n.t('downloads.action_error'), { description: String(error) }); }
+    catch (error) { notify.error(i18n.t('downloads.action_error'), error); }
     finally { busy = false; }
   }
 </script>

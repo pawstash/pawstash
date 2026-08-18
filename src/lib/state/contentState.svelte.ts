@@ -112,6 +112,28 @@ export class ContentState {
     }
   }
 
+  async refreshCreator(service: string, creatorId: string) {
+    const entry = this.getCreator(service, creatorId);
+    if (entry.loading) return;
+    entry.loading = true;
+    entry.error = null;
+    try {
+      const [profile, posts] = await Promise.all([
+        apiFetchCreatorProfile(service, creatorId),
+        apiFetchCreatorPosts(service, creatorId, undefined, 0)
+      ]);
+      entry.profile = profile;
+      entry.posts = posts;
+      entry.offset = PAGE_SIZE;
+      entry.hasMore = posts.length === PAGE_SIZE;
+      entry.loaded = true;
+    } catch (error) {
+      entry.error = errorMessage(error);
+    } finally {
+      entry.loading = false;
+    }
+  }
+
   async loadMoreCreatorPosts(service: string, creatorId: string) {
     const entry = this.getCreator(service, creatorId);
     if (entry.loadingMore || !entry.hasMore) return;

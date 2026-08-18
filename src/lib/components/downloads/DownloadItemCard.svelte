@@ -4,8 +4,9 @@
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import { selectionState } from '$lib/state/selectionState.svelte';
+  import { apiOpenDownloadFile } from '$lib/utils/ipc';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconError from '~icons/fluent/error-circle-24-filled';
@@ -16,13 +17,15 @@
   import IconDismiss from '~icons/fluent/dismiss-20-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
+  import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
 
   interface Props {
     item: DownloadItem;
     previewUrl?: string;
     postTitle?: string;
-    onopen?: () => void;
+    onopen?: (openViewer?: boolean) => void;
     orderedKeys?: string[];
     itemsMap?: Map<string, DownloadItem>;
   }
@@ -30,6 +33,7 @@
   const ratios = { square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const;
   let busy = $state(false);
   let previewFailed = $state(false);
+  let playMenuOpen = $state(false);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let percent = $derived(item.total_bytes > 0 ? Math.min(100, Math.round(item.downloaded_bytes / item.total_bytes * 100)) : 0);
   let active = $derived(['queued', 'resolving', 'downloading', 'verifying'].includes(item.status));
@@ -54,7 +58,7 @@
       return;
     }
 
-    if (onopen) onopen();
+    if (onopen) onopen(false);
   }
 
   function handleSelectCheckbox(event: MouseEvent) {
@@ -62,12 +66,20 @@
     selectionState.toggle('downloads', item.id, item, orderedKeys, event.shiftKey, itemsMap);
   }
 
+  async function openFileExternally() {
+    try {
+      await apiOpenDownloadFile(item.final_path);
+    } catch (error) {
+      notify.error(i18n.t('downloads.open_file_failed'), error);
+    }
+  }
+
   async function action(event: MouseEvent, run: () => Promise<void>) {
     event.stopPropagation();
     if (busy) return;
     busy = true;
     try { await run(); }
-    catch (error) { toast.error(i18n.t('downloads.action_error'), { description: String(error) }); }
+    catch (error) { notify.error(i18n.t('downloads.action_error'), error); }
     finally { busy = false; }
   }
 </script>
@@ -93,6 +105,55 @@
         <IconCheckmark class="w-[14px] h-[14px]" />
       {/if}
     </button>
+  {:else if item.status === 'completed'}
+    <div class="download-actions-left">
+      <PopoverMenu
+        bind:open={playMenuOpen}
+        align="left"
+        width="220px"
+      >
+        {#snippet trigger({ toggle })}
+          <button
+            class="grid-tile-action download-action download-action-play"
+            class:active={playMenuOpen}
+            type="button"
+            onclick={(e) => { e.stopPropagation(); toggle(e); }}
+            title={i18n.t('downloads.open_externally')}
+            aria-label={i18n.t('downloads.open_externally')}
+          >
+            <IconPlay />
+          </button>
+        {/snippet}
+        {#snippet children({ close })}
+          <div class="download-play-menu">
+            {#if onopen}
+              <button
+                type="button"
+                class="download-play-menu-item"
+                onclick={(e) => { e.stopPropagation(); close(); onopen?.(true); }}
+              >
+                <IconDocument class="download-play-menu-icon" />
+                <div class="download-play-menu-text">
+                  <span class="download-play-menu-title">{i18n.t('downloads.open_in_post')}</span>
+                  <span class="download-play-menu-desc">{i18n.t('downloads.open_in_post_desc')}</span>
+                </div>
+              </button>
+            {/if}
+            <button
+              type="button"
+              class="download-play-menu-item"
+              onclick={(e) => { e.stopPropagation(); close(); void openFileExternally(); }}
+            >
+              <IconOpen class="download-play-menu-icon" />
+              <div class="download-play-menu-text">
+                <span class="download-play-menu-title">{i18n.t('downloads.open_in_system')}</span>
+                <span class="download-play-menu-desc">{i18n.t('downloads.open_in_system_desc')}</span>
+              </div>
+            </button>
+          </div>
+        {/snippet}
+      </PopoverMenu>
+    </div>
   {/if}
 
   {#if previewUrl && !previewFailed && mediaKind === 'image'}
@@ -156,6 +217,8 @@
   .download-tile.completed .download-copy { bottom: calc(32px * var(--grid-scale, 1)); }
   .download-copy .grid-tile-title { position: static; width: 100%; overflow-wrap: anywhere; word-break: break-word; }
   .download-filename { width: 100%; margin: 0; color: rgba(255,255,255,.62); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .download-actions-left { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); left: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
+  .download-actions-left .download-action { position: relative; inset: auto; flex: none; }
   .download-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
   .download-actions .download-action { position: relative; inset: auto; flex: none; }
   .download-status-row { pointer-events: none !important; }
@@ -166,4 +229,56 @@
   .download-progress.indeterminate::after { position: absolute; inset: 0; width: 35%; content: ''; background: var(--accent-primary); animation: indeterminate 1.2s ease-in-out infinite; }
   @keyframes indeterminate { from { transform: translateX(-110%); } to { transform: translateX(330%); } }
   @media (prefers-reduced-motion: reduce) { .download-progress.indeterminate::after { animation: none; width: 100%; opacity: .45; } }
+
+  .download-play-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px;
+  }
+  .download-play-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--radius-sm, 6px);
+    background: transparent;
+    color: var(--text-primary, #ffffff);
+    text-align: left;
+    cursor: pointer;
+    transition: background 150ms ease, transform 100ms ease;
+  }
+  .download-play-menu-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .download-play-menu-item:active {
+    background: rgba(255, 255, 255, 0.14);
+    transform: scale(0.99);
+  }
+  :global(.download-play-menu-icon) {
+    width: 18px !important;
+    height: 18px !important;
+    flex-shrink: 0;
+    color: var(--accent-primary, #a855f7);
+  }
+  .download-play-menu-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .download-play-menu-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary, #ffffff);
+    line-height: 1.25;
+  }
+  .download-play-menu-desc {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+    line-height: 1.2;
+  }
 </style>

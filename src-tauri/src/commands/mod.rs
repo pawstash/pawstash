@@ -79,6 +79,51 @@ pub fn store_custom_background(
 }
 
 #[tauri::command]
+pub fn store_custom_background_bytes(
+    app: tauri::AppHandle,
+    data_base64: String,
+    extension: String,
+    kind: String,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let allowed_extensions: &[&str] = match kind.as_str() {
+        "image" => &["png", "jpg", "jpeg", "webp", "gif", "avif"],
+        "video" => &["mp4", "webm"],
+        _ => return Err("Unsupported custom background type".to_string()),
+    };
+    let ext_clean = extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    if !allowed_extensions.contains(&ext_clean.as_str()) {
+        return Err("Unsupported custom background file format".to_string());
+    }
+
+    let clean_b64 = if let Some(idx) = data_base64.find(";base64,") {
+        &data_base64[idx + 8..]
+    } else {
+        &data_base64
+    };
+
+    let bytes = STANDARD
+        .decode(clean_b64.trim())
+        .map_err(|e| format!("Invalid base64 payload: {e}"))?;
+
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("background");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let destination = directory.join(format!("custom-{kind}.{ext_clean}"));
+    let importing = directory.join(format!(".importing-{kind}"));
+    std::fs::write(&importing, &bytes).map_err(|error| error.to_string())?;
+    remove_custom_background_files(&directory, &kind)?;
+    std::fs::rename(&importing, &destination).map_err(|error| error.to_string())?;
+    Ok(destination.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub fn clear_custom_background(app: tauri::AppHandle, kind: String) -> Result<(), String> {
     if kind != "image" && kind != "video" {
         return Err("Unsupported custom background type".to_string());
@@ -767,32 +812,56 @@ pub async fn set_creator_favorite(
             .await
         {
             Ok(profile) => profile,
-            Err(_) => state
-                .content
-                .get_creator(&service, &creator_id)?
-                .ok_or_else(|| "Creator is not cached".to_string())?,
+            Err(_) => {
+                if let Ok(Some(cached)) = state.content.get_creator(&service, &creator_id) {
+                    cached
+                } else {
+                    crate::api::models::CreatorProfile {
+                        id: creator_id.clone(),
+                        name: creator_id.clone(),
+                        service: service.clone(),
+                        public_id: None,
+                        relation_id: None,
+                        indexed: None,
+                        updated: None,
+                        kemono_favorited: None,
+                        ever_imported: None,
+                        extra: Default::default(),
+                    }
+                }
+            }
         };
-        state.content.save_creator(&profile)?;
-    }
-    state.content.set_pin(
-        "creator",
-        &service,
-        &creator_id,
-        None,
-        "favorite",
-        &account,
-        favorite,
-    )?;
-    if !favorite && !account.is_empty() {
-        let _ = state.content.set_pin(
+        let _ = state.content.save_creator(&profile);
+        state.content.set_pin(
             "creator",
             &service,
             &creator_id,
             None,
             "favorite",
-            "",
+            &account,
+            true,
+        )?;
+    } else {
+        state.content.set_pin(
+            "creator",
+            &service,
+            &creator_id,
+            None,
+            "favorite",
+            &account,
             false,
-        );
+        )?;
+        if !account.is_empty() {
+            let _ = state.content.set_pin(
+                "creator",
+                &service,
+                &creator_id,
+                None,
+                "favorite",
+                "",
+                false,
+            );
+        }
     }
     Ok(ApiActionResult {
         status: 200,
@@ -1524,12 +1593,12 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
     let settings = state.config_manager.load()?;
-    let folder = std::path::PathBuf::from(settings.download_dir);
-    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
+    let folder = std::path::PathBuf::from(&settings.download_dir);
+    let _ = std::fs::create_dir_all(&folder);
 
     #[cfg(target_os = "windows")]
     {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
         std::process::Command::new("explorer.exe")
             .arg(&folder)
             .spawn()
@@ -1538,6 +1607,7 @@ pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
         std::process::Command::new("open")
             .arg(&folder)
             .spawn()
@@ -1546,15 +1616,272 @@ pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
         std::process::Command::new("xdg-open")
             .arg(&folder)
             .spawn()
             .map_err(|error| error.to_string())?;
         Ok(())
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    {
+        let path_str = folder.to_string_lossy().to_string();
+        with_android_context(|env, context| {
+            let jstr = env
+                .new_string(&path_str)
+                .map_err(|e| format!("New string error: {e}"))?;
+            env.call_method(
+                context,
+                "openFolderInFileManager",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&jstr)],
+            )
+            .map_err(|e| format!("Failed to open folder in Android file manager: {e}"))?;
+            Ok(())
+        })
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
     {
         let _ = folder;
         Err("Opening the downloads folder is unsupported on this operating system".to_string())
     }
+}
+
+#[tauri::command]
+pub fn open_download_file(file_path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&file_path);
+    if !path.exists() {
+        return Err("File not found on device".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        let path_str = canonical.to_string_lossy().to_string();
+        let path_clean = path_str.trim_start_matches(r"\\?\");
+
+        let operation = OsStr::new("open")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let target = OsStr::new(path_clean)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if result as isize <= 32 {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", path_clean])
+                .spawn()
+                .map_err(|e| format!("Failed to open file: {e}"))?;
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let path_str = path.to_string_lossy().to_string();
+        with_android_context(|env, context| {
+            let jstr = env
+                .new_string(&path_str)
+                .map_err(|e| format!("New string error: {e}"))?;
+            env.call_method(
+                context,
+                "openFileInNativeViewer",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&jstr)],
+            )
+            .map_err(|e| format!("Failed to open file in Android viewer: {e}"))?;
+            Ok(())
+        })
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        let _ = path;
+        Err("Opening files is unsupported on this operating system".to_string())
+    }
+}
+
+#[cfg(target_os = "android")]
+static FOLDER_PICKER_TX: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_app_pawstash_client_MainActivity_onFolderPicked(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    path_jstr: jni::objects::JString,
+) {
+    let path: Option<String> = if !path_jstr.is_null() {
+        env.get_string(&path_jstr)
+            .ok()
+            .map(|s| s.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    if let Ok(mut lock) = FOLDER_PICKER_TX.lock() {
+        if let Some(tx) = lock.take() {
+            let _ = tx.send(path);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+static ANDROID_APP_CONTEXT: std::sync::RwLock<Option<(jni::JavaVM, jni::objects::GlobalRef)>> =
+    std::sync::RwLock::new(None);
+
+#[cfg(target_os = "android")]
+static APP_HANDLE: std::sync::RwLock<Option<tauri::AppHandle>> = std::sync::RwLock::new(None);
+
+#[cfg(target_os = "android")]
+pub fn set_android_app_handle(handle: tauri::AppHandle) {
+    if let Ok(mut lock) = APP_HANDLE.write() {
+        *lock = Some(handle);
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_app_pawstash_client_MainActivity_onDeepLinkReceived(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    json_jstr: jni::objects::JString,
+) {
+    if let Ok(json) = env.get_string(&json_jstr) {
+        let json_str = json.to_string_lossy().to_string();
+        if let Ok(lock) = APP_HANDLE.read() {
+            if let Some(handle) = lock.as_ref() {
+                use tauri::Emitter;
+                let _ = handle.emit("open-post-deep-link", json_str);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_app_pawstash_client_MainActivity_initAndroidContext(
+    env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    activity: jni::objects::JObject,
+) {
+    if let Ok(vm) = env.get_java_vm() {
+        if let Ok(global_ref) = env.new_global_ref(&activity) {
+            if let Ok(mut lock) = ANDROID_APP_CONTEXT.write() {
+                *lock = Some((vm, global_ref));
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn with_android_context<F, R>(f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut jni::JNIEnv, &jni::objects::JObject) -> Result<R, String>,
+{
+    let lock = ANDROID_APP_CONTEXT
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    let (vm, context_ref) = lock
+        .as_ref()
+        .ok_or_else(|| "Android context not initialized yet".to_string())?;
+
+    let mut env = vm
+        .attach_current_thread_as_daemon()
+        .map_err(|e| format!("JNI attach error: {e}"))?;
+
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+
+    let res = f(&mut env, context_ref.as_obj());
+
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+
+    res
+}
+
+#[cfg(target_os = "android")]
+fn launch_folder_picker_android() -> Result<(), String> {
+    with_android_context(|env, context| {
+        env.call_method(context, "launchFolderPicker", "()V", &[])
+            .map_err(|e| format!("Failed to launch native folder picker: {e}"))?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn pick_folder() -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut lock = FOLDER_PICKER_TX
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            *lock = Some(tx);
+        }
+
+        launch_folder_picker_android()?;
+
+        match rx.await {
+            Ok(path) => Ok(path),
+            Err(_) => Ok(None),
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn get_pending_deep_link() -> Result<Option<String>, String> {
+    Ok(crate::downloader::notifications::get_pending_deep_link())
 }

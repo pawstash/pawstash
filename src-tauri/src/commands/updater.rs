@@ -120,24 +120,8 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
 fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
     #[cfg(target_os = "android")]
     {
-        let ctx = ndk_context::android_context();
-        let vm_ptr = ctx.vm();
-        let context_ptr = ctx.context();
-        if vm_ptr.is_null() || context_ptr.is_null() {
-            return Ok(std::env::temp_dir());
-        }
-        let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()).map_err(|e| e.to_string())? };
-        let mut env = vm
-            .attach_current_thread_as_daemon()
-            .map_err(|e| e.to_string())?;
-        let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
-
-        if env.exception_check().unwrap_or(false) {
-            let _ = env.exception_clear();
-        }
-
-        match env.call_method(&context, "getCacheDir", "()Ljava/io/File;", &[]) {
-            Ok(val) => {
+        if let Ok(path) = crate::commands::with_android_context(|env, context| {
+            if let Ok(val) = env.call_method(context, "getCacheDir", "()Ljava/io/File;", &[]) {
                 if let Ok(file_obj) = val.l() {
                     if !file_obj.is_null() {
                         if let Ok(path_val) = env.call_method(
@@ -159,11 +143,16 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
                     }
                 }
             }
-            Err(_) => {
-                let _ = env.exception_clear();
-            }
+            Ok(std::path::PathBuf::from(
+                "/data/data/app.pawstash.client/cache",
+            ))
+        }) {
+            return Ok(path);
         }
-
+        let fallback = std::path::PathBuf::from("/data/data/app.pawstash.client/cache");
+        if fallback.exists() {
+            return Ok(fallback);
+        }
         Ok(std::env::temp_dir())
     }
 
@@ -376,180 +365,20 @@ fn launch_installer_and_exit(
 
 #[cfg(target_os = "android")]
 fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
-    let ctx = ndk_context::android_context();
-    let vm_ptr = ctx.vm();
-    let context_ptr = ctx.context();
-    if vm_ptr.is_null() || context_ptr.is_null() {
-        return Err("Android context not initialized".to_string());
-    }
-    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()).map_err(|e| e.to_string())? };
-    let mut env = vm
-        .attach_current_thread_as_daemon()
-        .map_err(|e| e.to_string())?;
-    let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
-
-    if env.exception_check().unwrap_or(false) {
-        let _ = env.exception_clear();
-    }
-
-    let file_class = match env.find_class("java/io/File") {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("Find File class: {e}"));
-        }
-    };
-
-    let apk_path_str = match env.new_string(apk_path.to_string_lossy()) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("APK path string: {e}"));
-        }
-    };
-
-    let file_obj = match env.new_object(
-        &file_class,
-        "(Ljava/lang/String;)V",
-        &[jni::objects::JValue::Object(&apk_path_str)],
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("New File: {e}"));
-        }
-    };
-
-    let file_provider_class = match env.find_class("androidx/core/content/FileProvider") {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("Find FileProvider class: {e}"));
-        }
-    };
-
-    let package_name =
-        if let Ok(val) = env.call_method(&context, "getPackageName", "()Ljava/lang/String;", &[]) {
-            if let Ok(obj) = val.l() {
-                let jstr: jni::objects::JString = obj.into();
-                let parsed = env
-                    .get_string(&jstr)
-                    .map(|s| s.to_string_lossy().to_string());
-                parsed.unwrap_or_else(|_| "app.pawstash.client".to_string())
-            } else {
-                "app.pawstash.client".to_string()
-            }
-        } else {
-            let _ = env.exception_clear();
-            "app.pawstash.client".to_string()
-        };
-    let authority_str = format!("{package_name}.fileprovider");
-    let authority_jstring = match env.new_string(&authority_str) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("Authority string: {e}"));
-        }
-    };
-
-    let uri_obj = match env.call_static_method(
-        &file_provider_class,
-        "getUriForFile",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
-        &[
-            jni::objects::JValue::Object(&context),
-            jni::objects::JValue::Object(&authority_jstring),
-            jni::objects::JValue::Object(&file_obj),
-        ],
-    ) {
-        Ok(val) => match val.l() {
-            Ok(obj) => obj,
-            Err(e) => {
-                let _ = env.exception_clear();
-                return Err(format!("Get Uri obj from FileProvider: {e}"));
-            }
-        },
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("FileProvider.getUriForFile: {e}"));
-        }
-    };
-
-    let intent_class = match env.find_class("android/content/Intent") {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("Find Intent: {e}"));
-        }
-    };
-
-    let action_view = match env.new_string("android.intent.action.VIEW") {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(e.to_string());
-        }
-    };
-
-    let intent_obj = match env.new_object(
-        &intent_class,
-        "(Ljava/lang/String;)V",
-        &[jni::objects::JValue::Object(&action_view)],
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(format!("New Intent: {e}"));
-        }
-    };
-
-    let mime_str = match env.new_string("application/vnd.android.package-archive") {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = env.exception_clear();
-            return Err(e.to_string());
-        }
-    };
-
-    if let Err(e) = env.call_method(
-        &intent_obj,
-        "setDataAndType",
-        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
-        &[
-            jni::objects::JValue::Object(&uri_obj),
-            jni::objects::JValue::Object(&mime_str),
-        ],
-    ) {
-        let _ = env.exception_clear();
-        return Err(format!("setDataAndType: {e}"));
-    }
-
-    let flags: i32 = 1 | 0x10000000;
-    if let Err(e) = env.call_method(
-        &intent_obj,
-        "addFlags",
-        "(I)Landroid/content/Intent;",
-        &[jni::objects::JValue::Int(flags)],
-    ) {
-        let _ = env.exception_clear();
-        return Err(format!("addFlags: {e}"));
-    }
-
-    if let Err(e) = env.call_method(
-        &context,
-        "startActivity",
-        "(Landroid/content/Intent;)V",
-        &[jni::objects::JValue::Object(&intent_obj)],
-    ) {
-        let _ = env.exception_clear();
-        return Err(format!("startActivity: {e}"));
-    }
-
-    if env.exception_check().unwrap_or(false) {
-        let _ = env.exception_clear();
-    }
-
-    Ok(())
+    let apk_path_str = apk_path.to_string_lossy().to_string();
+    crate::commands::with_android_context(|env, context| {
+        let jstr = env
+            .new_string(&apk_path_str)
+            .map_err(|e| format!("New string error: {e}"))?;
+        env.call_method(
+            context,
+            "installApk",
+            "(Ljava/lang/String;)V",
+            &[jni::objects::JValue::Object(&jstr)],
+        )
+        .map_err(|e| format!("Failed to call installApk: {e}"))?;
+        Ok(())
+    })
 }
 
 fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<String>, Option<u64>) {

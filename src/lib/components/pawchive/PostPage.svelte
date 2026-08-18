@@ -50,7 +50,7 @@
   import IconFolderAdd from '~icons/fluent/folder-add-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
 
   interface PostEmbed {
     url?: string;
@@ -62,8 +62,14 @@
     [key: string]: unknown;
   }
 
-  interface Props { service: string; creatorId: string; postId: string; }
-  let { service, creatorId, postId }: Props = $props();
+  interface Props {
+    service: string;
+    creatorId: string;
+    postId: string;
+    initialMedia?: string;
+    openViewer?: boolean;
+  }
+  let { service, creatorId, postId, initialMedia, openViewer }: Props = $props();
 
   const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
   let entry = $derived.by(() => contentState.posts[postCacheKey(service, creatorId, postId)] ?? emptyEntry);
@@ -281,6 +287,44 @@
     viewerFiles = nextIndex >= 0 ? sourceItems : [file, ...sourceItems];
     viewerIndex = nextIndex >= 0 ? nextIndex : 0;
   }
+
+  let initialViewerHandled = $state(false);
+  let lastHandledPostId = $state('');
+
+  $effect(() => {
+    if (postId !== lastHandledPostId) {
+      lastHandledPostId = postId;
+      initialViewerHandled = false;
+    }
+  });
+
+  $effect(() => {
+    if (!initialViewerHandled && (openViewer || initialMedia) && media.length > 0) {
+      initialViewerHandled = true;
+      let targetFile: Attachment | undefined;
+      if (initialMedia) {
+        const needle = initialMedia.toLowerCase();
+        targetFile = media.find((f) => {
+          const path = (f.path || '').toLowerCase();
+          const name = (f.name || '').toLowerCase();
+          return (
+            path === needle ||
+            name === needle ||
+            (name && needle.endsWith(name)) ||
+            (path && needle.endsWith(path)) ||
+            (path && path.endsWith(needle)) ||
+            (needle.includes(name) && name.length > 3)
+          );
+        });
+      }
+      if (!targetFile) {
+        targetFile = post?.file || media[0];
+      }
+      if (targetFile) {
+        openMediaViewer(targetFile, media);
+      }
+    }
+  });
 
   function handleCloseViewer(finalIndex?: number, finalTime?: number) {
     const closedIndex = typeof finalIndex === 'number' ? finalIndex : viewerIndex;
@@ -524,9 +568,9 @@
       await apiSetPostFavorite(service, creatorId, postId, targetState);
       isFavorited = targetState;
       if (!authenticated) {
-        toast.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
+        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
       } else {
-        toast.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'));
+        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'));
       }
       if (post.favorite_count !== undefined) {
         post.favorite_count = Math.max(0, post.favorite_count + (targetState ? 1 : -1));
@@ -538,7 +582,7 @@
       }
     } catch (error) {
       console.error('Failed to toggle post favorite:', error);
-      toast.error(i18n.t('post.favorite_failed'));
+      notify.error(i18n.t('post.favorite_failed'), error);
     } finally {
       favoritingPending = false;
     }
@@ -592,9 +636,9 @@
     const filename = item.filename;
     try {
       await downloadState.remove(item.id);
-      toast.success(i18n.t('post.download_deleted', { filename }));
+      notify.success(i18n.t('post.download_deleted', { filename }), filename);
     } catch (error) {
-      toast.error(i18n.t('post.download_delete_failed'), { description: String(error) });
+      notify.error(i18n.t('post.download_delete_failed'), error);
     } finally {
       deletingDownloadId = null;
     }
@@ -605,9 +649,9 @@
     try {
       if (!post) return;
       await downloadState.start(post, file.path, fileUrl(file), file.name || `${postId}_${index + 1}`);
-      toast.success(i18n.t('feed.download_started', { title: file.name || postId }));
+      notify.success(i18n.t('feed.download_started', { title: file.name || postId }), file.name || post.title || postId);
     } catch (error) {
-      toast.error(i18n.t('feed.download_failed', { error: String(error) }));
+      notify.error(i18n.t('feed.download_failed'), error);
     }
   }
 
@@ -630,8 +674,8 @@
       const started = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - started;
 
-      if (started > 0) toast.success(i18n.t('post.download_all_started', { count: started }));
-      if (failed > 0) toast.error(i18n.t('post.download_all_failed', { count: failed }));
+      if (started > 0) notify.success(i18n.t('post.download_all_started', { count: started }), post.title || undefined);
+      if (failed > 0) notify.error(i18n.t('post.download_all_failed', { count: failed }));
     } finally {
       downloadingAll = false;
     }
@@ -642,9 +686,9 @@
     const wasSaved = saved;
     try {
       await libraryState.toggle(post);
-      toast.success(i18n.t(wasSaved ? 'library.removed' : 'library.saved'));
+      notify.success(i18n.t(wasSaved ? 'library.removed' : 'library.saved'), post.title || undefined);
     } catch (error) {
-      toast.error(i18n.t('library.save_error'), { description: String(error) });
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -654,13 +698,13 @@
     try {
       if (isCurrentlyIn) {
         await libraryState.removeFromStash(collectionId, post);
-        toast.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
       } else {
         await libraryState.save(post, collectionId);
-        toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notify.success(i18n.t('library.added_to_stash') || 'Added to stash', post.title || undefined);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
     }
   }
 
@@ -669,9 +713,9 @@
     try {
       const newStash = await libraryState.createStash(name.trim());
       await libraryState.save(post, newStash.id);
-      toast.success(i18n.t('library.added_to_stash') || 'Added to stash');
+      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
     }
   }
 

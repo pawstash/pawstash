@@ -7,7 +7,7 @@
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { i18n } from '$lib/i18n';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import { formatDate } from '$lib/utils/formatters';
   import { isVideoUrl, postAttachmentCount, postMediaUrl, postThumbnailUrl } from '$lib/utils/media';
   import ServiceIcon from './ServiceIcon.svelte';
@@ -105,11 +105,9 @@
     event.preventDefault();
     try {
       await libraryState.save(post);
-      toast.success(i18n.t('library.saved') || 'Saved to library');
+      notify.success(i18n.t('library.saved') || 'Saved to library', post.title || undefined);
     } catch (error) {
-      toast.error(i18n.t('library.save_error'), {
-        description: error instanceof Error ? error.message : String(error)
-      });
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -122,13 +120,13 @@
     try {
       if (libraryState.selectedCollection?.kind === 'stash') {
         await libraryState.removeFromStash(collectionId, post);
-        toast.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
       } else {
         await libraryState.remove(post);
-        toast.success(i18n.t('library.removed') || 'Removed from library');
+        notify.success(i18n.t('library.removed') || 'Removed from library', post.title || undefined);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      notify.error(i18n.t('library.save_error') || 'Action failed', error);
     }
   }
 

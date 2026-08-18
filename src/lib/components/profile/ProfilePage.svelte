@@ -24,7 +24,7 @@
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import { invoke } from '@tauri-apps/api/core';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
 
   type SubView =
     | 'menu'
@@ -79,22 +79,22 @@
   onMount(() => {
     syncAccount = generateRandomId();
     void accountState.refresh().catch((error) =>
-      toast.error(i18n.t('profile.check_error'), { description: String(error) })
+      notify.error(i18n.t('profile.check_error'), error)
     );
   });
 
   async function runSyncAction(work: () => Promise<unknown>, successMessage?: string) {
     try {
       await work();
-      if (successMessage) toast.success(successMessage);
+      if (successMessage) notify.success(successMessage);
       activeView = 'menu';
     } catch (error: any) {
       const errStr = String(error?.message || error);
       if (!syncState.status.configured && activeView === 'create' && errStr.toLowerCase().includes('account already exists')) {
-        toast.error(i18n.t('sync.account_taken'));
+        notify.error(i18n.t('sync.account_taken'));
         syncAccount = generateRandomId();
       } else {
-        toast.error(i18n.t('sync.error'), { description: errStr });
+        notify.error(i18n.t('sync.error'), errStr);
       }
     } finally {
       syncPassword = '';
@@ -105,7 +105,7 @@
     if (activeView === 'create') {
       await runSyncAction(async () => {
         await syncState.create(syncServer, syncAccount, syncPassword, syncDevice);
-        toast.success(i18n.t('sync.configured'));
+        notify.success(i18n.t('sync.configured'));
         await openRecoveryView();
       });
     } else if (activeView === 'connect') {
@@ -126,7 +126,7 @@
       recoveryKitText = await syncState.getRecoveryKit();
       activeView = 'recovery_kit';
     } catch (error) {
-      toast.error(i18n.t('sync.error'), { description: String(error) });
+      notify.error(i18n.t('sync.error'), error);
     }
   }
 
@@ -145,7 +145,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(i18n.t('sync.recovery_copied'));
+    notify.success(i18n.t('sync.recovery_copied'));
   }
 
   async function handleUnlockSubmit() {
@@ -153,7 +153,7 @@
     await runSyncAction(async () => {
       await syncState.unlock(unlockPassword);
       unlockPassword = '';
-      toast.success(i18n.t('sync.status_ready'));
+      notify.success(i18n.t('sync.status_ready'));
     });
   }
 
@@ -163,7 +163,7 @@
       await syncState.changePassword(currentPassword, newPassword);
       currentPassword = '';
       newPassword = '';
-      toast.success(i18n.t('sync.password_changed'));
+      notify.success(i18n.t('sync.password_changed'));
     });
   }
 
@@ -172,11 +172,11 @@
     pawchiveLoginError = '';
     try {
       await accountState.login(pawchiveUsername, pawchivePassword);
-      toast.success(i18n.t('profile.connected'));
+      notify.success(i18n.t('profile.connected'), pawchiveUsername);
       activeView = 'menu';
     } catch (error) {
       pawchiveLoginError = String(error);
-      toast.error(i18n.t('profile.login_error'), { description: pawchiveLoginError });
+      notify.error(i18n.t('profile.login_error'), pawchiveLoginError);
     } finally {
       pawchivePassword = '';
     }
@@ -185,9 +185,9 @@
   async function logoutPawchive() {
     try {
       await accountState.logout();
-      toast.success(i18n.t('profile.logged_out'));
+      notify.success(i18n.t('profile.logged_out'));
     } catch (error) {
-      toast.error(i18n.t('profile.logout_error'), { description: String(error) });
+      notify.error(i18n.t('profile.logout_error'), error);
     }
   }
 

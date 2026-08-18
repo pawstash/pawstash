@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { emit } from '@tauri-apps/api/event';
+  import { emit, listen } from '@tauri-apps/api/event';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { i18n } from '$lib/i18n';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -12,7 +12,7 @@
   import { syncState } from '$lib/state/syncState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiGetSettings } from '$lib/utils/ipc';
+  import { apiGetSettings, apiGetPendingDeepLink } from '$lib/utils/ipc';
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
   import DesktopTitlebar from '$lib/components/layout/DesktopTitlebar.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
@@ -52,6 +52,25 @@
     document.addEventListener('touchstart', preventPinchZoom, { passive: false });
     document.addEventListener('touchmove', preventPinchZoom, { passive: false });
 
+    function handleDeepLinkJson(jsonStr: string | null) {
+      if (!jsonStr) return;
+      try {
+        const payload = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+        if (payload.action === 'open_post' && payload.service && payload.creatorId && payload.postId) {
+          navigationState.openPost(payload.service, payload.creatorId, payload.postId, undefined, true);
+        } else if (payload.action === 'open_downloads') {
+          navigationState.navigateRoot('downloads');
+        }
+      } catch (e) {
+        console.warn('Failed to parse deep link JSON:', e);
+      }
+    }
+
+    void apiGetPendingDeepLink().then(handleDeepLinkJson).catch(() => {});
+    const unlistenDeepLink = listen<string>('open-post-deep-link', (event) => {
+      handleDeepLinkJson(event.payload);
+    });
+
     void apiGetSettings()
       .then((settings) => {
         configState.updateSettings(settings);
@@ -68,6 +87,12 @@
     void creatorsState.load().catch((error) => console.warn('Failed to preload creators list', error));
 
     requestAnimationFrame(() => void emit('frontend-ready'));
+
+    return () => {
+      document.removeEventListener('touchstart', preventPinchZoom);
+      document.removeEventListener('touchmove', preventPinchZoom);
+      void unlistenDeepLink.then((u) => u());
+    };
   });
 </script>
 
@@ -111,6 +136,8 @@
             service={navigationState.route.service}
             creatorId={navigationState.route.creatorId}
             postId={navigationState.route.postId}
+            initialMedia={navigationState.route.initialMedia}
+            openViewer={navigationState.route.openViewer}
           />
         {:else if navigationState.route.name === 'creator'}
           <CreatorPage service={navigationState.route.service} creatorId={navigationState.route.creatorId} />

@@ -68,20 +68,25 @@ class AccountState {
 
   isPostFavorite(service: string, creatorId: string, postId: string): boolean {
     if (!this.favoritePosts) return false;
+    const s = service.toLowerCase();
+    const c = String(creatorId).toLowerCase();
+    const p = String(postId).toLowerCase();
     return this.favoritePosts.some(
       (f) =>
-        f.service === service &&
-        String(f.user ?? f.user_id ?? '') === String(creatorId) &&
-        String(f.id ?? '') === String(postId)
+        f.service?.toLowerCase() === s &&
+        String(f.user ?? f.user_id ?? '').toLowerCase() === c &&
+        String(f.id ?? '').toLowerCase() === p
     );
   }
 
   isCreatorFavorite(service: string, creatorId: string): boolean {
     if (!this.favoriteCreators) return false;
+    const s = service.toLowerCase();
+    const c = String(creatorId).toLowerCase();
     return this.favoriteCreators.some(
       (f) =>
-        f.service === service &&
-        String(f.id ?? f.user ?? f.user_id ?? '') === String(creatorId)
+        f.service?.toLowerCase() === s &&
+        String(f.id ?? f.user ?? f.user_id ?? '').toLowerCase() === c
     );
   }
 
@@ -102,12 +107,15 @@ class AccountState {
 
   removePostFavoriteOptimistic(service: string, creatorId: string, postId: string) {
     if (!this.favoritePosts) return;
+    const s = service.toLowerCase();
+    const c = String(creatorId).toLowerCase();
+    const p = String(postId).toLowerCase();
     this.favoritePosts = this.favoritePosts.filter(
       (f) =>
         !(
-          f.service === service &&
-          String(f.user ?? f.user_id ?? '') === String(creatorId) &&
-          String(f.id ?? '') === String(postId)
+          f.service?.toLowerCase() === s &&
+          String(f.user ?? f.user_id ?? '').toLowerCase() === c &&
+          String(f.id ?? '').toLowerCase() === p
         )
     );
   }
@@ -125,11 +133,13 @@ class AccountState {
 
   removeCreatorFavoriteOptimistic(service: string, creatorId: string) {
     if (!this.favoriteCreators) return;
+    const s = service.toLowerCase();
+    const c = String(creatorId).toLowerCase();
     this.favoriteCreators = this.favoriteCreators.filter(
       (f) =>
         !(
-          f.service === service &&
-          String(f.id ?? f.user ?? f.user_id ?? '') === String(creatorId)
+          f.service?.toLowerCase() === s &&
+          String(f.id ?? f.user ?? f.user_id ?? '').toLowerCase() === c
         )
     );
   }

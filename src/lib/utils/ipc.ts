@@ -53,6 +53,9 @@ export async function openExternalUrl(url: string) {
   }
 }
 export const apiOpenDownloadsFolder = () => invoke<void>('open_downloads_folder');
+export const apiOpenDownloadFile = (filePath: string) =>
+  invoke<void>('open_download_file', { filePath });
+export const apiPickFolder = () => invoke<string | null>('pick_folder');
 export const apiGetAccountSession = () => invoke<AccountSession>('get_account_session');
 export const apiLoginAccount = (username: string, password: string) =>
   invoke<AccountSession>('login_account', { username, password });
@@ -245,3 +248,6 @@ export const apiSetSyncEnabled = (enabled: boolean) =>
   invoke<SyncStatus>('set_sync_enabled', { enabled });
 export const apiResolveSyncConflict = (resolution: 'local' | 'remote') =>
   invoke<SyncStatus>('resolve_sync_conflict', { resolution });
+
+export const apiGetPendingDeepLink = () => invoke<string | null>('get_pending_deep_link');
+

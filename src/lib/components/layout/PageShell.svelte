@@ -8,6 +8,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { configState } from '$lib/state/configState.svelte';
+  import PullToRefresh from '$lib/components/ui/PullToRefresh.svelte';
 
   interface Props {
     scrollable?: boolean;
@@ -16,6 +17,7 @@
     overlay?: Snippet;
     class?: string;
     scrollKey?: string;
+    onrefresh?: () => Promise<void> | void;
   }
 
   let {
@@ -24,7 +26,8 @@
     children,
     overlay,
     class: extraClass = '',
-    scrollKey
+    scrollKey,
+    onrefresh
   }: Props = $props();
 
   const scrollContext = $state<ScrollableContext>({ viewport: null });
@@ -89,6 +92,10 @@
 
   {#if overlay}
     {@render overlay()}
+  {/if}
+
+  {#if onrefresh}
+    <PullToRefresh {onrefresh} scrollContainer={scrollContext.viewport} />
   {/if}
 </div>
 

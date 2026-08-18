@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { toast } from 'svelte-sonner';
+import { notify } from '$lib/utils/toast';
 import { i18n } from '$lib/i18n';
 import { formatBytes } from '$lib/utils/formatters';
 import { configState } from '$lib/state/configState.svelte';
@@ -60,24 +60,31 @@ export class UpdateState {
         if (!silent) {
           this.modalOpen = true;
         } else {
-          toast.info(i18n.t('update_available_toast', { version: result.latest_version }), {
-            duration: 8000,
-            action: {
-              label: i18n.t('update_view_changelog'),
-              onClick: () => {
-                this.modalOpen = true;
+          notify.info(
+            i18n.t('update_available_title'),
+            i18n.t('update_available_desc', { version: result.latest_version }),
+            {
+              duration: 9000,
+              action: {
+                label: i18n.t('update_view_changelog'),
+                onClick: () => {
+                  this.modalOpen = true;
+                }
               }
             }
-          });
+          );
         }
       } else if (!silent) {
-        toast.success(i18n.t('update_up_to_date'));
+        notify.success(
+          i18n.t('update_up_to_date_title'),
+          i18n.t('update_up_to_date_desc')
+        );
       }
     } catch (err: any) {
       const message = typeof err === 'string' ? err : err?.message || String(err);
       this.error = message;
       if (!silent) {
-        toast.error(i18n.t('update_check_failed') + `: ${message}`);
+        notify.error(i18n.t('update_check_failed'), message);
       }
     } finally {
       this.checking = false;
@@ -131,7 +138,7 @@ export class UpdateState {
       this.installing = true;
     } catch (err: any) {
       const message = typeof err === 'string' ? err : err?.message || String(err);
-      toast.error(i18n.t('update_install_failed') + `: ${message}`);
+      notify.error(i18n.t('update_install_failed'), message);
       this.downloading = false;
       this.installing = false;
     }

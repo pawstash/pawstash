@@ -318,6 +318,9 @@ impl DownloadManager {
         }
         if let Ok(mut active) = self.active.lock() {
             active.remove(&id);
+            if active.is_empty() {
+                crate::downloader::notifications::stop_download_service();
+            }
         }
     }
 
@@ -333,6 +336,19 @@ impl DownloadManager {
             .update_status(id, "resolving")
             .map_err(DownloadRunError::Failed)?;
         let _ = app_handle.emit("download-job-updated", job.clone());
+
+        if let Ok((active, total_queued, downloaded_total, expected_total, speed_total)) =
+            self.repository.queue_progress_stats()
+        {
+            crate::downloader::notifications::update_download_notification(
+                active.max(1),
+                total_queued.max(1),
+                downloaded_total,
+                expected_total,
+                speed_total,
+                &job.filename,
+            );
+        }
 
         let task = DownloadTask {
             id: job.id.clone(),
@@ -476,8 +492,41 @@ impl DownloadManager {
             .repository
             .mark_completed(id, &sha256, measured_size, &relative_blob.to_string_lossy())
             .map_err(DownloadRunError::Failed)?;
-        let _ = app_handle.emit("download-job-updated", completed);
+        Self::notify_system_media_scan(&job.final_path);
+        let _ = app_handle.emit("download-job-updated", completed.clone());
+        crate::downloader::notifications::notify_download_completed(
+            &completed.service,
+            &completed.creator_id,
+            &completed.post_id,
+            &completed.filename,
+            &completed.post_title,
+            1,
+        );
         Ok(())
+    }
+
+    fn notify_system_media_scan(path: &str) {
+        #[cfg(target_os = "android")]
+        {
+            let path_str = path.to_string();
+            let _ = crate::commands::with_android_context(|env, context| {
+                if let Ok(path_jstr) = env.new_string(&path_str) {
+                    if let Ok(class) = env.get_object_class(context) {
+                        let _ = env.call_static_method(
+                            &class,
+                            "scanMediaFile",
+                            "(Ljava/lang/String;)V",
+                            &[jni::objects::JValue::Object(&path_jstr)],
+                        );
+                    }
+                }
+                Ok(())
+            });
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = path;
+        }
     }
 
     async fn hash_file(path: &Path) -> Result<(String, u64), DownloadRunError> {

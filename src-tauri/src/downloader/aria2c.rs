@@ -160,6 +160,18 @@ impl Aria2cManager {
                                 let speed = parse("downloadSpeed");
                                 if let Ok(job) = repository.update_progress(&task.id, bytes, total, speed) {
                                     let _ = app_handle.emit("download-job-updated", job);
+                                    if let Ok((active, total_queued, downloaded_total, expected_total, speed_total)) =
+                                        repository.queue_progress_stats()
+                                    {
+                                        crate::downloader::notifications::update_download_notification(
+                                            active,
+                                            total_queued,
+                                            downloaded_total,
+                                            expected_total,
+                                            speed_total,
+                                            &task.filename,
+                                        );
+                                    }
                                 }
                                 if result.get("status").and_then(serde_json::Value::as_str) == Some("complete") {
                                     let shutdown = serde_json::json!({
