@@ -8,7 +8,7 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize } from '$lib/utils/ipc';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder } from '$lib/utils/ipc';
   import type { Attachment, Comment } from '$lib/types/pawchive';
   import type { DownloadItem } from '$lib/types/download';
   import { i18n } from '$lib/i18n';
@@ -638,7 +638,7 @@
     const filename = item.filename;
     try {
       await downloadState.remove(item.id);
-      notify.success(i18n.t('post.download_deleted', { filename }), filename);
+      notify.success(i18n.t('post.download_deleted'), filename);
     } catch (error) {
       notify.error(i18n.t('post.download_delete_failed'), error);
     } finally {
@@ -650,12 +650,42 @@
     if (!file.path) return;
     try {
       if (!post) return;
-      await downloadState.start(post, file.path, fileUrl(file), file.name || `${postId}_${index + 1}`);
-      notify.success(i18n.t('feed.download_started', { title: file.name || postId }), file.name || post.title || postId);
+      const targetName = file.name || `${postId}_${index + 1}`;
+      await downloadState.start(post, file.path, fileUrl(file), targetName);
+      notify.success(i18n.t('feed.download_started'), targetName);
     } catch (error) {
       notify.error(i18n.t('feed.download_failed'), error);
     }
   }
+
+  async function openFileInFolder(item: DownloadItem) {
+    try {
+      await apiShowInFolder(item.final_path);
+    } catch (error) {
+      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', error);
+    }
+  }
+
+  async function openPostFolder() {
+    const completed = media.map(attachmentDownload).find((d) => d && d.status === 'completed');
+    if (completed?.final_path) {
+      const p = completed.final_path;
+      const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+      const folder = lastSlash > 0 ? p.slice(0, lastSlash) : p;
+      try {
+        await apiShowInFolder(folder);
+      } catch (error) {
+        notify.error(i18n.t('downloads.open_folder_failed') || 'Failed to open folder', error);
+      }
+    }
+  }
+
+  let allMediaDownloaded = $derived(
+    media.length > 0 && media.every((file) => {
+      const job = attachmentDownload(file);
+      return job?.status === 'completed';
+    })
+  );
 
   async function downloadAllMedia() {
     if (!post || downloadingAll) return;
@@ -796,30 +826,62 @@
   {@const declaredSize = declaredBytes > 0 ? formatBytes(declaredBytes) : ''}
   {@const hasProgress = Boolean(active && !verifying && knownTotal > 0)}
   {@const progress = job && knownTotal > 0 ? Math.min(100, Math.round(job.downloaded_bytes / knownTotal * 100)) : 0}
-  <Button
-    variant="ghost"
-    disabled={Boolean(active) || deletingDownloadId === downloaded?.id}
-    onclick={() => downloaded ? void deleteDownload(downloaded) : void download(file, index)}
-    class={`media-download-btn${downloaded ? ' is-downloaded' : ''}${active ? ' is-downloading' : ''}${deletingDownloadId === downloaded?.id ? ' is-deleting' : ''}`}
-    title={i18n.t(downloaded ? 'post.delete_download' : verifying ? 'downloads.status_verifying' : active ? 'post.downloading' : 'post.download')}
-  >
-    {#if active}
-      {#if hasProgress}<span class="attachment-progress-fill" style:width={`${progress}%`}></span>{/if}
-      <span class="attachment-button-state downloading-state">
-        {#if hasProgress}<IconDownload />{:else}<IconLoading />{/if}
-        <span>{verifying ? i18n.t('downloads.status_verifying') : i18n.t('post.downloading')}{hasProgress ? ` · ${progress}%` : ''}</span>
-      </span>
-    {:else if downloaded && deletingDownloadId === downloaded.id}
-      <span class="attachment-button-state"><IconLoading /><span>{i18n.t('post.deleting')}</span></span>
-    {:else if downloaded}
-      <span class="attachment-state-stack">
-        <span class="attachment-button-state downloaded-state"><IconCheck /><span>{i18n.t('post.downloaded')} · {formatBytes(Math.max(downloaded.total_bytes, downloaded.downloaded_bytes))}</span></span>
-        <span class="attachment-button-state delete-state"><IconDelete /><span>{i18n.t('post.delete_download')}</span></span>
-      </span>
+  <div class="media-download-group">
+    {#if downloaded}
+      <Button
+        variant="ghost"
+        class="media-download-btn is-downloaded"
+        onclick={() => openMediaViewer(file, filteredMedia)}
+        title={i18n.t('post.viewer_open')}
+      >
+        <span class="attachment-button-state downloaded-state">
+          <IconCheck class="w-[16px] h-[16px]" />
+          <span>{i18n.t('post.downloaded')} · {formatBytes(Math.max(downloaded.total_bytes, downloaded.downloaded_bytes))}</span>
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn"
+        onclick={() => void openFileInFolder(downloaded)}
+        tooltip={i18n.t('downloads.show_in_folder')}
+        aria-label={i18n.t('downloads.show_in_folder')}
+      >
+        <IconFolder class="w-[18px] h-[18px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        disabled={deletingDownloadId === downloaded.id}
+        class="media-action-icon-btn is-danger"
+        onclick={() => void deleteDownload(downloaded)}
+        tooltip={i18n.t('post.delete_download')}
+        aria-label={i18n.t('post.delete_download')}
+      >
+        {#if deletingDownloadId === downloaded.id}
+          <IconLoading class="w-[18px] h-[18px]" />
+        {:else}
+          <IconDelete class="w-[18px] h-[18px]" />
+        {/if}
+      </Button>
     {:else}
-      <span class="attachment-button-state"><IconDownload /><span>{i18n.t('post.download')}{declaredSize ? ` · ${declaredSize}` : ''}</span></span>
+      <Button
+        variant="ghost"
+        disabled={Boolean(active)}
+        onclick={() => void download(file, index)}
+        class={`media-download-btn${active ? ' is-downloading' : ''}`}
+        title={i18n.t(verifying ? 'downloads.status_verifying' : active ? 'post.downloading' : 'post.download')}
+      >
+        {#if active}
+          {#if hasProgress}<span class="attachment-progress-fill" style:width={`${progress}%`}></span>{/if}
+          <span class="attachment-button-state downloading-state">
+            {#if hasProgress}<IconDownload />{:else}<IconLoading />{/if}
+            <span>{verifying ? i18n.t('downloads.status_verifying') : i18n.t('post.downloading')}{hasProgress ? ` · ${progress}%` : ''}</span>
+          </span>
+        {:else}
+          <span class="attachment-button-state"><IconDownload /><span>{i18n.t('post.download')}{declaredSize ? ` · ${declaredSize}` : ''}</span></span>
+        {/if}
+      </Button>
     {/if}
-  </Button>
+  </div>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey}>
@@ -1213,7 +1275,16 @@
 
       {#if post}
         <div class="post-footer-actions-row">
-          {#if media.length > 0}
+          {#if allMediaDownloaded}
+            <Button
+              variant="ghost"
+              onclick={() => void openPostFolder()}
+              class="post-footer-action"
+            >
+              <IconFolder class="w-[18px] h-[18px]" />
+              <span>{i18n.t('downloads.open_post_folder')}</span>
+            </Button>
+          {:else if media.length > 0}
             <Button
               variant="ghost"
               disabled={downloadingAll || media.every((file) => {
@@ -1757,9 +1828,14 @@
     opacity: 1;
   }
 
-  .media-item :global(.media-download-btn) {
+  .media-download-group {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     margin-top: 12px;
     align-self: center;
+    max-width: 100%;
   }
 
   :global(.media-download-btn) {
@@ -1770,8 +1846,28 @@
     isolation: isolate;
   }
 
+  :global(.media-download-btn.is-downloaded) {
+    width: auto;
+    min-width: 180px;
+  }
+
   :global(.media-download-btn.is-downloading:disabled) {
     opacity: 1;
+  }
+
+  :global(.media-action-icon-btn) {
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    border-radius: var(--radius-full) !important;
+    display: grid !important;
+    place-items: center !important;
+    flex-shrink: 0;
+    transition: color var(--duration-fast), background var(--duration-fast);
+  }
+
+  :global(.media-action-icon-btn.is-danger:hover) {
+    color: var(--danger, #ff626d) !important;
   }
 
   .attachment-button-state {
@@ -1797,38 +1893,8 @@
     min-width: 0;
   }
 
-  .attachment-state-stack {
-    display: grid;
-    width: 100%;
-    place-items: center;
-  }
-
-  .attachment-state-stack > .attachment-button-state {
-    grid-area: 1 / 1;
-  }
-
   .downloaded-state {
     color: var(--accent-primary);
-    opacity: 1;
-    visibility: visible;
-    transition: opacity var(--duration-fast), visibility var(--duration-fast);
-  }
-
-  .delete-state {
-    color: var(--danger, #ff626d);
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity var(--duration-fast), visibility var(--duration-fast);
-  }
-
-  :global(.media-download-btn.is-downloaded:hover) .downloaded-state {
-    opacity: 0;
-    visibility: hidden;
-  }
-
-  :global(.media-download-btn.is-downloaded:hover) .delete-state {
-    opacity: 1;
-    visibility: visible;
   }
 
   .attachment-progress-fill {
