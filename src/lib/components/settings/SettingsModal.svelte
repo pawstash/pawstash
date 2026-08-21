@@ -34,6 +34,7 @@
   import Select from '$lib/components/ui/Select.svelte';
   import Slider from '$lib/components/ui/Slider.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import TemplateInput, { type TemplateTag } from '$lib/components/ui/TemplateInput.svelte';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconKey from '~icons/fluent/key-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
@@ -66,6 +67,9 @@
   import IconArrowReset from '~icons/fluent/arrow-reset-24-regular';
   import IconMoreHorizontal from '~icons/fluent/more-horizontal-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
+  import IconCopy from '~icons/fluent/copy-24-regular';
+  import IconDocument from '~icons/fluent/document-24-regular';
+  import IconImage from '~icons/fluent/image-24-regular';
   import StorageBar from './StorageBar.svelte';
   import DownloadsStatsBar from '$lib/components/downloads/DownloadsStatsBar.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
@@ -422,6 +426,11 @@
           next.aria2_connections = defaults.aria2_connections;
           next.use_aria2c = defaults.use_aria2c;
           next.download_dir = defaults.download_dir;
+          next.download_group_by_creator = defaults.download_group_by_creator;
+          next.download_creator_folder_template = defaults.download_creator_folder_template;
+          next.download_group_by_post = defaults.download_group_by_post;
+          next.download_post_folder_template = defaults.download_post_folder_template;
+          next.download_filename_template = defaults.download_filename_template;
           break;
 
         case 'network':
@@ -477,6 +486,167 @@
     { id: 'amber', color: '#f59e0b', label: 'Amber' },
     { id: 'rose', color: '#f43f5e', label: 'Rose' }
   ];
+
+  let creatorFolderTags = $derived<TemplateTag[]>([
+    { tag: '{creator}', label: i18n.t('settings.tag_creator'), example: 'AuthorName' },
+    { tag: '{service}', label: i18n.t('settings.tag_service'), example: 'Platform' },
+    { tag: '{creator_id}', label: i18n.t('settings.tag_creator_id'), example: '12345' },
+    { tag: '{year}', label: i18n.t('settings.tag_year'), example: '2024' },
+    { tag: '{month}', label: i18n.t('settings.tag_month'), example: '08' }
+  ]);
+
+  let postFolderTags = $derived<TemplateTag[]>([
+    { tag: '{post_title}', label: i18n.t('settings.tag_post_title'), example: 'PostTitle' },
+    { tag: '{post_id}', label: i18n.t('settings.tag_post_id'), example: '67890' },
+    { tag: '{date}', label: i18n.t('settings.tag_date'), example: '2024-08-20' },
+    { tag: '{year}', label: i18n.t('settings.tag_year'), example: '2024' },
+    { tag: '{month}', label: i18n.t('settings.tag_month'), example: '08' },
+    { tag: '{day}', label: i18n.t('settings.tag_day'), example: '20' },
+    { tag: '{creator}', label: i18n.t('settings.tag_creator'), example: 'AuthorName' },
+    { tag: '{service}', label: i18n.t('settings.tag_service'), example: 'Platform' }
+  ]);
+
+  let filenameTags = $derived<TemplateTag[]>([
+    { tag: '{post_title}', label: i18n.t('settings.tag_post_title'), example: 'PostTitle' },
+    { tag: '{filename}', label: i18n.t('settings.tag_filename'), example: 'OriginalFilename.png' },
+    { tag: '{name}', label: i18n.t('settings.tag_name'), example: 'OriginalFilename' },
+    { tag: '{ext}', label: i18n.t('settings.tag_ext'), example: 'png' },
+    { tag: '{index}', label: i18n.t('settings.tag_index'), example: '1' },
+    { tag: '{date}', label: i18n.t('settings.tag_date'), example: '2024-08-20' },
+    { tag: '{year}', label: i18n.t('settings.tag_year'), example: '2024' },
+    { tag: '{month}', label: i18n.t('settings.tag_month'), example: '08' },
+    { tag: '{day}', label: i18n.t('settings.tag_day'), example: '20' },
+    { tag: '{creator}', label: i18n.t('settings.tag_creator'), example: 'AuthorName' },
+    { tag: '{service}', label: i18n.t('settings.tag_service'), example: 'Platform' },
+    { tag: '{post_id}', label: i18n.t('settings.tag_post_id'), example: '67890' }
+  ]);
+
+  function getPreviewPath(template: string, type: 'creator' | 'post' | 'file'): string {
+    let t = (template || '').trim();
+    if (type === 'creator') {
+      if (!t) t = '{creator}';
+      return t
+        .replaceAll('{creator}', 'AuthorName')
+        .replaceAll('{author}', 'AuthorName')
+        .replaceAll('{name}', 'AuthorName')
+        .replaceAll('{service}', 'Platform')
+        .replaceAll('{platform}', 'Platform')
+        .replaceAll('{creator_id}', '12345')
+        .replaceAll('{id}', '12345')
+        .replaceAll('{date}', '2024-08-20')
+        .replaceAll('{published}', '2024-08-20')
+        .replaceAll('{date_compact}', '20240820')
+        .replaceAll('{date_dots}', '2024.08.20')
+        .replaceAll('{year}', '2024')
+        .replaceAll('{yyyy}', '2024')
+        .replaceAll('{year_short}', '24')
+        .replaceAll('{yy}', '24')
+        .replaceAll('{month}', '08')
+        .replaceAll('{mm}', '08')
+        .replaceAll('{day}', '20')
+        .replaceAll('{dd}', '20')
+        .replaceAll('{year_month}', '2024-08');
+    }
+    if (type === 'post') {
+      if (!t) t = '{post_title}';
+      return t
+        .replaceAll('{post_title}', 'PostTitle')
+        .replaceAll('{title}', 'PostTitle')
+        .replaceAll('{post_id}', '67890')
+        .replaceAll('{id}', '67890')
+        .replaceAll('{creator}', 'AuthorName')
+        .replaceAll('{author}', 'AuthorName')
+        .replaceAll('{name}', 'AuthorName')
+        .replaceAll('{service}', 'Platform')
+        .replaceAll('{platform}', 'Platform')
+        .replaceAll('{date}', '2024-08-20')
+        .replaceAll('{published}', '2024-08-20')
+        .replaceAll('{date_compact}', '20240820')
+        .replaceAll('{date_dots}', '2024.08.20')
+        .replaceAll('{year}', '2024')
+        .replaceAll('{yyyy}', '2024')
+        .replaceAll('{year_short}', '24')
+        .replaceAll('{yy}', '24')
+        .replaceAll('{month}', '08')
+        .replaceAll('{mm}', '08')
+        .replaceAll('{day}', '20')
+        .replaceAll('{dd}', '20')
+        .replaceAll('{year_month}', '2024-08');
+    }
+    if (!t) t = '{post_title} - {filename}';
+    let res = t
+      .replaceAll('{post_title}', 'PostTitle')
+      .replaceAll('{title}', 'PostTitle')
+      .replaceAll('{post_id}', '67890')
+      .replaceAll('{creator}', 'AuthorName')
+      .replaceAll('{author}', 'AuthorName')
+      .replaceAll('{service}', 'Platform')
+      .replaceAll('{platform}', 'Platform')
+      .replaceAll('{filename}', 'OriginalFilename.png')
+      .replaceAll('{original_name}', 'OriginalFilename.png')
+      .replaceAll('{name}', 'OriginalFilename')
+      .replaceAll('{ext}', 'png')
+      .replaceAll('{index}', '1')
+      .replaceAll('{date}', '2024-08-20')
+      .replaceAll('{published}', '2024-08-20')
+      .replaceAll('{date_compact}', '20240820')
+      .replaceAll('{date_dots}', '2024.08.20')
+      .replaceAll('{year}', '2024')
+      .replaceAll('{yyyy}', '2024')
+      .replaceAll('{year_short}', '24')
+      .replaceAll('{yy}', '24')
+      .replaceAll('{month}', '08')
+      .replaceAll('{mm}', '08')
+      .replaceAll('{day}', '20')
+      .replaceAll('{dd}', '20')
+      .replaceAll('{year_month}', '2024-08')
+      .replaceAll('{media_id}', 'MediaID');
+
+    if (res.toLowerCase().endsWith('.png')) {
+      return res;
+    }
+    const cleanStem = res.replace(/\.png/gi, '');
+    return `${cleanStem}.png`;
+  }
+
+  let previewRoot = $derived(
+    settings.download_dir.replace(/\\/g, '/').replace(/\/+$/, '') || 'Downloads/Pawstash'
+  );
+  let previewCreator = $derived(
+    getPreviewPath(settings.download_creator_folder_template, 'creator')
+  );
+  let previewPost = $derived(
+    getPreviewPath(settings.download_post_folder_template, 'post')
+  );
+  let previewFilename = $derived(
+    getPreviewPath(settings.download_filename_template, 'file')
+  );
+
+  let fullDownloadPathPreview = $derived.by(() => {
+    const parts = [previewRoot];
+    if (settings.download_group_by_creator) {
+      parts.push(previewCreator);
+    }
+    if (settings.download_group_by_post) {
+      parts.push(previewPost);
+    }
+    parts.push(previewFilename);
+    return parts.join('/');
+  });
+
+  let copiedPreview = $state(false);
+  async function copyPreviewPath() {
+    try {
+      await navigator.clipboard.writeText(fullDownloadPathPreview);
+      copiedPreview = true;
+      notify.success(i18n.t('settings.copied_to_clipboard') || 'Copied to clipboard');
+      setTimeout(() => {
+        copiedPreview = false;
+      }, 2000);
+    } catch {
+      // ignore
+    }
+  }
 </script>
 
 {#snippet categoryTabs()}
@@ -1215,6 +1385,90 @@
         </SettingItem>
 
         <SettingItem
+          title={i18n.t('settings.download_group_by_creator')}
+          description={i18n.t('settings.download_group_by_creator_desc')}
+          icon={IconFolder}
+          align="right"
+        >
+          <SegmentedControl
+            options={[
+              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+            ]}
+            value={settings.download_group_by_creator}
+            onchange={(val) => updateAndSaveSetting('download_group_by_creator', val)}
+          />
+        </SettingItem>
+
+        {#if settings.download_group_by_creator}
+          <SettingItem
+            title={i18n.t('settings.download_creator_template')}
+            description={i18n.t('settings.download_creator_template_desc')}
+            icon={IconFolder}
+          >
+            <div class="w-full">
+              <TemplateInput
+                placeholder="&#123;creator&#125;"
+                bind:value={settings.download_creator_folder_template}
+                tags={creatorFolderTags}
+                previewType="creator"
+                onchange={(val) => updateAndSaveSetting('download_creator_folder_template', val)}
+              />
+            </div>
+          </SettingItem>
+        {/if}
+
+        <SettingItem
+          title={i18n.t('settings.download_group_by_post')}
+          description={i18n.t('settings.download_group_by_post_desc')}
+          icon={IconFolder}
+          align="right"
+        >
+          <SegmentedControl
+            options={[
+              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+            ]}
+            value={settings.download_group_by_post}
+            onchange={(val) => updateAndSaveSetting('download_group_by_post', val)}
+          />
+        </SettingItem>
+
+        {#if settings.download_group_by_post}
+          <SettingItem
+            title={i18n.t('settings.download_post_template')}
+            description={i18n.t('settings.download_post_template_desc')}
+            icon={IconFolder}
+          >
+            <div class="w-full">
+              <TemplateInput
+                placeholder="&#123;post_title&#125;"
+                bind:value={settings.download_post_folder_template}
+                tags={postFolderTags}
+                previewType="post"
+                onchange={(val) => updateAndSaveSetting('download_post_folder_template', val)}
+              />
+            </div>
+          </SettingItem>
+        {/if}
+
+        <SettingItem
+          title={i18n.t('settings.download_filename_template')}
+          description={i18n.t('settings.download_filename_template_desc')}
+          icon={IconDownload}
+        >
+          <div class="w-full">
+            <TemplateInput
+              placeholder="&#123;post_title&#125; - &#123;filename&#125;"
+              bind:value={settings.download_filename_template}
+              tags={filenameTags}
+              previewType="file"
+              onchange={(val) => updateAndSaveSetting('download_filename_template', val)}
+            />
+          </div>
+        </SettingItem>
+
+        <SettingItem
           title={i18n.t('settings.aria2c_engine')}
           description={i18n.t('settings.aria2c_engine_desc')}
           icon={IconDownload}
@@ -1247,6 +1501,38 @@
             </div>
           </SettingItem>
         {/if}
+
+        <SettingItem
+          title={i18n.t('settings.template_preview')}
+          description={i18n.t('settings.download_preview_desc') || 'Resolved destination path for saved files'}
+          icon={IconFolder}
+          class="col-span-full"
+        >
+          <div class="w-full relative flex items-center">
+            <div
+              class="w-full h-[46px] px-4 pr-12 rounded-full border flex items-center select-all cursor-text font-mono text-[13px] overflow-hidden whitespace-nowrap text-ellipsis"
+              style="background: var(--bg-card); border-color: var(--border-color); color: var(--text-secondary);"
+            >
+              {fullDownloadPathPreview}
+            </div>
+            <button
+              type="button"
+              use:ripple
+              onclick={copyPreviewPath}
+              style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; border: none; outline: none; background: transparent; display: flex; align-items: center; justify-content: center; color: white; opacity: 0.45; cursor: pointer; z-index: 10; padding: 0; transition: opacity 200ms ease, color 200ms ease;"
+              onmouseenter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
+              onmouseleave={(e) => { e.currentTarget.style.opacity = '0.45'; }}
+              title={copiedPreview ? (i18n.t('common.copied') || 'Copied') : (i18n.t('common.copy') || 'Copy')}
+              aria-label="Copy path"
+            >
+              {#if copiedPreview}
+                <IconCheck style="width: 18px; height: 18px; color: var(--accent);" />
+              {:else}
+                <IconCopy style="width: 18px; height: 18px;" />
+              {/if}
+            </button>
+          </div>
+        </SettingItem>
       </div>
     </div>
 
@@ -1749,4 +2035,5 @@
       font-size: 13px !important;
     }
   }
+
 </style>

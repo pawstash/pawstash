@@ -2,6 +2,9 @@ use crate::config::settings::{AppSettings, ProxyMode};
 use crate::db::downloads::{DownloadJob, DownloadRepository, NewDownloadJob};
 use crate::downloader::aria2c::Aria2cManager;
 use crate::downloader::native::NativeDownloader;
+use crate::downloader::template::{
+    resolve_creator_folder, resolve_filename, resolve_post_folder, TemplateContext,
+};
 use crate::downloader::{DownloadControl, DownloadRunError, DownloadTask, Interruption};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -41,10 +44,14 @@ impl DownloadManager {
         self: &Arc<Self>,
         service: String,
         creator_id: String,
+        creator_name: Option<String>,
         post_id: String,
+        post_title: Option<String>,
+        published: Option<String>,
         media_id: String,
         url: String,
         filename: String,
+        index: usize,
         settings: AppSettings,
         app_handle: tauri::AppHandle,
     ) -> Result<DownloadJob, String> {
@@ -56,11 +63,45 @@ impl DownloadManager {
             .file_name()
             .and_then(|name| name.to_str())
             .filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| "Invalid download filename".to_string())?
+            .unwrap_or("file")
             .to_string();
 
         let root = Self::ensure_download_root(&settings.download_dir)?;
-        let final_path = self.unique_final_path(&root, &safe_filename)?;
+
+        let c_name = creator_name.as_deref().unwrap_or("");
+        let p_title = post_title.as_deref().unwrap_or("");
+
+        let ctx = TemplateContext {
+            service: &service,
+            creator_id: &creator_id,
+            creator_name: c_name,
+            post_id: &post_id,
+            post_title: p_title,
+            published: published.as_deref(),
+            original_filename: &safe_filename,
+            index: if index == 0 { 1 } else { index },
+            media_id: &media_id,
+        };
+
+        let mut target_dir = root.clone();
+        if settings.download_group_by_creator {
+            let creator_folder =
+                resolve_creator_folder(&settings.download_creator_folder_template, &ctx);
+            if !creator_folder.is_empty() {
+                target_dir = target_dir.join(creator_folder);
+            }
+        }
+        if settings.download_group_by_post {
+            let post_folder = resolve_post_folder(&settings.download_post_folder_template, &ctx);
+            if !post_folder.is_empty() {
+                target_dir = target_dir.join(post_folder);
+            }
+        }
+
+        std::fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+
+        let resolved_filename = resolve_filename(&settings.download_filename_template, &ctx);
+        let final_path = self.unique_final_path(&target_dir, &resolved_filename)?;
         let id = Uuid::new_v4().to_string();
         let temp_path = root.join(".temp").join(format!("{id}.part"));
         let custom_socks = settings.proxy_mode == ProxyMode::Custom
@@ -83,7 +124,7 @@ impl DownloadManager {
             filename: final_path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or(&safe_filename),
+                .unwrap_or(&resolved_filename),
             output_dir: &root.to_string_lossy(),
             temp_path: &temp_path.to_string_lossy(),
             final_path: &final_path.to_string_lossy(),
@@ -433,8 +474,10 @@ impl DownloadManager {
                 "Downloaded file size changed during verification".to_string(),
             ));
         }
+        let root = Self::ensure_download_root(&settings.download_dir)
+            .map_err(DownloadRunError::Failed)?;
         let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
-        let blob_path = Path::new(&job.output_dir).join(&relative_blob);
+        let blob_path = root.join(&relative_blob);
         if let Some(parent) = blob_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await

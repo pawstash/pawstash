@@ -206,10 +206,14 @@ impl SubscriptionManager {
             let _ = self.downloads.enqueue(
                 post.service.clone(),
                 post.user.clone(),
+                None,
                 post.id.clone(),
+                Some(post.title.clone()),
+                post.published.clone(),
                 path.to_string(),
                 url,
                 filename,
+                index + 1,
                 settings.clone(),
                 app_handle.clone(),
             );

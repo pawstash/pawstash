@@ -32,7 +32,12 @@ export class ConfigState {
     auto_check_updates: true,
     include_prereleases: false,
     scroll_edge_mask: true,
-    titlebar_style: 'auto'
+    titlebar_style: 'auto',
+    download_group_by_creator: true,
+    download_creator_folder_template: '{creator}',
+    download_group_by_post: false,
+    download_post_folder_template: '{post_title}',
+    download_filename_template: '{post_title} - {filename}'
   });
 
   updateSettings(newSettings: AppSettings) {

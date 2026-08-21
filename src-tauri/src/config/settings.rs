@@ -62,6 +62,11 @@ pub struct AppSettings {
     pub include_prereleases: bool,
     pub scroll_edge_mask: bool,
     pub titlebar_style: String,
+    pub download_group_by_creator: bool,
+    pub download_creator_folder_template: String,
+    pub download_group_by_post: bool,
+    pub download_post_folder_template: String,
+    pub download_filename_template: String,
 }
 
 impl Default for AppSettings {
@@ -110,6 +115,11 @@ impl Default for AppSettings {
             include_prereleases: false,
             scroll_edge_mask: true,
             titlebar_style: "auto".to_string(),
+            download_group_by_creator: true,
+            download_creator_folder_template: "{creator}".to_string(),
+            download_group_by_post: false,
+            download_post_folder_template: "{post_title}".to_string(),
+            download_filename_template: "{post_title} - {filename}".to_string(),
         }
     }
 }
@@ -269,6 +279,26 @@ impl AppSettings {
             ("include_prereleases", self.include_prereleases.to_string()),
             ("scroll_edge_mask", self.scroll_edge_mask.to_string()),
             ("titlebar_style", self.titlebar_style.clone()),
+            (
+                "download_group_by_creator",
+                self.download_group_by_creator.to_string(),
+            ),
+            (
+                "download_creator_folder_template",
+                self.download_creator_folder_template.clone(),
+            ),
+            (
+                "download_group_by_post",
+                self.download_group_by_post.to_string(),
+            ),
+            (
+                "download_post_folder_template",
+                self.download_post_folder_template.clone(),
+            ),
+            (
+                "download_filename_template",
+                self.download_filename_template.clone(),
+            ),
         ]
     }
 
@@ -298,6 +328,15 @@ impl AppSettings {
         string!(proxy_username);
         string!(layout_mode);
         string!(titlebar_style);
+        string!(download_creator_folder_template);
+        string!(download_post_folder_template);
+        string!(download_filename_template);
+        if let Some(value) = get("download_group_by_creator").and_then(|v| v.parse().ok()) {
+            self.download_group_by_creator = value;
+        }
+        if let Some(value) = get("download_group_by_post").and_then(|v| v.parse().ok()) {
+            self.download_group_by_post = value;
+        }
         if let Some(value) = get("sync_enabled").and_then(|v| v.parse().ok()) {
             self.sync_enabled = value;
         }

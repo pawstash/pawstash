@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
   import { portal } from '$lib/actions/portal';
+  import { scrollable } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
   import IconFilter from '~icons/fluent/filter-24-regular';
 
@@ -156,6 +157,7 @@
   {#if open}
     <div
       use:portal={'body'}
+      use:scrollable
       bind:this={dropdownEl}
       class="popover-menu-dropdown unified-filter-menu popover-portal {menuClass}"
       style:--popover-menu-width={width}
@@ -206,7 +208,6 @@
     position: fixed;
     width: var(--popover-menu-width, min(330px, calc(100vw - 32px)));
     max-height: min(600px, calc(100vh - 100px));
-    overflow-y: auto;
     padding: 10px;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-xl);

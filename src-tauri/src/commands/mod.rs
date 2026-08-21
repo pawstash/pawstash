@@ -1183,13 +1183,52 @@ pub async fn start_download(
             )
             .await;
     }
+    let creator_name = state
+        .content
+        .get_creator(&post.service, &post.user)
+        .ok()
+        .flatten()
+        .map(|c| c.name);
+
+    let index = {
+        let mut idx = 1;
+        let mut found = false;
+        if let Some(file) = &post.file {
+            if file.path.as_deref() == Some(&media_id) {
+                found = true;
+            } else {
+                idx += 1;
+            }
+        }
+        if !found {
+            if let Some(attachments) = &post.attachments {
+                for att in attachments {
+                    if att.path.as_deref() == Some(&media_id) {
+                        found = true;
+                        break;
+                    }
+                    idx += 1;
+                }
+            }
+        }
+        if found {
+            idx
+        } else {
+            1
+        }
+    };
+
     state.download_manager.enqueue(
         post.service,
         post.user,
+        creator_name,
         post.id,
+        Some(post.title),
+        post.published,
         media_id,
         url,
         filename,
+        index,
         settings,
         app_handle,
     )

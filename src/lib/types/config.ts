@@ -30,4 +30,9 @@ export interface AppSettings {
   include_prereleases?: boolean;
   scroll_edge_mask?: boolean;
   titlebar_style?: 'auto' | 'windows' | 'macos';
+  download_group_by_creator: boolean;
+  download_creator_folder_template: string;
+  download_group_by_post: boolean;
+  download_post_folder_template: string;
+  download_filename_template: string;
 }
