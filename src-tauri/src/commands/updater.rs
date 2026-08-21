@@ -77,29 +77,70 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
         .await
         .map_err(|e| format!("Failed to parse GitHub releases response: {e}"))?;
 
-    for release in releases {
-        if release.prerelease && !include_prereleases {
-            continue;
-        }
+    let is_current_prerelease = current_version.contains('-');
+    let allow_prereleases = include_prereleases || is_current_prerelease;
 
-        let latest_tag = release.tag_name.trim_start_matches('v');
-        if is_version_newer(latest_tag, &current_version) {
-            let (asset_url, asset_name, asset_size) = find_platform_asset(&release.assets);
-
-            return Ok(UpdateInfo {
-                available: true,
-                current_version: current_version.clone(),
-                latest_version: latest_tag.to_string(),
-                is_prerelease: release.prerelease,
-                release_name: release.name.unwrap_or_else(|| release.tag_name.clone()),
-                release_notes: release.body.unwrap_or_default(),
-                published_at: release.published_at.unwrap_or_default(),
-                release_url: release.html_url,
-                download_url: asset_url,
-                asset_name,
-                asset_size,
-            });
+    let target_release = releases.iter().find(|r| {
+        if r.prerelease && !allow_prereleases {
+            return false;
         }
+        let tag = r.tag_name.trim_start_matches('v');
+        is_version_newer(tag, &current_version)
+    });
+
+    if let Some(latest) = target_release {
+        let latest_tag = latest.tag_name.trim_start_matches('v');
+        let (asset_url, asset_name, asset_size) = find_platform_asset(&latest.assets);
+
+        let newer_releases: Vec<&GitHubRelease> = releases
+            .iter()
+            .filter(|r| {
+                if r.prerelease && !allow_prereleases {
+                    return false;
+                }
+                let tag = r.tag_name.trim_start_matches('v');
+                if !is_version_newer(tag, &current_version) {
+                    return false;
+                }
+                // When updating to a stable release, exclude development pre-releases of that release/branch
+                if !latest.prerelease && r.prerelease {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        let combined_notes = if newer_releases.len() <= 1 {
+            latest.body.clone().unwrap_or_default()
+        } else {
+            newer_releases
+                .iter()
+                .filter_map(|r| {
+                    let body = r.body.as_deref().unwrap_or("").trim();
+                    if body.is_empty() {
+                        None
+                    } else {
+                        let title = r.name.as_deref().unwrap_or(&r.tag_name);
+                        Some(format!("### {title}\n{body}"))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
+
+        return Ok(UpdateInfo {
+            available: true,
+            current_version: current_version.clone(),
+            latest_version: latest_tag.to_string(),
+            is_prerelease: latest.prerelease,
+            release_name: latest.name.clone().unwrap_or_else(|| latest.tag_name.clone()),
+            release_notes: combined_notes,
+            published_at: latest.published_at.clone().unwrap_or_default(),
+            release_url: latest.html_url.clone(),
+            download_url: asset_url,
+            asset_name,
+            asset_size,
+        });
     }
 
     Ok(UpdateInfo {
@@ -571,10 +612,15 @@ mod tests {
         assert!(is_version_newer("26.8.1-pre10", "26.8.1-pre2"));
         assert!(is_version_newer("26.8.1-beta.2", "26.8.1-beta.1"));
         assert!(is_version_newer("26.8.1-beta.10", "26.8.1-beta.2"));
+        assert!(is_version_newer("26.8.2-5", "26.8.2-1"));
+        assert!(is_version_newer("26.8.2", "26.8.2-5"));
+        assert!(is_version_newer("26.8.3-1", "26.8.2"));
         assert!(!is_version_newer("0.1.0", "0.1.0"));
         assert!(!is_version_newer("26.8.1-pre1", "26.8.1-pre1"));
         assert!(!is_version_newer("26.8.1-pre1", "26.8.1"));
         assert!(!is_version_newer("26.8.1-pre2", "26.8.1-pre10"));
+        assert!(!is_version_newer("26.8.2-1", "26.8.2-5"));
+        assert!(!is_version_newer("26.8.2-5", "26.8.2"));
         assert!(!is_version_newer("0.1.0", "0.2.0"));
         assert!(!is_version_newer("0.0.9", "0.1.0"));
     }
