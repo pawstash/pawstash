@@ -5,6 +5,7 @@
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
+  import { tooltip } from '$lib/motion';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
@@ -65,16 +66,16 @@
       <span class="grid-tile-action group-action busy"><IconLoading /></span>
     {:else}
       {#if pausableItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausableItems, (id) => downloadState.pause(id))} title={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
+        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausableItems, (id) => downloadState.pause(id))} use:tooltip={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
       {:else if pausedItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausedItems, (id) => downloadState.resume(id))} title={i18n.t('downloads.resume')} aria-label={i18n.t('downloads.resume')}><IconPlay /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausedItems, (id) => downloadState.resume(id))} use:tooltip={i18n.t('downloads.resume')} aria-label={i18n.t('downloads.resume')}><IconPlay /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {:else if retryItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} title={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} use:tooltip={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {:else if completedItems.length === items.length}
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} title={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {/if}
     {/if}
   </div>

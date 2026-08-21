@@ -7,7 +7,7 @@ export function tooltip(node: HTMLElement, text: string | undefined) {
 
     tooltipEl = document.createElement('div');
     tooltipEl.textContent = currentText;
-    tooltipEl.className = 'fixed z-50 px-2 py-1 text-[11px] font-medium font-outfit text-gray-200 bg-gray-900/95 border border-white/10 rounded-md shadow-xl backdrop-blur-md pointer-events-none transition-opacity duration-150 opacity-0';
+    tooltipEl.className = 'fixed z-[10001] px-2 py-1 text-[11px] font-medium font-outfit text-gray-200 bg-gray-900/95 border border-white/10 rounded-md shadow-xl backdrop-blur-md pointer-events-none transition-opacity duration-150 opacity-0';
 
     document.body.appendChild(tooltipEl);
 
@@ -42,6 +42,7 @@ export function tooltip(node: HTMLElement, text: string | undefined) {
 
   node.addEventListener('mouseenter', show);
   node.addEventListener('mouseleave', hide);
+  node.addEventListener('click', hide);
 
   return {
     update(newText: string | undefined) {
@@ -54,6 +55,7 @@ export function tooltip(node: HTMLElement, text: string | undefined) {
       hide();
       node.removeEventListener('mouseenter', show);
       node.removeEventListener('mouseleave', hide);
+      node.removeEventListener('click', hide);
     }
   };
 }

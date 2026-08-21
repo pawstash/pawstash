@@ -1,7 +1,7 @@
 <script lang="ts">
-import type { Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
 
   interface Props extends HTMLButtonAttributes {
     type?: 'button' | 'submit' | 'reset';
@@ -12,6 +12,8 @@ import type { Snippet } from 'svelte';
     children?: Snippet;
     class?: string;
     ref?: HTMLButtonElement;
+    title?: string;
+    tooltip?: string;
   }
 
   let {
@@ -23,8 +25,12 @@ import type { Snippet } from 'svelte';
     children,
     class: extraClass = '',
     ref = $bindable(),
+    title,
+    tooltip: tooltipProp,
     ...restProps
   }: Props = $props();
+
+  let effectiveTooltip = $derived(tooltipProp ?? title);
 </script>
 
 <button
@@ -33,6 +39,8 @@ import type { Snippet } from 'svelte';
   {disabled}
   {onclick}
   use:ripple
+  use:tooltip={effectiveTooltip}
+  aria-label={restProps['aria-label'] || effectiveTooltip}
   class="btn btn-{variant} btn-{size} {extraClass}"
   {...restProps}
 >

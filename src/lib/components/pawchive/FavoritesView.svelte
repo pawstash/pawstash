@@ -40,6 +40,7 @@
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconPeople from '~icons/fluent/people-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
@@ -50,6 +51,10 @@
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
+  import { getPostFormats } from '$lib/utils/media';
+
   type FavoritesTab = 'posts' | 'creators';
 
   const savedState = navigationState.getViewState<{
@@ -58,9 +63,9 @@
     searchOpen?: boolean;
     postSort?: string;
     creatorSort?: string;
-    selectedPostServices?: string[];
-    selectedCreatorServices?: string[];
-    selectedFormats?: string[];
+    postServiceFilters?: FilterMap;
+    creatorServiceFilters?: FilterMap;
+    formatFilters?: FilterMap;
     onlyWithAttachments?: boolean;
   }>(navigationState.entryKey);
 
@@ -133,9 +138,9 @@
   let searchQuery = $state(savedState?.searchQuery ?? '');
   let postSort = $state(savedState?.postSort ?? 'favorite_desc');
   let creatorSort = $state(savedState?.creatorSort ?? 'favorite_desc');
-  let selectedPostServices = $state<string[]>(savedState?.selectedPostServices ?? []);
-  let selectedCreatorServices = $state<string[]>(savedState?.selectedCreatorServices ?? []);
-  let selectedFormats = $state<string[]>(savedState?.selectedFormats ?? []);
+  let postServiceFilters = $state<FilterMap>(savedState?.postServiceFilters ?? {});
+  let creatorServiceFilters = $state<FilterMap>(savedState?.creatorServiceFilters ?? {});
+  let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
@@ -150,9 +155,9 @@
       searchOpen,
       postSort,
       creatorSort,
-      selectedPostServices,
-      selectedCreatorServices,
-      selectedFormats,
+      postServiceFilters: $state.snapshot(postServiceFilters),
+      creatorServiceFilters: $state.snapshot(creatorServiceFilters),
+      formatFilters: $state.snapshot(formatFilters),
       onlyWithAttachments
     });
   });
@@ -162,22 +167,34 @@
   let creators = $derived((accountState.favoriteCreators ?? []).map(mapFavoriteCreator));
   let normalizedQuery = $derived(searchQuery.trim().toLowerCase());
   let availableServices = $derived([...new Set((activeTab === 'posts' ? posts : creators).map((item) => item.service).filter(Boolean))].sort());
-  let currentServices = $derived(activeTab === 'posts' ? selectedPostServices : selectedCreatorServices);
-  let activeFilterCount = $derived(currentServices.length + (activeTab === 'posts' ? selectedFormats.length + (onlyWithAttachments ? 1 : 0) : 0));
+  let currentServices = $derived(activeTab === 'posts' ? postServiceFilters : creatorServiceFilters);
+  let activeFilterCount = $derived(
+    activeTab === 'posts'
+      ? countActiveFilters([postServiceFilters, formatFilters]) + (onlyWithAttachments ? 1 : 0)
+      : countActiveFilters([creatorServiceFilters])
+  );
   let filteredPosts = $derived.by(() => {
     let filtered = normalizedQuery
       ? posts.filter((post) => `${post.title} ${post.user} ${post.service} ${post.id}`.toLowerCase().includes(normalizedQuery))
       : posts;
-    if (selectedPostServices.length > 0) filtered = filtered.filter((post) => selectedPostServices.includes(post.service));
-    if (selectedFormats.length > 0) filtered = filtered.filter((post) => selectedFormats.some((format) => matchesFormat(post, format)));
-    if (onlyWithAttachments) filtered = filtered.filter((post) => Boolean(post.file || post.attachments?.length));
+    if (Object.keys(postServiceFilters).length > 0) {
+      filtered = filtered.filter((post) => matchesTriStateFilter([post.service], postServiceFilters));
+    }
+    if (Object.keys(formatFilters).length > 0) {
+      filtered = filtered.filter((post) => matchesTriStateFilter(getPostFormats(post), formatFilters));
+    }
+    if (onlyWithAttachments) {
+      filtered = filtered.filter((post) => Boolean(post.file || post.attachments?.length));
+    }
     return sortPosts(filtered, postSort);
   });
   let filteredCreators = $derived.by(() => {
     let filtered = normalizedQuery
       ? creators.filter((creator) => `${creator.name} ${creator.service} ${creator.id}`.toLowerCase().includes(normalizedQuery))
       : creators;
-    if (selectedCreatorServices.length > 0) filtered = filtered.filter((creator) => selectedCreatorServices.includes(creator.service));
+    if (Object.keys(creatorServiceFilters).length > 0) {
+      filtered = filtered.filter((creator) => matchesTriStateFilter([creator.service], creatorServiceFilters));
+    }
     return sortCreators(filtered, creatorSort);
   });
   let sortOptions = $derived(activeTab === 'posts'
@@ -219,6 +236,14 @@
       published: String(favorite.published ?? favorite.updated ?? ''),
       favorite_count: Number(favorite.favorite_count ?? 0)
     };
+  }
+
+  function timestampSeconds(value: unknown) {
+    if (!value) return undefined;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric > 10_000_000_000 ? Math.round(numeric / 1000) : numeric;
+    const milliseconds = new Date(String(value)).getTime();
+    return Number.isNaN(milliseconds) ? undefined : Math.round(milliseconds / 1000);
   }
 
   function mapFavoriteCreator(favorite: Favorite): Creator {
@@ -279,19 +304,6 @@
     });
   }
 
-  function matchesFormat(post: PawchivePost, format: string) {
-    const files = [post.file, ...(post.attachments ?? [])].filter(Boolean);
-    const names = files.map((file) => String(file?.name ?? file?.path ?? ''));
-    const types = files.map((file) => String(file?.type ?? ''));
-    const matches = (mime: string, extensions: RegExp) => types.some((type) => type.startsWith(`${mime}/`)) || names.some((name) => extensions.test(name));
-    if (format === 'image') return matches('image', /\.(jpe?g|png|gif|webp|bmp|avif)$/i);
-    if (format === 'video') return matches('video', /\.(mp4|mkv|webm|mov|avi|m4v)$/i) || Boolean(post.content?.includes('<video') || post.content?.includes('iframe'));
-    if (format === 'audio') return matches('audio', /\.(mp3|wav|ogg|flac|m4a|aac)$/i);
-    if (format === 'archive') return names.some((name) => /\.(zip|rar|7z|tar|gz)$/i.test(name));
-    if (format === 'text') return names.some((name) => /\.(txt|md|pdf|doc|docx|epub)$/i.test(name));
-    return false;
-  }
-
   function handleSort(value: string) {
     if (activeTab === 'posts') postSort = value;
     else creatorSort = value;
@@ -299,44 +311,37 @@
 
   function toggleService(service: string) {
     if (activeTab === 'posts') {
-      selectedPostServices = selectedPostServices.includes(service)
-        ? selectedPostServices.filter((item) => item !== service)
-        : [...selectedPostServices, service];
+      postServiceFilters = toggleFilterKey(postServiceFilters, service);
     } else {
-      selectedCreatorServices = selectedCreatorServices.includes(service)
-        ? selectedCreatorServices.filter((item) => item !== service)
-        : [...selectedCreatorServices, service];
+      creatorServiceFilters = toggleFilterKey(creatorServiceFilters, service);
     }
   }
 
   function clearServices() {
-    if (activeTab === 'posts') selectedPostServices = [];
-    else selectedCreatorServices = [];
+    if (activeTab === 'posts') postServiceFilters = {};
+    else creatorServiceFilters = {};
   }
 
   function toggleFormat(format: string) {
-    selectedFormats = selectedFormats.includes(format)
-      ? selectedFormats.filter((item) => item !== format)
-      : [...selectedFormats, format];
+    formatFilters = toggleFilterKey(formatFilters, format);
   }
 
   function resetFilters() {
     clearServices();
     if (activeTab === 'posts') {
-      selectedFormats = [];
+      formatFilters = {};
       onlyWithAttachments = false;
     }
   }
 
-
-
-  function timestampSeconds(value: unknown) {
-    if (!value) return undefined;
-    const numeric = Number(value);
-    if (Number.isFinite(numeric) && numeric > 0) return numeric > 10_000_000_000 ? Math.round(numeric / 1000) : numeric;
-    const milliseconds = new Date(String(value)).getTime();
-    return Number.isNaN(milliseconds) ? undefined : Math.round(milliseconds / 1000);
-  }
+  const formatList = [
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+  ];
 
   async function loadFavorites(force = false) {
     if (loading) return;
@@ -569,34 +574,54 @@
 {/snippet}
 
 {#snippet filterContent()}
-  <div class="filter-heading">
-    <strong>{i18n.t('feed.filters')}</strong>
-    {#if activeFilterCount > 0}<button type="button" onclick={resetFilters}>{i18n.t('feed.reset_filters')}</button>{/if}
-  </div>
   <span class="filter-label">{i18n.t('feed.platform')}</span>
-  <div class="filter-options">
-    <Button variant={currentServices.length === 0 ? 'accent' : 'ghost'} size="sm" onclick={clearServices} class="filter-chip">
-      <IconGlobe /><span>{i18n.t('feed.all_platforms')}</span>
+  <div class="service-options">
+    <Button
+      variant={Object.keys(currentServices).length === 0 ? 'accent' : 'ghost'}
+      size="sm"
+      onclick={clearServices}
+      class="filter-chip chip-all {Object.keys(currentServices).length === 0 ? 'state-include' : ''}"
+    >
+      <IconGlobe class="w-[14px] h-[14px]" />
+      <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each availableServices as service}
-      <Button variant={currentServices.includes(service) ? 'accent' : 'ghost'} size="sm" onclick={() => toggleService(service)} class="filter-chip">
-        <ServiceIcon {service} /><span>{service}</span>
+      {@const state = currentServices[service] ?? 'neutral'}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => toggleService(service)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <ServiceIcon {service} class="w-[14px] h-[14px]" />
+        <span>{service}</span>
       </Button>
     {/each}
   </div>
   {#if activeTab === 'posts'}
     <span class="filter-label">{i18n.t('feed.format')}</span>
-    <div class="filter-options">
-      <Button variant={selectedFormats.includes('image') ? 'accent' : 'ghost'} size="sm" onclick={() => toggleFormat('image')} class="filter-chip"><IconImage /><span>{i18n.t('feed.format_photo')}</span></Button>
-      <Button variant={selectedFormats.includes('video') ? 'accent' : 'ghost'} size="sm" onclick={() => toggleFormat('video')} class="filter-chip"><IconVideo /><span>{i18n.t('feed.format_video')}</span></Button>
-      <Button variant={selectedFormats.includes('audio') ? 'accent' : 'ghost'} size="sm" onclick={() => toggleFormat('audio')} class="filter-chip"><IconMusic /><span>{i18n.t('feed.format_audio')}</span></Button>
-      <Button variant={selectedFormats.includes('text') ? 'accent' : 'ghost'} size="sm" onclick={() => toggleFormat('text')} class="filter-chip"><IconText /><span>{i18n.t('feed.format_text')}</span></Button>
-      <Button variant={selectedFormats.includes('archive') ? 'accent' : 'ghost'} size="sm" onclick={() => toggleFormat('archive')} class="filter-chip"><IconDocument /><span>{i18n.t('feed.format_archive')}</span></Button>
+    <div class="service-options">
+      {#each formatList as fmt}
+        {@const state = formatFilters[fmt.id] ?? 'neutral'}
+        {@const IconComponent = fmt.icon}
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={() => toggleFormat(fmt.id)}
+          class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+        >
+          <IconComponent class="w-[14px] h-[14px]" />
+          <span>{fmt.label()}</span>
+        </Button>
+      {/each}
     </div>
     <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
     <div class="view-option" class:active={onlyWithAttachments}>
-      <Checkbox checked={onlyWithAttachments} onchange={(value) => onlyWithAttachments = value} />
-      <button onclick={() => onlyWithAttachments = !onlyWithAttachments}>
+      <Checkbox
+        checked={onlyWithAttachments}
+        onchange={(v) => onlyWithAttachments = v}
+      />
+      <button type="button" onclick={() => onlyWithAttachments = !onlyWithAttachments}>
         <strong>{i18n.t('feed.with_attachments')}</strong>
         <small>{i18n.t('feed.with_attachments_desc')}</small>
       </button>
@@ -704,7 +729,7 @@
     <PostGrid
       posts={filteredPosts}
       loading={loading}
-      stateKey={`favorites:posts:${searchQuery}:services=${selectedPostServices.join(',')}:formats=${selectedFormats.join(',')}:attachments=${onlyWithAttachments}:sort=${postSort}`}
+      stateKey={`favorites:posts:${searchQuery}:services=${JSON.stringify(postServiceFilters)}:formats=${JSON.stringify(formatFilters)}:attachments=${onlyWithAttachments}:sort=${postSort}`}
       ariaLabel={i18n.t('favorites.posts')}
       emptyTitle={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results') : i18n.t('favorites.empty_posts')}
       emptyDescription={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_posts_guest') : i18n.t('favorites.empty_posts_desc'))}

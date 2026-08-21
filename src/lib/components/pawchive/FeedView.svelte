@@ -43,6 +43,7 @@
   import IconImage from '~icons/fluent/image-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
+  import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
 
@@ -168,30 +169,24 @@
     }
   }
 
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, toggleFilterKey } from '$lib/types/filter';
+
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
   let services = $derived([...new Set(feedState.posts.map((post) => post.service))].sort());
   let activeFilterCount = $derived(
-    feedState.selectedServices.length +
-    feedState.selectedFormats.length +
+    countActiveFilters([feedState.serviceFilters, feedState.formatFilters]) +
     (feedState.onlyWithAttachments ? 1 : 0) +
     (feedState.favoritesOnly ? 1 : 0)
   );
 
   function toggleService(service: string) {
-    if (feedState.selectedServices.includes(service)) {
-      feedState.selectedServices = feedState.selectedServices.filter((s) => s !== service);
-    } else {
-      feedState.selectedServices = [...feedState.selectedServices, service];
-    }
+    feedState.serviceFilters = toggleFilterKey(feedState.serviceFilters, service);
   }
 
   function toggleFormat(fmt: string) {
-    if (feedState.selectedFormats.includes(fmt)) {
-      feedState.selectedFormats = feedState.selectedFormats.filter((f) => f !== fmt);
-    } else {
-      feedState.selectedFormats = [...feedState.selectedFormats, fmt];
-    }
+    feedState.formatFilters = toggleFilterKey(feedState.formatFilters, fmt);
   }
 
   function toggleFavoritesFilter() {
@@ -207,8 +202,8 @@
     mode?: FeedMode;
     popularPeriod?: PopularPeriod;
     popularDate?: string;
-    selectedServices?: string[];
-    selectedFormats?: string[];
+    serviceFilters?: FilterMap;
+    formatFilters?: FilterMap;
     favoritesOnly?: boolean;
     onlyWithAttachments?: boolean;
   }>(navigationState.entryKey);
@@ -218,8 +213,8 @@
     if (savedState.mode !== undefined) feedState.mode = savedState.mode;
     if (savedState.popularPeriod !== undefined) feedState.popularPeriod = savedState.popularPeriod;
     if (savedState.popularDate !== undefined) feedState.popularDate = savedState.popularDate;
-    if (savedState.selectedServices !== undefined) feedState.selectedServices = savedState.selectedServices;
-    if (savedState.selectedFormats !== undefined) feedState.selectedFormats = savedState.selectedFormats;
+    if (savedState.serviceFilters !== undefined) feedState.serviceFilters = savedState.serviceFilters;
+    if (savedState.formatFilters !== undefined) feedState.formatFilters = savedState.formatFilters;
     if (savedState.favoritesOnly !== undefined) feedState.favoritesOnly = savedState.favoritesOnly;
     if (savedState.onlyWithAttachments !== undefined) feedState.onlyWithAttachments = savedState.onlyWithAttachments;
   }
@@ -234,8 +229,8 @@
       mode: feedState.mode,
       popularPeriod: feedState.popularPeriod,
       popularDate: feedState.popularDate,
-      selectedServices: feedState.selectedServices,
-      selectedFormats: feedState.selectedFormats,
+      serviceFilters: $state.snapshot(feedState.serviceFilters),
+      formatFilters: $state.snapshot(feedState.formatFilters),
       favoritesOnly: feedState.favoritesOnly,
       onlyWithAttachments: feedState.onlyWithAttachments
     });
@@ -368,11 +363,20 @@
   });
 
   function resetFilters() {
-    feedState.selectedServices = [];
-    feedState.selectedFormats = [];
+    feedState.serviceFilters = {};
+    feedState.formatFilters = {};
     feedState.onlyWithAttachments = false;
     feedState.favoritesOnly = false;
   }
+
+  const formatList = [
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+  ];
 
   onMount(() => {
     if (!feedState.current.loaded) void feedState.refresh();
@@ -380,30 +384,24 @@
 </script>
 
 {#snippet filterInnerContent()}
-  <div class="filter-heading">
-    <strong>{i18n.t('feed.filters')}</strong>
-    {#if activeFilterCount > 0}
-      <button type="button" use:ripple onclick={resetFilters}>{i18n.t('feed.reset_filters')}</button>
-    {/if}
-  </div>
-
   <span class="filter-label">{i18n.t('feed.platform')}</span>
   <div class="service-options">
     <Button
-      variant={feedState.selectedServices.length === 0 ? 'accent' : 'ghost'}
+      variant={Object.keys(feedState.serviceFilters).length === 0 ? 'accent' : 'ghost'}
       size="sm"
-      onclick={() => feedState.selectedServices = []}
-      class="filter-chip"
+      onclick={() => feedState.serviceFilters = {}}
+      class="filter-chip chip-all {Object.keys(feedState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
       <IconGlobe class="w-[14px] h-[14px]" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each services as service}
+      {@const state = feedState.serviceFilters[service] ?? 'neutral'}
       <Button
-        variant={feedState.selectedServices.includes(service) ? 'accent' : 'ghost'}
+        variant="ghost"
         size="sm"
         onclick={() => toggleService(service)}
-        class="filter-chip"
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
         <ServiceIcon service={service} class="w-[14px] h-[14px]" />
         <span>{service}</span>
@@ -413,55 +411,19 @@
 
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
-    <Button
-      variant={feedState.selectedFormats.includes('image') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('image')}
-      class="filter-chip"
-    >
-      <IconImage class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_photo') || 'Photo'}</span>
-    </Button>
-
-    <Button
-      variant={feedState.selectedFormats.includes('video') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('video')}
-      class="filter-chip"
-    >
-      <IconVideo class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_video') || 'Video'}</span>
-    </Button>
-
-    <Button
-      variant={feedState.selectedFormats.includes('audio') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('audio')}
-      class="filter-chip"
-    >
-      <IconMusic class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_audio') || 'Audio'}</span>
-    </Button>
-
-    <Button
-      variant={feedState.selectedFormats.includes('text') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('text')}
-      class="filter-chip"
-    >
-      <IconText class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_text') || 'Text'}</span>
-    </Button>
-
-    <Button
-      variant={feedState.selectedFormats.includes('archive') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('archive')}
-      class="filter-chip"
-    >
-      <IconDocument class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_archive') || 'Files'}</span>
-    </Button>
+    {#each formatList as fmt}
+      {@const state = feedState.formatFilters[fmt.id] ?? 'neutral'}
+      {@const IconComponent = fmt.icon}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => toggleFormat(fmt.id)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <IconComponent class="w-[14px] h-[14px]" />
+        <span>{fmt.label()}</span>
+      </Button>
+    {/each}
   </div>
 
   <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
@@ -470,7 +432,7 @@
       checked={feedState.onlyWithAttachments}
       onchange={(v) => feedState.onlyWithAttachments = v}
     />
-    <button onclick={() => feedState.onlyWithAttachments = !feedState.onlyWithAttachments}>
+    <button type="button" onclick={() => feedState.onlyWithAttachments = !feedState.onlyWithAttachments}>
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
     </button>
@@ -482,7 +444,7 @@
       checked={feedState.favoritesOnly}
       onchange={toggleFavoritesFilter}
     />
-    <button onclick={toggleFavoritesFilter}>
+    <button type="button" onclick={toggleFavoritesFilter}>
       <strong>{i18n.t('feed.favorite_creators_only')}</strong>
       <small>{i18n.t('feed.favorite_creators_desc')}</small>
     </button>
@@ -622,7 +584,7 @@
       loading={feedState.isLoading}
       hasMore={feedState.hasMore}
       onLoadMore={() => feedState.loadMore()}
-      stateKey={`${feedState.isSearchActive ? `feed:search:${feedState.searchQuery.trim()}` : (feedState.mode === 'recent' ? 'feed:recent' : `feed:popular:${feedState.popularPeriod}:${feedState.popularDate}`)}:services=${feedState.selectedServices.join(',')}:formats=${feedState.selectedFormats.join(',')}:attachments=${feedState.onlyWithAttachments}:favs=${feedState.favoritesOnly}`}
+      stateKey={`${feedState.isSearchActive ? `feed:search:${feedState.searchQuery.trim()}` : (feedState.mode === 'recent' ? 'feed:recent' : `feed:popular:${feedState.popularPeriod}:${feedState.popularDate}`)}:services=${JSON.stringify(feedState.serviceFilters)}:formats=${JSON.stringify(feedState.formatFilters)}:attachments=${feedState.onlyWithAttachments}:favs=${feedState.favoritesOnly}`}
       paginationKey={`${feedState.mode}:${feedState.isSearchActive ? `search:${feedState.searchQuery.trim()}` : feedState.popularPeriod}:${feedState.popularDate}:${feedState.posts.length}`}
       emptyTitle={feedState.isSearchActive ? (i18n.t('favorites.no_results') || 'Nothing found') : (i18n.t('feed.empty') || 'No posts')}
       emptyDescription={feedState.isSearchActive ? (i18n.t('favorites.no_results_desc') || 'Try adjusting your search query.') : (i18n.t('feed.empty_desc') || 'The current feed is empty.')}

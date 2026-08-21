@@ -1,5 +1,7 @@
 import { apiFetchCreators } from '$lib/utils/ipc';
 import type { Creator } from '$lib/types/pawchive';
+import type { FilterMap } from '$lib/types/filter';
+import { matchesTriStateFilter } from '$lib/types/filter';
 
 export class CreatorsState {
   creators = $state<Creator[]>([]);
@@ -8,7 +10,7 @@ export class CreatorsState {
   loaded = $state(false);
 
   searchQuery = $state('');
-  selectedService = $state('all');
+  serviceFilters = $state<FilterMap>({});
   sortBy = $state<'name' | 'updated' | 'indexed' | 'favorited'>('favorited');
   sortOrder = $state<'asc' | 'desc'>('desc');
   activeTab = $state<'all' | 'subscribed'>('all');
@@ -29,9 +31,8 @@ export class CreatorsState {
   filteredCreators = $derived.by(() => {
     let result = this.creators;
 
-    if (this.selectedService !== 'all') {
-      const serviceLower = this.selectedService.toLowerCase();
-      result = result.filter((c) => c.service.toLowerCase() === serviceLower);
+    if (Object.keys(this.serviceFilters).length > 0) {
+      result = result.filter((c) => matchesTriStateFilter([c.service], this.serviceFilters));
     }
 
     const query = this.searchQuery.trim().toLowerCase();

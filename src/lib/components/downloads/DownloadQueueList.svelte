@@ -21,14 +21,18 @@
   import DownloadGroupCard from './DownloadGroupCard.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
-  import IconFilter from '~icons/fluent/filter-24-regular';
+  import IconOptions from '~icons/fluent/options-24-regular';
   import IconGrid from '~icons/fluent/grid-24-regular';
   import IconStack from '~icons/fluent/stack-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
+  import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
@@ -53,15 +57,23 @@
   }
 
   type DownloadSort = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc';
-  type MediaType = 'image' | 'video' | 'audio' | 'file';
   const filters: DownloadFilter[] = ['all', 'active', 'completed'];
   const sortOptions: DownloadSort[] = ['newest', 'oldest', 'name_asc', 'name_desc', 'size_desc', 'size_asc'];
+
+  const savedState = navigationState.getViewState<{
+    searchQuery?: string;
+    searchOpen?: boolean;
+    sortBy?: DownloadSort;
+    groupByPosts?: boolean;
+    formatFilters?: FilterMap;
+  }>(navigationState.entryKey);
+
   let mediaPort = $state<number | null>(null);
-  let groupByPosts = $state(false);
-  let sortBy = $state<DownloadSort>('newest');
-  let selectedMediaTypes = $state<MediaType[]>([]);
-  let searchQuery = $state('');
-  let searchOpen = $state(false);
+  let groupByPosts = $state(savedState?.groupByPosts ?? false);
+  let sortBy = $state<DownloadSort>(savedState?.sortBy ?? 'newest');
+  let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
+  let searchQuery = $state(savedState?.searchQuery ?? '');
+  let searchOpen = $state(savedState?.searchOpen ?? Boolean(savedState?.searchQuery));
   let filterOpen = $state(false);
   let stickyFilterOpen = $state(false);
   let scaleVisible = $state(false);
@@ -71,9 +83,19 @@
   let gap = $derived(Math.round((layoutState.isMobile ? 8 : 10) * scale));
   let targetCardWidth = $derived((layoutState.isMobile ? 155 : 245) * scale);
 
-  let activeFilterCount = $derived((groupByPosts ? 1 : 0) + selectedMediaTypes.length);
+  let activeFilterCount = $derived((groupByPosts ? 1 : 0) + countActiveFilters([formatFilters]));
   let completedCount = $derived(downloadState.downloads.filter((item) => item.status === 'completed').length);
   let totalCount = $derived(downloadState.downloads.length);
+
+  $effect(() => {
+    navigationState.saveViewState(navigationState.entryKey, {
+      searchQuery,
+      searchOpen,
+      sortBy,
+      groupByPosts,
+      formatFilters: $state.snapshot(formatFilters)
+    });
+  });
 
   $effect(() => {
     if (downloadState.filter === 'completed' && completedCount === totalCount) {
@@ -81,10 +103,43 @@
     }
   });
 
+  function getDownloadFormats(item: DownloadItem): string[] {
+    const filename = (item.filename || '').toLowerCase();
+    const formats: string[] = [];
+    if (/\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(filename)) formats.push('image');
+    if (/\.(mp4|mkv|webm|mov|avi|m4v)$/i.test(filename)) formats.push('video');
+    if (/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(filename)) formats.push('audio');
+    if (/\.(txt|md|pdf|doc|docx|epub)$/i.test(filename)) formats.push('text');
+    if (/\.(zip|rar|7z|tar|gz)$/i.test(filename)) formats.push('archive');
+    if (/\b(wip|sketch|sketches|rough|draft|preview|doodle|lineart)\b/i.test(filename) || /\.(psd|clip)$/i.test(filename)) formats.push('wip');
+    if (formats.length === 0) formats.push('archive');
+    return formats;
+  }
+
+  function toggleFormat(fmt: string) {
+    formatFilters = toggleFilterKey(formatFilters, fmt);
+  }
+
+  function resetFilters() {
+    formatFilters = {};
+    groupByPosts = false;
+  }
+
+  const formatList = [
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+  ];
+
   let visibleDownloads = $derived.by(() => {
     const query = searchQuery.trim().toLocaleLowerCase();
     return downloadState.filteredDownloads.filter((item) => {
-      if (selectedMediaTypes.length > 0 && !selectedMediaTypes.includes(mediaType(item))) return false;
+      if (Object.keys(formatFilters).length > 0 && !matchesTriStateFilter(getDownloadFormats(item), formatFilters)) {
+        return false;
+      }
       if (!query) return true;
       return [item.filename, item.post_title, item.creator_name, item.service, item.creator_id, item.post_id]
         .some((value) => value?.toLocaleLowerCase().includes(query));
@@ -124,21 +179,7 @@
     return items.find((item) => /\.(avif|bmp|gif|jpe?g|png|webp|m4v|mkv|mov|mp4|webm)(?:\?.*)?$/i.test(item.filename)) || items[0];
   }
 
-  function mediaType(item: DownloadItem): MediaType {
-    const filename = (item.filename || '').toLowerCase();
-    if (filename.match(/\.(jpe?g|png|gif|webp|bmp)$/i)) return 'image';
-    if (filename.match(/\.(mp4|mkv|webm|mov|avi)$/i)) return 'video';
-    if (filename.match(/\.(mp3|wav|ogg|flac|m4a|aac)$/i)) return 'audio';
-    return 'file';
-  }
 
-  function toggleMediaType(type: MediaType) {
-    if (selectedMediaTypes.includes(type)) {
-      selectedMediaTypes = selectedMediaTypes.filter((t) => t !== type);
-    } else {
-      selectedMediaTypes = [...selectedMediaTypes, type];
-    }
-  }
 
   function previewUrl(item?: DownloadItem) {
     if (!item) return undefined;
@@ -333,64 +374,59 @@
   />
 {/snippet}
 
+{#snippet downloadFilterInnerContent()}
+  <span class="filter-label">{i18n.t('downloads.view_mode') || 'View'}</span>
+  <button class="view-option" class:active={!groupByPosts} onclick={() => groupByPosts = false}>
+    <span class="option-icon"><IconGrid class="w-[20px] h-[20px]" /></span>
+    <span><strong>{i18n.t('downloads.media_view')}</strong><small>{i18n.t('downloads.media_view_desc')}</small></span>
+  </button>
+  <div class="view-option" class:active={groupByPosts}>
+    <Checkbox checked={groupByPosts} onchange={(checked) => groupByPosts = checked} />
+    <button onclick={() => groupByPosts = !groupByPosts}>
+      <strong>{i18n.t('downloads.group_by_posts')}</strong>
+      <small>{i18n.t('downloads.group_by_posts_desc')}</small>
+    </button>
+    <IconStack class="view-option-icon w-[20px] h-[20px]" />
+  </div>
+
+  <span class="filter-label section-label">{i18n.t('feed.format')}</span>
+  <div class="service-options">
+    {#each formatList as fmt}
+      {@const state = formatFilters[fmt.id] ?? 'neutral'}
+      {@const IconComponent = fmt.icon}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => toggleFormat(fmt.id)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <IconComponent class="w-[14px] h-[14px]" />
+        <span>{fmt.label()}</span>
+      </Button>
+    {/each}
+  </div>
+{/snippet}
+
 {#snippet filterControl(source: 'main' | 'sticky')}
   {#if source === 'sticky'}
     <PopoverMenu
       bind:open={stickyFilterOpen}
       title={i18n.t('downloads.filters')}
       badge={activeFilterCount}
-      active={groupByPosts || selectedMediaTypes.length > 0}
-      icon={IconFilter}
+      active={activeFilterCount > 0}
+      icon={IconOptions}
     >
-      <button class="view-option" class:active={!groupByPosts} onclick={() => groupByPosts = false}>
-        <span class="option-icon"><IconGrid class="w-[20px] h-[20px]" /></span>
-        <span><strong>{i18n.t('downloads.media_view')}</strong><small>{i18n.t('downloads.media_view_desc')}</small></span>
-      </button>
-      <div class="view-option" class:active={groupByPosts}>
-        <Checkbox checked={groupByPosts} onchange={(checked) => groupByPosts = checked} />
-        <button onclick={() => groupByPosts = !groupByPosts}>
-          <strong>{i18n.t('downloads.group_by_posts')}</strong>
-          <small>{i18n.t('downloads.group_by_posts_desc')}</small>
-        </button>
-        <IconStack class="view-option-icon w-[20px] h-[20px]" />
-      </div>
-
-      <span class="filter-label section-label">{i18n.t('feed.format')}</span>
-      <div class="download-type-options">
-        <button class="type-option" class:active={selectedMediaTypes.includes('image')} onclick={() => toggleMediaType('image')}><IconImage /><span>{i18n.t('feed.format_photo')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('video')} onclick={() => toggleMediaType('video')}><IconVideo /><span>{i18n.t('feed.format_video')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('audio')} onclick={() => toggleMediaType('audio')}><IconMusic /><span>{i18n.t('feed.format_audio')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('file')} onclick={() => toggleMediaType('file')}><IconDocument /><span>{i18n.t('feed.format_archive')}</span></button>
-      </div>
+      {@render downloadFilterInnerContent()}
     </PopoverMenu>
   {:else}
     <PopoverMenu
       bind:open={filterOpen}
       title={i18n.t('downloads.filters')}
       badge={activeFilterCount}
-      active={groupByPosts || selectedMediaTypes.length > 0}
-      icon={IconFilter}
+      active={activeFilterCount > 0}
+      icon={IconOptions}
     >
-      <button class="view-option" class:active={!groupByPosts} onclick={() => groupByPosts = false}>
-        <span class="option-icon"><IconGrid class="w-[20px] h-[20px]" /></span>
-        <span><strong>{i18n.t('downloads.media_view')}</strong><small>{i18n.t('downloads.media_view_desc')}</small></span>
-      </button>
-      <div class="view-option" class:active={groupByPosts}>
-        <Checkbox checked={groupByPosts} onchange={(checked) => groupByPosts = checked} />
-        <button onclick={() => groupByPosts = !groupByPosts}>
-          <strong>{i18n.t('downloads.group_by_posts')}</strong>
-          <small>{i18n.t('downloads.group_by_posts_desc')}</small>
-        </button>
-        <IconStack class="view-option-icon w-[20px] h-[20px]" />
-      </div>
-
-      <span class="filter-label section-label">{i18n.t('feed.format')}</span>
-      <div class="download-type-options">
-        <button class="type-option" class:active={selectedMediaTypes.includes('image')} onclick={() => toggleMediaType('image')}><IconImage /><span>{i18n.t('feed.format_photo')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('video')} onclick={() => toggleMediaType('video')}><IconVideo /><span>{i18n.t('feed.format_video')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('audio')} onclick={() => toggleMediaType('audio')}><IconMusic /><span>{i18n.t('feed.format_audio')}</span></button>
-        <button class="type-option" class:active={selectedMediaTypes.includes('file')} onclick={() => toggleMediaType('file')}><IconDocument /><span>{i18n.t('feed.format_archive')}</span></button>
-      </div>
+      {@render downloadFilterInnerContent()}
     </PopoverMenu>
   {/if}
 {/snippet}
@@ -544,11 +580,7 @@
   .view-option small { color: var(--text-muted); font-size: 10.5px; line-height: 1.35; }
   :global(.view-option-icon) { flex: none; opacity: .5; }
   .section-label { margin-top: 7px; padding-top: 12px; border-top: var(--border-width) solid var(--border-color); }
-  .download-type-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-  .type-option { min-width: 0; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font: inherit; font-size: 12px; cursor: pointer; transition: color var(--duration-fast), background var(--duration-fast); }
-  .type-option:hover { color: var(--text-primary); background: rgba(255,255,255,.055); }
-  .type-option.active { color: var(--text-on-accent, white); background: var(--accent-primary); }
-  .type-option :global(svg) { width: 18px; height: 18px; flex: none; }
+
   :global(.select-root.downloads-sort-select) { height: 44px !important; width: auto !important; min-width: 170px !important; max-width: none !important; flex: none !important; }
   :global(.select-root.downloads-sort-select .select-trigger.variant-ghost) { height: 44px !important; width: 100% !important; padding: 0 14px !important; border-radius: var(--radius-full) !important; font-size: 13px !important; }
   .downloads-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width)), 1fr)); align-items: start; gap: var(--grid-gap); width: 100%; }

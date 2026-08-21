@@ -1,6 +1,8 @@
 import type { PawchivePost, Creator } from '$lib/types/pawchive';
+import type { FilterMap } from '$lib/types/filter';
+import { matchesTriStateFilter } from '$lib/types/filter';
 import { apiFetchPopularPosts, apiFetchRecentPosts } from '$lib/utils/ipc';
-import { matchesPostFormat } from '$lib/utils/media';
+import { getPostFormats } from '$lib/utils/media';
 import { accountState } from './accountState.svelte';
 
 const PAGE_SIZE = 50;
@@ -29,7 +31,6 @@ const emptyBucket = (): FeedBucket => ({
 
 export class FeedState {
   creators = $state<Creator[]>([]);
-  onlyWithAttachments = $state(false);
   selectedCreator = $state<Creator | null>(null);
 
   private _searchQuery = $state<string>('');
@@ -59,8 +60,9 @@ export class FeedState {
     return this.popularBuckets[key];
   }
 
-  selectedServices = $state<string[]>([]);
-  selectedFormats = $state<string[]>([]);
+  serviceFilters = $state<FilterMap>({});
+  formatFilters = $state<FilterMap>({});
+  onlyWithAttachments = $state(false);
   favoritesOnly = $state(false);
 
   current = $derived(
@@ -78,17 +80,18 @@ export class FeedState {
 
   filteredPosts = $derived(
     this.posts.filter((post) => {
-      const matchesService = this.selectedServices.length === 0 || this.selectedServices.includes(post.service);
+      const matchesService = matchesTriStateFilter([post.service], this.serviceFilters);
 
-      const matchesAttachments = !this.onlyWithAttachments || (post.attachment_count ?? post.attachments?.length ?? 0) > 0;
+      const hasAttachments = (post.attachment_count ?? post.attachments?.length ?? 0) > 0 || Boolean(post.file?.path);
+      const matchesAttachments = !this.onlyWithAttachments || hasAttachments;
 
-      const matchesFormat = this.selectedFormats.length === 0 || this.selectedFormats.some((fmt) => matchesPostFormat(post, fmt));
+      const postFormats = getPostFormats(post);
+      const matchesFormat = matchesTriStateFilter(postFormats, this.formatFilters);
 
-      const matchesFavorites = !this.favoritesOnly || (
-        accountState.favoriteCreators?.some(
-          (c: any) => c.id.toLowerCase() === post.user.toLowerCase() && c.service.toLowerCase() === post.service.toLowerCase()
-        ) ?? false
-      );
+      const isFavCreator = accountState.favoriteCreators?.some(
+        (c: any) => c.id.toLowerCase() === post.user.toLowerCase() && c.service.toLowerCase() === post.service.toLowerCase()
+      ) ?? false;
+      const matchesFavorites = !this.favoritesOnly || isFavCreator;
 
       let matchesQuery = true;
       const q = this._searchQuery.trim().toLowerCase();

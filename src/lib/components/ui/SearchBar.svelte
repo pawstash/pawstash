@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
+  import { tooltip } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
@@ -92,7 +93,7 @@
         class="search-action-btn"
         onclick={handleClearOrClose}
         aria-label={value ? 'Clear search' : 'Close search'}
-        title={value ? (i18n.t('feed.clear') || 'Clear') : (i18n.t('nav.close') || 'Close')}
+        use:tooltip={value ? (i18n.t('feed.clear') || 'Clear') : (i18n.t('nav.close') || 'Close')}
       >
         <IconDismiss class="w-5 h-5" />
       </button>
@@ -102,8 +103,8 @@
       variant="ghost"
       class="btn-icon {extraClass}"
       onclick={openSearch}
-      title={i18n.t('feed.search_placeholder') || 'Search'}
-      aria-label="Search"
+      title={effectivePlaceholder}
+      aria-label={effectivePlaceholder}
     >
       <IconSearch class="w-5 h-5" />
     </Button>

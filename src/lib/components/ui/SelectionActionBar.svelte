@@ -3,6 +3,7 @@
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
+  import { tooltip } from '$lib/motion';
   import { portal } from '$lib/actions/portal';
   import IconCheckmarkCircle from '~icons/fluent/checkmark-circle-24-filled';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
@@ -66,7 +67,7 @@
           type="button"
           class="selection-dock-btn"
           onclick={handleToggleAll}
-          title={i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all')}
+          aria-label={i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all')}
         >
           <IconSelectAll class="w-[17px] h-[17px]" />
           <span>{i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all') || (allSelected ? 'Deselect all' : 'Select all')}</span>
@@ -87,7 +88,7 @@
         type="button"
         class="selection-dock-close-btn"
         onclick={handleClose}
-        title="{i18n.t('selection.cancel') || 'Cancel'} (Esc)"
+        use:tooltip={`${i18n.t('selection.cancel') || 'Cancel'} (Esc)`}
         aria-label="Close selection"
       >
         <IconDismiss class="w-[18px] h-[18px]" />

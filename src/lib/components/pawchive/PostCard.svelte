@@ -7,6 +7,7 @@
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { i18n } from '$lib/i18n';
+  import { tooltip } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { formatDate } from '$lib/utils/formatters';
   import { isVideoUrl, postAttachmentCount, postMediaUrl, postThumbnailUrl } from '$lib/utils/media';
@@ -170,7 +171,7 @@
           class="grid-tile-action grid-tile-action-danger"
           disabled={saving}
           onclick={handleRemoveFromCurrentCategory}
-          title={i18n.t(libraryState.selectedCollection?.kind === 'stash' ? 'library.remove_from_stash' : 'library.remove')}
+          use:tooltip={i18n.t(libraryState.selectedCollection?.kind === 'stash' ? 'library.remove_from_stash' : 'library.remove')}
           aria-label={i18n.t(libraryState.selectedCollection?.kind === 'stash' ? 'library.remove_from_stash' : 'library.remove')}
         >
           {#if saving}
@@ -188,7 +189,8 @@
               type="button"
               class="grid-tile-stash-pill"
               onclick={(e) => openStashInLibrary(e)}
-              title={`${i18n.t('library.saved')}: ${i18n.t('library.inbox')}`}
+              use:tooltip={i18n.t('library.open_inbox') || 'Open Inbox'}
+              aria-label={`${i18n.t('library.saved')}: ${i18n.t('library.inbox')}`}
             >
               <span class="stash-pill-text">{i18n.t('library.inbox') || 'Inbox'}</span>
             </button>
@@ -199,7 +201,8 @@
                 type="button"
                 class="grid-tile-stash-pill"
                 onclick={(e) => openStashInLibrary(e, stashId)}
-                title={name}
+                use:tooltip={i18n.t('library.open_stash', { name }) || `Open stash: ${name}`}
+                aria-label={name}
               >
                 <span class="stash-pill-text">{name}</span>
               </button>
@@ -212,7 +215,7 @@
           class="grid-tile-action"
           disabled={saving}
           onclick={quickSave}
-          title={i18n.t('library.save')}
+          use:tooltip={i18n.t('library.save')}
           aria-label={i18n.t('library.save')}
         >
           {#if saving}
@@ -244,7 +247,7 @@
         type="button"
         class="grid-tile-logo inline-logo"
         onclick={openCreator}
-        title={i18n.t('feed.open_creator')}
+        use:tooltip={i18n.t('feed.open_creator')}
         aria-label={`${i18n.t('feed.open_creator')}: ${post.service}`}
       >
         <ServiceIcon service={post.service} />

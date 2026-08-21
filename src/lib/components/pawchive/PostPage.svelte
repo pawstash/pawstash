@@ -18,6 +18,7 @@
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
+  import { tooltip } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
@@ -1071,7 +1072,7 @@
                         class="media-viewer-open-btn"
                         type="button"
                         onclick={() => openMediaViewer(embedAttachment!, filteredMedia)}
-                        title={i18n.t('post.viewer_open')}
+                        use:tooltip={i18n.t('post.viewer_open')}
                         aria-label={i18n.t('post.viewer_open')}
                       ><IconEye /></button>
                     {/if}
@@ -1130,7 +1131,7 @@
                             class="media-viewer-open-btn"
                             type="button"
                             onclick={(e) => openMediaViewer(file!, filteredMedia, e.currentTarget.parentElement?.querySelector('video'))}
-                            title={i18n.t('post.viewer_open')}
+                            use:tooltip={i18n.t('post.viewer_open')}
                             aria-label={i18n.t('post.viewer_open')}
                           ><IconEye /></button>
                         {:else}

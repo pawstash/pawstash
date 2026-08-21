@@ -53,6 +53,7 @@
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
+  import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
   import { notify } from '$lib/utils/toast';
@@ -64,11 +65,15 @@
 
   let { service, creatorId }: Props = $props();
 
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
+  import { getPostFormats } from '$lib/utils/media';
+
   const savedState = navigationState.getViewState<{
     postSearchQuery?: string;
     postSearchOpen?: boolean;
     postSearchResults?: PawchivePost[];
-    selectedFormats?: string[];
+    formatFilters?: FilterMap;
     onlyWithAttachments?: boolean;
   }>(navigationState.entryKey);
 
@@ -99,11 +104,11 @@
   let postSearchOpen = $state(savedState?.postSearchOpen ?? Boolean(savedState?.postSearchQuery));
   let postSearchQuery = $state(savedState?.postSearchQuery ?? '');
   let postSearchResults = $state<PawchivePost[]>(savedState?.postSearchResults ?? []);
-  let selectedFormats = $state<string[]>(savedState?.selectedFormats ?? []);
+  let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
-  let activeFilterCount = $derived(selectedFormats.length + (onlyWithAttachments ? 1 : 0));
+  let activeFilterCount = $derived(countActiveFilters([formatFilters]) + (onlyWithAttachments ? 1 : 0));
 
   let postSearchLoading = $state(false);
   let postSearchError = $state<string | null>(null);
@@ -113,15 +118,11 @@
   const CREATOR_POST_PAGE_SIZE = 50;
 
   function toggleFormat(fmt: string) {
-    if (selectedFormats.includes(fmt)) {
-      selectedFormats = selectedFormats.filter((f) => f !== fmt);
-    } else {
-      selectedFormats = [...selectedFormats, fmt];
-    }
+    formatFilters = toggleFilterKey(formatFilters, fmt);
   }
 
   function clearAllFilters() {
-    selectedFormats = [];
+    formatFilters = {};
     onlyWithAttachments = false;
   }
 
@@ -130,7 +131,7 @@
       postSearchQuery,
       postSearchOpen,
       postSearchResults,
-      selectedFormats,
+      formatFilters: $state.snapshot(formatFilters),
       onlyWithAttachments
     });
   });
@@ -174,8 +175,8 @@
       posts = posts.filter((post) => (post.attachment_count ?? post.attachments?.length ?? 0) > 0 || Boolean(post.file?.path));
     }
 
-    if (selectedFormats.length > 0) {
-      posts = posts.filter((post) => selectedFormats.some((fmt) => matchesPostFormat(post, fmt)));
+    if (Object.keys(formatFilters).length > 0) {
+      posts = posts.filter((post) => matchesTriStateFilter(getPostFormats(post), formatFilters));
     }
 
     return posts;
@@ -561,6 +562,15 @@
       notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
     }
   }
+
+  const formatList = [
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+  ];
 </script>
 
 {#snippet subscriptionEditorFields()}
@@ -688,67 +698,21 @@
 {/snippet}
 
 {#snippet filterInnerContent()}
-  <div class="filter-header">
-    <span class="filter-title">{i18n.t('feed.filters')}</span>
-    {#if activeFilterCount > 0}
-      <button class="reset-btn" onclick={clearAllFilters}>
-        <IconDismiss class="w-[14px] h-[14px]" />
-        <span>{i18n.t('feed.reset_filters')}</span>
-      </button>
-    {/if}
-  </div>
-
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
-    <Button
-      variant={selectedFormats.includes('image') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('image')}
-      class="filter-chip"
-    >
-      <IconImage class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_photo') || 'Photo'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('video') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('video')}
-      class="filter-chip"
-    >
-      <IconVideo class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_video') || 'Video'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('audio') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('audio')}
-      class="filter-chip"
-    >
-      <IconMusic class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_audio') || 'Audio'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('text') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('text')}
-      class="filter-chip"
-    >
-      <IconText class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_text') || 'Text'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('archive') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('archive')}
-      class="filter-chip"
-    >
-      <IconDocument class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_archive') || 'Files'}</span>
-    </Button>
+    {#each formatList as fmt}
+      {@const state = formatFilters[fmt.id] ?? 'neutral'}
+      {@const IconComponent = fmt.icon}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => toggleFormat(fmt.id)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <IconComponent class="w-[14px] h-[14px]" />
+        <span>{fmt.label()}</span>
+      </Button>
+    {/each}
   </div>
 
   <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
@@ -757,7 +721,7 @@
       checked={onlyWithAttachments}
       onchange={(v) => onlyWithAttachments = v}
     />
-    <button onclick={() => onlyWithAttachments = !onlyWithAttachments}>
+    <button type="button" onclick={() => onlyWithAttachments = !onlyWithAttachments}>
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
     </button>

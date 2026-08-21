@@ -19,6 +19,7 @@
   import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
   import { creatorAvatarUrl } from '$lib/utils/media';
   import { notify } from '$lib/utils/toast';
+  import { tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
@@ -42,13 +43,16 @@
   import IconPersonDelete from '~icons/fluent/person-delete-24-regular';
   import IconHeart from '~icons/fluent/heart-24-regular';
 
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, toggleFilterKey } from '$lib/types/filter';
+
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
 
   const savedState = navigationState.getViewState<{
     searchQuery?: string;
     searchOpen?: boolean;
-    selectedService?: string;
+    serviceFilters?: FilterMap;
     sortBy?: 'name' | 'updated' | 'indexed' | 'favorited';
     sortOrder?: 'asc' | 'desc';
     activeTab?: 'all' | 'subscribed';
@@ -56,7 +60,7 @@
 
   if (savedState) {
     if (savedState.searchQuery !== undefined) creatorsState.searchQuery = savedState.searchQuery;
-    if (savedState.selectedService !== undefined) creatorsState.selectedService = savedState.selectedService;
+    if (savedState.serviceFilters !== undefined) creatorsState.serviceFilters = savedState.serviceFilters;
     if (savedState.sortBy !== undefined) creatorsState.sortBy = savedState.sortBy;
     if (savedState.sortOrder !== undefined) creatorsState.sortOrder = savedState.sortOrder;
     if (savedState.activeTab !== undefined) creatorsState.activeTab = savedState.activeTab;
@@ -68,7 +72,7 @@
     navigationState.saveViewState(navigationState.entryKey, {
       searchQuery: creatorsState.searchQuery,
       searchOpen,
-      selectedService: creatorsState.selectedService,
+      serviceFilters: $state.snapshot(creatorsState.serviceFilters),
       sortBy: creatorsState.sortBy,
       sortOrder: creatorsState.sortOrder,
       activeTab: creatorsState.activeTab
@@ -135,8 +139,12 @@
     return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
+  function toggleService(service: string) {
+    creatorsState.serviceFilters = toggleFilterKey(creatorsState.serviceFilters, service);
+  }
+
   function resetFilters() {
-    creatorsState.selectedService = 'all';
+    creatorsState.serviceFilters = {};
   }
 
 
@@ -184,7 +192,7 @@
     new Set(subscriptionState.items.map(item => `${item.service.toLowerCase()}:${item.creator_id.toLowerCase()}`))
   );
 
-  let activeFilterCount = $derived(creatorsState.selectedService === 'all' ? 0 : 1);
+  let activeFilterCount = $derived(countActiveFilters([creatorsState.serviceFilters]));
   let activeTab = $derived(creatorsState.activeTab);
 
   let creatorsList = $derived.by(() => {
@@ -250,7 +258,10 @@
   }
 
   function handleSelectAllCreators() {
-    selectionState.selectAll(creatorsList.map((c) => ({ key: `${c.service}:${c.id}`, item: c })));
+    selectionState.selectAll(creatorsList.map((c) => ({
+      key: `${c.service}:${c.id}`,
+      item: c
+    })));
   }
 
   async function batchSubscribe() {
@@ -318,30 +329,24 @@
 </script>
 
 {#snippet filterInnerContent()}
-  <div class="filter-heading">
-    <strong>{i18n.t('feed.filters')}</strong>
-    {#if activeFilterCount > 0}
-      <button type="button" class="filter-reset-btn" onclick={resetFilters}>{i18n.t('feed.reset_filters')}</button>
-    {/if}
-  </div>
-
   <span class="filter-label">{i18n.t('feed.platform')}</span>
   <div class="service-options">
     <Button
-      variant={creatorsState.selectedService === 'all' ? 'accent' : 'ghost'}
+      variant={Object.keys(creatorsState.serviceFilters).length === 0 ? 'accent' : 'ghost'}
       size="sm"
-      onclick={() => { creatorsState.selectedService = 'all'; filtersOpen = false; stickyFiltersOpen = false; }}
-      class="filter-chip"
+      onclick={() => creatorsState.serviceFilters = {}}
+      class="filter-chip chip-all {Object.keys(creatorsState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
       <IconGlobe class="w-[14px] h-[14px]" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each creatorsState.services as service}
+      {@const state = creatorsState.serviceFilters[service] ?? 'neutral'}
       <Button
-        variant={creatorsState.selectedService === service ? 'accent' : 'ghost'}
+        variant="ghost"
         size="sm"
-        onclick={() => { creatorsState.selectedService = service; filtersOpen = false; stickyFiltersOpen = false; }}
-        class="filter-chip"
+        onclick={() => toggleService(service)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
         <ServiceIcon service={service} class="w-[14px] h-[14px]" />
         <span>{service}</span>
@@ -563,7 +568,7 @@
                 type="button"
                 class="grid-tile-logo inline-logo"
                 onclick={(e) => handleCreatorClick(e, creator)}
-                title={creator.service}
+                use:tooltip={creator.service}
                 aria-label={`${i18n.t('feed.open_creator')}: ${creator.service}`}
               >
                 <ServiceIcon service={creator.service} />

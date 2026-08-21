@@ -23,6 +23,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
+  import { tooltip } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -435,7 +436,7 @@
     <div class="media-viewer-actions">
       {#if current?.kind === 'image'}
         <Button variant="ghost" class="viewer-icon-btn desktop-zoom-control" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} title={i18n.t('post.viewer_zoom_out')} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
-        <button class="zoom-value desktop-zoom-control" type="button" onclick={resetTransform} title={i18n.t('post.viewer_reset')}>{Math.round(scale * 100)}%</button>
+        <button class="zoom-value desktop-zoom-control" type="button" onclick={resetTransform} use:tooltip={i18n.t('post.viewer_reset')} aria-label={i18n.t('post.viewer_reset')}>{Math.round(scale * 100)}%</button>
         <Button variant="ghost" class="viewer-icon-btn desktop-zoom-control" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} title={i18n.t('post.viewer_zoom_in')} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
       {/if}
       {#if ondownload && current}

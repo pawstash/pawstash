@@ -29,7 +29,7 @@
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
-  import IconFilter from '~icons/fluent/filter-24-regular';
+  import IconOptions from '~icons/fluent/options-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
@@ -44,12 +44,17 @@
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconFolderDismiss from '~icons/fluent/folder-dismiss-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
+  import IconDraft from '~icons/fluent/drafts-24-regular';
+
+  import type { FilterMap } from '$lib/types/filter';
+  import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
+  import { getPostFormats } from '$lib/utils/media';
 
   const savedState = navigationState.getViewState<{
     searchQuery?: string;
     searchOpen?: boolean;
-    selectedServices?: string[];
-    selectedFormats?: string[];
+    serviceFilters?: FilterMap;
+    formatFilters?: FilterMap;
     selectedCollectionId?: string | null;
     onlyWithAttachments?: boolean;
     onlyDownloaded?: boolean;
@@ -201,10 +206,10 @@
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
 
-  let selectedServices = $state<string[]>(savedState?.selectedServices ?? []);
-  let selectedFormats = $state<string[]>(savedState?.selectedFormats ?? []);
-  let onlyWithAttachments = $state(savedState?.onlyWithAttachments ?? false);
-  let onlyDownloaded = $state(savedState?.onlyDownloaded ?? false);
+  let serviceFilters = $state<FilterMap>(savedState?.serviceFilters ?? {});
+  let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
+  let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
+  let onlyDownloaded = $state<boolean>(savedState?.onlyDownloaded ?? false);
 
   let sortBy = $state<'added' | 'published' | 'title'>(savedState?.sortBy ?? 'added');
   let sortOrder = $state<'asc' | 'desc'>(savedState?.sortOrder ?? 'desc');
@@ -214,8 +219,8 @@
     navigationState.saveViewState(navigationState.entryKey, {
       searchQuery,
       searchOpen,
-      selectedServices,
-      selectedFormats,
+      serviceFilters: $state.snapshot(serviceFilters),
+      formatFilters: $state.snapshot(formatFilters),
       onlyWithAttachments,
       onlyDownloaded,
       sortBy,
@@ -242,10 +247,7 @@
   let basePosts = $derived(libraryState.posts);
   let services = $derived([...new Set(basePosts.map((post) => post.service))].sort());
   let activeFilterCount = $derived(
-    selectedServices.length +
-    selectedFormats.length +
-    (onlyWithAttachments ? 1 : 0) +
-    (onlyDownloaded ? 1 : 0)
+    countActiveFilters([serviceFilters, formatFilters]) + (onlyWithAttachments ? 1 : 0) + (onlyDownloaded ? 1 : 0)
   );
 
   onMount(() => {
@@ -334,29 +336,28 @@
   }
 
   function toggleService(service: string) {
-    if (selectedServices.includes(service)) {
-      selectedServices = selectedServices.filter((s) => s !== service);
-    } else {
-      selectedServices = [...selectedServices, service];
-    }
+    serviceFilters = toggleFilterKey(serviceFilters, service);
   }
 
   function toggleFormat(fmt: string) {
-    if (selectedFormats.includes(fmt)) {
-      selectedFormats = selectedFormats.filter((f) => f !== fmt);
-    } else {
-      selectedFormats = [...selectedFormats, fmt];
-    }
+    formatFilters = toggleFilterKey(formatFilters, fmt);
   }
 
   function resetFilters() {
-    selectedServices = [];
-    selectedFormats = [];
+    serviceFilters = {};
+    formatFilters = {};
     onlyWithAttachments = false;
     onlyDownloaded = false;
   }
 
-
+  const formatList = [
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+  ];
 
   function fileUrl(file: { path?: string; server?: string }) {
     const cdn = file.server || `https://${configState.settings.file_domain}`;
@@ -382,47 +383,6 @@
     );
   }
 
-  function matchesFormat(post: PawchivePost, format: string): boolean {
-    const file = post.file as any;
-    const attachments = (post.attachments as any[]) || [];
-    
-    const hasImage = !!(
-      file?.type?.startsWith('image/') || 
-      attachments.some(a => a.type?.startsWith('image/')) || 
-      file?.name?.match(/\.(jpe?g|png|gif|webp|bmp)$/i) || 
-      attachments.some(a => a.name?.match(/\.(jpe?g|png|gif|webp|bmp)$/i))
-    );
-    const hasVideo = !!(
-      file?.type?.startsWith('video/') || 
-      attachments.some(a => a.type?.startsWith('video/')) ||
-      file?.name?.match(/\.(mp4|mkv|webm|mov|avi)$/i) || 
-      attachments.some(a => a.name?.match(/\.(mp4|mkv|webm|mov|avi)$/i)) ||
-      post.content?.includes('<video') || 
-      post.content?.includes('iframe')
-    );
-    const hasAudio = !!(
-      file?.type?.startsWith('audio/') || 
-      attachments.some(a => a.type?.startsWith('audio/')) ||
-      file?.name?.match(/\.(mp3|wav|ogg|flac|m4a|aac)$/i) || 
-      attachments.some(a => a.name?.match(/\.(mp3|wav|ogg|flac|m4a|aac)$/i))
-    );
-    const hasArchive = !!(
-      file?.name?.match(/\.(zip|rar|7z|tar|gz)$/i) || 
-      attachments.some(a => a.name?.match(/\.(zip|rar|7z|tar|gz)$/i))
-    );
-    const hasText = !!(
-      file?.name?.match(/\.(txt|md|pdf|doc|docx|epub)$/i) || 
-      attachments.some(a => a.name?.match(/\.(txt|md|pdf|doc|docx|epub)$/i))
-    );
-
-    if (format === 'image') return hasImage;
-    if (format === 'video') return hasVideo;
-    if (format === 'audio') return hasAudio;
-    if (format === 'archive') return hasArchive;
-    if (format === 'text') return hasText;
-    return false;
-  }
-
   let filteredPosts = $derived.by(() => {
     let list = basePosts;
     const query = searchQuery.trim().toLocaleLowerCase();
@@ -434,18 +394,19 @@
       );
     }
 
-    if (selectedServices.length > 0) {
-      list = list.filter(post => selectedServices.includes(post.service));
+    if (Object.keys(serviceFilters).length > 0) {
+      list = list.filter(post => matchesTriStateFilter([post.service], serviceFilters));
     }
 
-    if (selectedFormats.length > 0) {
-      list = list.filter(post => {
-        return selectedFormats.some(fmt => matchesFormat(post, fmt));
-      });
+    if (Object.keys(formatFilters).length > 0) {
+      list = list.filter(post => matchesTriStateFilter(getPostFormats(post), formatFilters));
     }
 
     if (onlyWithAttachments) {
-      list = list.filter(post => (post.attachment_count ?? post.attachments?.length ?? 0) > 0);
+      list = list.filter(post => {
+        const hasAtt = (post.attachment_count ?? post.attachments?.length ?? 0) > 0 || Boolean(post.file?.path);
+        return hasAtt;
+      });
     }
 
     if (onlyDownloaded) {
@@ -555,30 +516,24 @@
 {/snippet}
 
 {#snippet filterInnerContent()}
-  <div class="filter-heading">
-    <strong>{i18n.t('feed.filters')}</strong>
-    {#if activeFilterCount > 0}
-      <button type="button" use:ripple onclick={resetFilters}>{i18n.t('feed.reset_filters')}</button>
-    {/if}
-  </div>
-
   <span class="filter-label">{i18n.t('feed.platform')}</span>
   <div class="service-options">
     <Button
-      variant={selectedServices.length === 0 ? 'accent' : 'ghost'}
+      variant={Object.keys(serviceFilters).length === 0 ? 'accent' : 'ghost'}
       size="sm"
-      onclick={() => selectedServices = []}
-      class="filter-chip"
+      onclick={() => serviceFilters = {}}
+      class="filter-chip chip-all {Object.keys(serviceFilters).length === 0 ? 'state-include' : ''}"
     >
       <IconGlobe class="w-[14px] h-[14px]" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each services as service}
+      {@const state = serviceFilters[service] ?? 'neutral'}
       <Button
-        variant={selectedServices.includes(service) ? 'accent' : 'ghost'}
+        variant="ghost"
         size="sm"
         onclick={() => toggleService(service)}
-        class="filter-chip"
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
         <ServiceIcon service={service} class="w-[14px] h-[14px]" />
         <span>{service}</span>
@@ -588,55 +543,19 @@
 
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
-    <Button
-      variant={selectedFormats.includes('image') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('image')}
-      class="filter-chip"
-    >
-      <IconImage class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_photo') || 'Photo'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('video') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('video')}
-      class="filter-chip"
-    >
-      <IconVideo class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_video') || 'Video'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('audio') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('audio')}
-      class="filter-chip"
-    >
-      <IconMusic class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_audio') || 'Audio'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('text') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('text')}
-      class="filter-chip"
-    >
-      <IconText class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_text') || 'Text'}</span>
-    </Button>
-
-    <Button
-      variant={selectedFormats.includes('archive') ? 'accent' : 'ghost'}
-      size="sm"
-      onclick={() => toggleFormat('archive')}
-      class="filter-chip"
-    >
-      <IconDocument class="w-[14px] h-[14px]" />
-      <span>{i18n.t('feed.format_archive') || 'Files'}</span>
-    </Button>
+    {#each formatList as fmt}
+      {@const state = formatFilters[fmt.id] ?? 'neutral'}
+      {@const IconComponent = fmt.icon}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => toggleFormat(fmt.id)}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <IconComponent class="w-[14px] h-[14px]" />
+        <span>{fmt.label()}</span>
+      </Button>
+    {/each}
   </div>
 
   <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
@@ -645,7 +564,7 @@
       checked={onlyWithAttachments}
       onchange={(v) => onlyWithAttachments = v}
     />
-    <button onclick={() => onlyWithAttachments = !onlyWithAttachments}>
+    <button type="button" onclick={() => onlyWithAttachments = !onlyWithAttachments}>
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
     </button>
@@ -657,7 +576,7 @@
       checked={onlyDownloaded}
       onchange={(v) => onlyDownloaded = v}
     />
-    <button onclick={() => onlyDownloaded = !onlyDownloaded}>
+    <button type="button" onclick={() => onlyDownloaded = !onlyDownloaded}>
       <strong>{i18n.t('library.only_downloaded')}</strong>
       <small>{i18n.t('library.only_downloaded_desc')}</small>
     </button>
@@ -733,7 +652,7 @@
       title={i18n.t('feed.filters')}
       badge={activeFilterCount}
       active={activeFilterCount > 0}
-      icon={IconFilter}
+      icon={IconOptions}
     >
       {@render filterInnerContent()}
     </PopoverMenu>
@@ -743,7 +662,7 @@
       title={i18n.t('feed.filters')}
       badge={activeFilterCount}
       active={activeFilterCount > 0}
-      icon={IconFilter}
+      icon={IconOptions}
     >
       {@render filterInnerContent()}
     </PopoverMenu>
@@ -834,7 +753,7 @@
         loading={libraryState.loading}
         hasMore={libraryState.hasMore}
         onLoadMore={() => libraryState.loadMore()}
-        stateKey={`library:${libraryState.selectedCollectionId ?? 'all'}:services=${selectedServices.join(',')}:formats=${selectedFormats.join(',')}:attachments=${onlyWithAttachments}:downloaded=${onlyDownloaded}:sort=${sortBy}_${sortOrder}`}
+        stateKey={`library:${libraryState.selectedCollectionId ?? 'all'}:services=${JSON.stringify(serviceFilters)}:formats=${JSON.stringify(formatFilters)}:attachments=${onlyWithAttachments}:downloaded=${onlyDownloaded}:sort=${sortBy}_${sortOrder}`}
         paginationKey={`${libraryState.selectedCollectionId ?? 'all'}:${filteredPosts.length}`}
         ariaLabel={i18n.t('library.title')}
         emptyTitle={i18n.t('library.empty')}
