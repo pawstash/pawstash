@@ -1780,6 +1780,85 @@ pub fn open_download_file(file_path: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn show_in_folder(path: String) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err("Path not found on device".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let canonical = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+        let path_str = canonical.to_string_lossy().to_string();
+        let clean_path = path_str
+            .trim_start_matches(r"\\?\")
+            .replace('/', "\\");
+
+        if canonical.is_file() {
+            std::process::Command::new("explorer.exe")
+                .raw_arg(format!("/select,\"{clean_path}\""))
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file in explorer: {e}"))?;
+        } else {
+            std::process::Command::new("explorer.exe")
+                .raw_arg(format!("\"{clean_path}\""))
+                .spawn()
+                .map_err(|e| format!("Failed to open folder in explorer: {e}"))?;
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if p.is_file() {
+            std::process::Command::new("open")
+                .args(["-R", &path])
+                .spawn()
+                .map_err(|e| format!("Failed to reveal in Finder: {e}"))?;
+        } else {
+            std::process::Command::new("open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to open in Finder: {e}"))?;
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let folder = if p.is_file() {
+            p.parent().unwrap_or(&p).to_string_lossy().to_string()
+        } else {
+            path
+        };
+        std::process::Command::new("xdg-open")
+            .arg(&folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {e}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let folder = if p.is_file() {
+            p.parent().unwrap_or(&p).to_string_lossy().to_string()
+        } else {
+            path
+        };
+        open_downloads_dir(folder)
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        let _ = p;
+        Err("Showing in folder is unsupported on this operating system".to_string())
+    }
+}
+
 #[cfg(target_os = "android")]
 static FOLDER_PICKER_TX: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>> =
     std::sync::Mutex::new(None);

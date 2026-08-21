@@ -7,7 +7,7 @@
   import { notify } from '$lib/utils/toast';
   import { tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
-  import { apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { apiOpenDownloadFile, apiShowInFolder } from '$lib/utils/ipc';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconError from '~icons/fluent/error-circle-24-filled';
@@ -17,6 +17,7 @@
   import IconDelete from '~icons/fluent/delete-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-20-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconFolder from '~icons/fluent/folder-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -72,6 +73,14 @@
       await apiOpenDownloadFile(item.final_path);
     } catch (error) {
       notify.error(i18n.t('downloads.open_file_failed'), error);
+    }
+  }
+
+  async function showFileInFolder() {
+    try {
+      await apiShowInFolder(item.final_path);
+    } catch (error) {
+      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', error);
     }
   }
 
@@ -149,6 +158,17 @@
               <div class="download-play-menu-text">
                 <span class="download-play-menu-title">{i18n.t('downloads.open_in_system')}</span>
                 <span class="download-play-menu-desc">{i18n.t('downloads.open_in_system_desc')}</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              class="download-play-menu-item"
+              onclick={(e) => { e.stopPropagation(); close(); void showFileInFolder(); }}
+            >
+              <IconFolder class="download-play-menu-icon" />
+              <div class="download-play-menu-text">
+                <span class="download-play-menu-title">{i18n.t('downloads.show_in_folder')}</span>
+                <span class="download-play-menu-desc">{i18n.t('downloads.show_in_folder_desc')}</span>
               </div>
             </button>
           </div>

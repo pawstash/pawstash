@@ -6,7 +6,9 @@
   import { formatBytes } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
   import { tooltip } from '$lib/motion';
+  import { apiShowInFolder } from '$lib/utils/ipc';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
+  import IconFolder from '~icons/fluent/folder-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
@@ -75,6 +77,23 @@
         <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} use:tooltip={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
         <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {:else if completedItems.length === items.length}
+        <button
+          class="grid-tile-action group-action"
+          onclick={(event) => {
+            event.stopPropagation();
+            const first = completedItems[0];
+            if (first) {
+              const p = first.final_path;
+              const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+              const folder = lastSlash > 0 ? p.slice(0, lastSlash) : p;
+              void apiShowInFolder(folder);
+            }
+          }}
+          use:tooltip={i18n.t('downloads.open_post_folder')}
+          aria-label={i18n.t('downloads.open_post_folder')}
+        >
+          <IconFolder />
+        </button>
         <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
       {/if}
     {/if}

@@ -127,6 +127,7 @@ pub fn run() {
             open_in_browser,
             open_downloads_folder,
             open_download_file,
+            show_in_folder,
             pick_folder,
             save_settings,
             get_account_session,
