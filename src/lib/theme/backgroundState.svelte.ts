@@ -26,7 +26,7 @@ export interface BackgroundSettings {
 
 export class BackgroundState {
   settings = $state<BackgroundSettings>({
-    type: 'acrylic',
+    type: defaultBackgroundType(),
     customKind: 'color',
     solidColor: '#000000',
     gradientSecondary: '#111827',
@@ -160,22 +160,33 @@ export class BackgroundState {
 
 export const backgroundState = new BackgroundState();
 
+export function isWindowsPlatform(): boolean {
+  try {
+    return osType() === 'windows';
+  } catch {
+    if (typeof navigator !== 'undefined') {
+      return navigator.userAgent.toLowerCase().includes('windows');
+    }
+    return false;
+  }
+}
+
 export function supportedBackgroundTypes(): BackgroundType[] {
   try {
     const platform = osType();
-    if (platform === 'macos') return ['vibrancy', 'custom', 'oled'];
     if (platform === 'windows') {
       const parts = osVersion().split('.').map((part) => Number.parseInt(part, 10) || 0);
       const supportsWindows11Effects = parts[0] >= 11 || (parts[0] === 10 && (parts[2] ?? 0) >= 22000);
       return supportsWindows11Effects
-        ? ['acrylic', 'mica-dark', 'tabbed', 'custom', 'oled']
-        : ['acrylic', 'custom', 'oled'];
+        ? ['acrylic', 'mica-dark', 'tabbed', 'oled', 'custom']
+        : ['acrylic', 'oled', 'custom'];
     }
+    if (platform === 'macos') return ['oled', 'vibrancy', 'custom'];
   } catch {
   }
-  return ['custom', 'oled'];
+  return ['oled', 'custom'];
 }
 
 export function defaultBackgroundType(): BackgroundType {
-  return supportedBackgroundTypes()[0] ?? 'custom';
+  return isWindowsPlatform() ? 'acrylic' : 'oled';
 }

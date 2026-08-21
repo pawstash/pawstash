@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backgroundState } from '$lib/theme/backgroundState.svelte';
+  import { backgroundState, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   onMount(() => {
@@ -22,10 +22,16 @@
   let filterStyle = $derived(
     `filter: blur(${settings.blurPx}px) brightness(${settings.brightness}) saturate(${settings.saturation}); opacity: ${settings.opacity};`
   );
+
+  let isNativeEffect = $derived.by(() => {
+    if (isWindowsPlatform() && ['acrylic', 'mica-dark', 'tabbed'].includes(settings.type)) return true;
+    if (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac') && settings.type === 'vibrancy') return true;
+    return false;
+  });
 </script>
 
 <div class="fixed inset-0 z-[-2] overflow-hidden pointer-events-none select-none">
-  {#if settings.type === 'oled'}
+  {#if settings.type === 'oled' || (!isNativeEffect && settings.type !== 'custom')}
     <div class="absolute inset-0 bg-black"></div>
 
   {:else if settings.type === 'custom'}

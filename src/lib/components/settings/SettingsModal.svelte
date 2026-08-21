@@ -83,7 +83,7 @@
   let stickySettingsMenuOpen = $state(false);
   let activeCategory = $state('appearance');
   let categoryScrollFrame: number | undefined;
-  let availableBackgroundTypes = $state<BackgroundType[]>(['custom', 'oled']);
+  let availableBackgroundTypes = $state<BackgroundType[]>(supportedBackgroundTypes());
   let cacheStats = $state<CacheStats | null>(null);
   let cacheBusy = $state<'images' | 'all' | null>(null);
 
