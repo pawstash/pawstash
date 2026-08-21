@@ -1845,7 +1845,19 @@ pub fn show_in_folder(path: String) -> Result<(), String> {
         } else {
             path
         };
-        open_downloads_dir(folder)
+        with_android_context(|env, context| {
+            let jstr = env
+                .new_string(&folder)
+                .map_err(|e| format!("New string error: {e}"))?;
+            env.call_method(
+                context,
+                "openFolderInFileManager",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&jstr)],
+            )
+            .map_err(|e| format!("Failed to open folder in Android file manager: {e}"))?;
+            Ok(())
+        })
     }
     #[cfg(not(any(
         target_os = "windows",
