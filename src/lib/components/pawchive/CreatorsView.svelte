@@ -15,6 +15,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
   import { creatorAvatarUrl } from '$lib/utils/media';
@@ -371,9 +372,7 @@
       class="creators-tab-btn"
     >
       <span>{i18n.t('creators.tab_subscribed') || 'Subscribed'}</span>
-      {#if subscriptionState.items.length > 0}
-        <span class="tab-count">{subscriptionState.items.length}</span>
-      {/if}
+      <CountBadge count={subscriptionState.items.length} />
     </Button>
   </nav>
 {/snippet}
@@ -767,11 +766,5 @@
     font-weight: 650;
     backdrop-filter: blur(14px);
     pointer-events: none;
-  }
-
-  .tab-count {
-    opacity: 0.55;
-    font-size: 12px;
-    font-weight: 500;
   }
 </style>

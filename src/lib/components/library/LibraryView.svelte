@@ -17,6 +17,7 @@
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ServiceIcon from '$lib/components/pawchive/ServiceIcon.svelte';
   import { ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
@@ -442,7 +443,7 @@
 {#snippet manageStashContent()}
   <div class="filter-heading">
     <strong>{i18n.t('library.manage_stash')}</strong>
-    <span class="manage-stash-badge">{libraryState.selectedCollection?.item_count ?? 0}</span>
+    <CountBadge count={libraryState.selectedCollection?.item_count ?? 0} showZero={true} />
   </div>
 
   <span class="filter-label">{i18n.t('library.stash_name')}</span>
@@ -593,7 +594,7 @@
         class="library-tab"
       >
         <span>{i18n.t('library.all') || 'Library'}</span>
-        <span class="tab-count">{libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)}</span>
+        <CountBadge count={libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)} />
       </Button>
 
       <div class="desktop-stash-picker">
@@ -850,12 +851,6 @@
     gap: 8px !important;
   }
 
-  .tab-count {
-    opacity: 0.55;
-    font-size: 12px;
-    font-weight: 500;
-  }
-
   .desktop-stash-picker {
     display: flex;
     align-items: center;
@@ -939,13 +934,11 @@
     width: 320px !important;
   }
 
-  .manage-stash-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-secondary);
-    font-weight: 500;
+  .filter-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px 8px;
   }
 
   .stash-rename-row {

@@ -17,6 +17,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -351,11 +352,11 @@
         <Button variant={downloadState.filter === filter ? 'accent' : 'ghost'} onclick={() => { downloadState.filter = filter; if (selectionState.active) selectionState.clear(); }} class="downloads-tab">
           <span>{i18n.t(`downloads.${filter}`)}</span>
           {#if filter === 'active'}
-            <span class="tab-count">{downloadState.activeDownloadsCount}</span>
-          {:else if filter === 'completed' && completedCount > 0}
-            <span class="tab-count">{completedCount}</span>
-          {:else if filter === 'all' && totalCount > 0}
-            <span class="tab-count">{totalCount}</span>
+            <CountBadge count={downloadState.activeDownloadsCount} />
+          {:else if filter === 'completed'}
+            <CountBadge count={completedCount} />
+          {:else if filter === 'all'}
+            <CountBadge count={totalCount} />
           {/if}
         </Button>
       {/if}
@@ -568,7 +569,6 @@
   .downloads-tabs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .downloads-tabs::-webkit-scrollbar { display: none; }
   :global(.downloads-tabs .downloads-tab) { height: 44px !important; padding: 0 18px !important; font-size: 13.5px !important; border-radius: var(--radius-full) !important; flex-shrink: 0 !important; display: inline-flex !important; align-items: center !important; gap: 6px !important; }
-  .tab-count { opacity: .58; font-size: 12px; font-weight: 500; }
   .filter-label { display: block; padding: 5px 7px 9px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .view-option { width: 100%; min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 11px; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; text-align: left; transition: background var(--duration-fast), color var(--duration-fast); }
   button.view-option { font-family: inherit; cursor: pointer; }

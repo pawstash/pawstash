@@ -19,6 +19,7 @@
   import Select from '$lib/components/ui/Select.svelte';
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
@@ -563,12 +564,12 @@
     <Button variant={activeTab === 'posts' ? 'accent' : 'ghost'} onclick={() => selectTab('posts')}>
       <IconHeart class="tab-icon" />
       <span>{i18n.t('favorites.posts')}</span>
-      {#if posts.length > 0}<span class="tab-count">{posts.length}</span>{/if}
+      <CountBadge count={posts.length} />
     </Button>
     <Button variant={activeTab === 'creators' ? 'accent' : 'ghost'} onclick={() => selectTab('creators')}>
       <IconPeople class="tab-icon" />
       <span>{i18n.t('favorites.creators')}</span>
-      {#if creators.length > 0}<span class="tab-count">{creators.length}</span>{/if}
+      <CountBadge count={creators.length} />
     </Button>
   </nav>
 {/snippet}

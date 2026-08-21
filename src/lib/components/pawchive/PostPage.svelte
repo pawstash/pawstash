@@ -21,6 +21,7 @@
   import { tooltip } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
+  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import RichContent from './RichContent.svelte';
   import PostPoll from './PostPoll.svelte';
@@ -991,27 +992,27 @@
                 <Button variant={activeMediaTab === 'all' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'all'}>
                   <IconGrid class="w-[16px] h-[16px]" />
                   <span>{i18n.t('post.tab_all')}</span>
-                  <span class="media-tab-count">{mediaCounts.all}</span>
+                  <CountBadge count={mediaCounts.all} showZero={true} />
                 </Button>
                 {#if mediaCounts.video > 0}
                   <Button variant={activeMediaTab === 'video' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'video'}>
                     <IconVideo class="w-[16px] h-[16px]" />
                     <span>{i18n.t('post.tab_video')}</span>
-                    <span class="media-tab-count">{mediaCounts.video}</span>
+                    <CountBadge count={mediaCounts.video} />
                   </Button>
                 {/if}
                 {#if mediaCounts.photo > 0}
                   <Button variant={activeMediaTab === 'photo' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'photo'}>
                     <IconImage class="w-[16px] h-[16px]" />
                     <span>{i18n.t('post.tab_photo')}</span>
-                    <span class="media-tab-count">{mediaCounts.photo}</span>
+                    <CountBadge count={mediaCounts.photo} />
                   </Button>
                 {/if}
                 {#if mediaCounts.file > 0}
                   <Button variant={activeMediaTab === 'file' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'file'}>
                     <IconDocument class="w-[16px] h-[16px]" />
                     <span>{i18n.t('post.tab_file')}</span>
-                    <span class="media-tab-count">{mediaCounts.file}</span>
+                    <CountBadge count={mediaCounts.file} />
                   </Button>
                 {/if}
               </nav>
@@ -1320,9 +1321,7 @@
           <h2 class="comments-title">
             <IconComment class="w-[20px] h-[20px] opacity-75" />
             <span>{i18n.t('post.comments')}</span>
-            {#if comments.length > 0}
-              <span class="comments-count">({comments.length})</span>
-            {/if}
+            <CountBadge count={comments.length} variant="header" />
           </h2>
 
           {#if comments.length > 1}
@@ -1520,12 +1519,6 @@
 
   .media-tabs :global(.btn) {
     gap: 6px !important;
-  }
-
-  .media-tab-count {
-    opacity: 0.55;
-    font-size: 12px;
-    font-weight: 500;
   }
 
   .media-sort-selector {
@@ -2036,13 +2029,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  .comments-count {
-    font-size: 14px;
-    color: var(--text-secondary);
-    font-weight: 400;
-    opacity: 0.7;
   }
 
   .comments-sort-selector {
