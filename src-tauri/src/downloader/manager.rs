@@ -266,11 +266,34 @@ impl DownloadManager {
         Ok(changed)
     }
 
+    fn hide_folder(path: &Path) {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
+
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            unsafe {
+                SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = path;
+        }
+    }
+
     fn ensure_download_root(preferred: &str) -> Result<PathBuf, String> {
         let root = PathBuf::from(preferred);
-        if std::fs::create_dir_all(root.join(".temp")).is_ok()
-            && std::fs::create_dir_all(root.join(".media")).is_ok()
-        {
+        let temp = root.join(".temp");
+        let media = root.join(".media");
+        if std::fs::create_dir_all(&temp).is_ok() && std::fs::create_dir_all(&media).is_ok() {
+            Self::hide_folder(&temp);
+            Self::hide_folder(&media);
             return Ok(root);
         }
 
@@ -285,16 +308,22 @@ impl DownloadManager {
             ];
 
             for fb in fallbacks {
-                if std::fs::create_dir_all(fb.join(".temp")).is_ok()
-                    && std::fs::create_dir_all(fb.join(".media")).is_ok()
+                let fb_temp = fb.join(".temp");
+                let fb_media = fb.join(".media");
+                if std::fs::create_dir_all(&fb_temp).is_ok()
+                    && std::fs::create_dir_all(&fb_media).is_ok()
                 {
+                    Self::hide_folder(&fb_temp);
+                    Self::hide_folder(&fb_media);
                     return Ok(fb);
                 }
             }
         }
 
-        std::fs::create_dir_all(root.join(".temp")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(root.join(".media")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&media).map_err(|error| error.to_string())?;
+        Self::hide_folder(&temp);
+        Self::hide_folder(&media);
         Ok(root)
     }
 
