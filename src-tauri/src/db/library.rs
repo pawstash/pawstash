@@ -131,6 +131,20 @@ impl LibraryRepository {
         .map_err(|e| e.to_string())
     }
 
+    pub fn reorder_stashes(&self, collection_ids: &[String]) -> Result<bool, String> {
+        let mut c = self.connection.lock().map_err(|e| e.to_string())?;
+        let tx = c.transaction().map_err(|e| e.to_string())?;
+        for (idx, id) in collection_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE collections SET position=?2 WHERE id=?1 AND kind='stash' AND is_system=0",
+                params![id, (idx + 1) as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     pub fn clear_stash(&self, id: &str) -> Result<u64, String> {
         let mut c = self.connection.lock().map_err(|e| e.to_string())?;
         let tx = c.transaction().map_err(|e| e.to_string())?;
@@ -338,5 +352,28 @@ mod tests {
         let posts = r.list_posts(None, 0, 10).unwrap();
         assert_eq!(posts.len(), 1);
         assert!(posts[0].extra["library_added_at"].as_str().is_some());
+    }
+
+    #[test]
+    fn reorder_stashes_persists_order() {
+        let r = LibraryRepository::in_memory();
+        let s1 = r.create_stash("First").unwrap();
+        let s2 = r.create_stash("Second").unwrap();
+        let s3 = r.create_stash("Third").unwrap();
+
+        let initial = r.list_collections().unwrap();
+        let initial_stashes: Vec<_> = initial.iter().filter(|c| c.kind == "stash").collect();
+        assert_eq!(initial_stashes[0].id, s1.id);
+        assert_eq!(initial_stashes[1].id, s2.id);
+        assert_eq!(initial_stashes[2].id, s3.id);
+
+        r.reorder_stashes(&[s3.id.clone(), s1.id.clone(), s2.id.clone()])
+            .unwrap();
+
+        let reordered = r.list_collections().unwrap();
+        let reordered_stashes: Vec<_> = reordered.iter().filter(|c| c.kind == "stash").collect();
+        assert_eq!(reordered_stashes[0].id, s3.id);
+        assert_eq!(reordered_stashes[1].id, s1.id);
+        assert_eq!(reordered_stashes[2].id, s2.id);
     }
 }

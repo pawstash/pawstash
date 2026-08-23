@@ -453,16 +453,24 @@
       placeholder={i18n.t('library.stash_name')}
       disabled={renamingPending}
       class="stash-rename-input"
-    />
-    <Button
-      type="submit"
-      variant="accent"
-      disabled={!editStashName.trim() || editStashName.trim() === libraryState.selectedCollection?.name || renamingPending}
-      title={i18n.t('library.rename_stash')}
-      class="btn-icon rename-submit-btn"
     >
-      {#if renamingPending}<IconLoading class="w-[18px] h-[18px]" />{:else}<IconCheckmark class="w-[18px] h-[18px]" />{/if}
-    </Button>
+      {#snippet right()}
+        <button
+          type="submit"
+          class="icon-btn"
+          use:ripple
+          disabled={!editStashName.trim() || editStashName.trim() === libraryState.selectedCollection?.name || renamingPending}
+          title={i18n.t('library.rename_stash')}
+          aria-label="Rename stash"
+        >
+          {#if renamingPending}
+            <IconLoading style="width: 18px; height: 18px;" />
+          {:else}
+            <IconCheckmark style="width: 18px; height: 18px;" />
+          {/if}
+        </button>
+      {/snippet}
+    </Input>
   </form>
 
   <div class="manage-stash-divider"></div>
@@ -616,7 +624,6 @@
             await selectCollection(newStash.id);
           }}
           class="desktop-stash-select"
-          style="height: 44px;"
         />
       </div>
     </div>
@@ -640,7 +647,6 @@
           await selectCollection(newStash.id);
         }}
         class="mobile-stash-select"
-        style="height: 44px;"
       />
     </div>
   {/if}
@@ -821,36 +827,6 @@
 </SelectionActionBar>
 
 <style>
-  :global(.btn-icon) {
-    width: 44px !important;
-    height: 44px !important;
-    padding: 0 !important;
-    border-radius: var(--radius-full) !important;
-    flex-shrink: 0;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  :global(.btn-icon svg) {
-    width: 20px !important;
-    height: 20px !important;
-    flex-shrink: 0 !important;
-  }
-
-
-
-  :global(.library-tab) {
-    height: 44px !important;
-    padding: 0 18px !important;
-    font-size: 13.5px !important;
-    border-radius: var(--radius-full) !important;
-    flex-shrink: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 8px !important;
-  }
-
   .desktop-stash-picker {
     display: flex;
     align-items: center;
@@ -862,13 +838,6 @@
     width: auto !important;
     min-width: 130px !important;
     max-width: 220px !important;
-  }
-
-  :global(.desktop-stash-select .select-trigger) {
-    height: 44px !important;
-    font-size: 13.5px !important;
-    padding: 0 14px !important;
-    border-radius: var(--radius-full) !important;
   }
 
   :global(.btn-create-stash) {

@@ -22,6 +22,7 @@
   import IconPerson from '~icons/fluent/person-24-regular';
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
+  import IconLaptop from '~icons/fluent/laptop-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import { invoke } from '@tauri-apps/api/core';
   import { notify } from '$lib/utils/toast';
@@ -447,17 +448,18 @@
         >
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.server_url')}</span>
-            <Input bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
+            <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.account_id')}</span>
-            <Input bind:value={syncAccount} placeholder="account-id" />
+            <Input icon={IconPerson} clearable={true} bind:value={syncAccount} placeholder="account-id" />
           </div>
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.master_password')}</span>
             <Input
+              icon={IconKey}
               bind:value={syncPassword}
               type="password"
               placeholder="••••••••••••"
@@ -467,7 +469,7 @@
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input bind:value={syncDevice} placeholder="Pawstash Desktop" />
+            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
           <Button
@@ -499,27 +501,26 @@
         >
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.server_url')}</span>
-            <Input bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
+            <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.account_id')}</span>
-            <div class="flex items-center gap-1.5">
-              <Input bind:value={syncAccount} placeholder="account-id" />
-              <button
-                type="button"
-                class="p-3 rounded-full bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-color)] text-white/70 hover:text-white transition-colors shrink-0"
-                onclick={() => (syncAccount = generateRandomId())}
-                title="Generate random ID"
-              >
-                <IconDice class="w-5 h-5" />
-              </button>
-            </div>
+            <Input
+              icon={IconPerson}
+              clearable={true}
+              bind:value={syncAccount}
+              placeholder="account-id"
+              actionIcon={IconDice}
+              actionTooltip="Generate random ID"
+              onAction={() => (syncAccount = generateRandomId())}
+            />
           </div>
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.master_password')}</span>
             <Input
+              icon={IconKey}
               bind:value={syncPassword}
               type="password"
               placeholder="•••••••••••• (min. 12 chars)"
@@ -529,7 +530,7 @@
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input bind:value={syncDevice} placeholder="Pawstash Desktop" />
+            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
           <Button
@@ -571,6 +572,7 @@
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.new_password')}</span>
             <Input
+              icon={IconKey}
               bind:value={syncPassword}
               type="password"
               placeholder="•••••••••••• (min. 12 chars)"
@@ -580,7 +582,7 @@
 
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input bind:value={syncDevice} placeholder="Pawstash Desktop" />
+            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
           <Button
@@ -652,6 +654,7 @@
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/70 font-medium">{i18n.t('sync.current_password')}</span>
             <Input
+              icon={IconKey}
               type="password"
               bind:value={currentPassword}
               placeholder="••••••••••••"
@@ -662,6 +665,7 @@
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/70 font-medium">{i18n.t('sync.new_password')}</span>
             <Input
+              icon={IconKey}
               type="password"
               bind:value={newPassword}
               placeholder="•••••••••••• (min. 12 chars)"
@@ -696,6 +700,7 @@
           </p>
 
           <Input
+            icon={IconLock}
             type="password"
             bind:value={unlockPassword}
             placeholder={i18n.t('sync.master_password')}
@@ -730,6 +735,8 @@
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('profile.username')}</span>
             <Input
+              icon={IconPerson}
+              clearable={true}
               bind:value={pawchiveUsername}
               placeholder="Username"
               autocomplete="username"
@@ -739,6 +746,7 @@
           <div class="flex flex-col gap-1">
             <span class="text-xs text-white/60 font-medium">{i18n.t('profile.password')}</span>
             <Input
+              icon={IconKey}
               bind:value={pawchivePassword}
               type="password"
               placeholder="••••••••"

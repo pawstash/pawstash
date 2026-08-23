@@ -57,12 +57,17 @@ pub fn run() {
     let sync_repository = Arc::new(SyncRepository::new().expect("Failed to initialize sync state"));
     let sync_manager = Arc::new(SyncManager::new(sync_repository, config_manager.clone()));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_os::init());
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+
+    builder
         .setup(move |app| {
             // Do not reveal an uninitialized WebView: on Windows it otherwise
             // appears as a large gray surface while Vite is still serving the UI.
@@ -92,7 +97,9 @@ pub fn run() {
             sync_manager.start(app.handle().clone());
 
             #[cfg(desktop)]
-            let _ = setup_desktop_tray(app);
+            {
+                let _ = setup_desktop_tray(app);
+            }
 
             #[cfg(target_os = "android")]
             commands::set_android_app_handle(app.handle().clone());
@@ -159,6 +166,7 @@ pub fn run() {
             create_library_stash,
             delete_library_stash,
             rename_library_stash,
+            reorder_library_stashes,
             clear_library_stash,
             remove_library_post_from_stash,
             list_post_collections,
@@ -196,7 +204,10 @@ pub fn run() {
             set_sync_enabled,
             commands::updater::check_for_updates,
             commands::updater::download_and_install_update,
-            commands::window_effects::set_window_effect
+            commands::window_effects::set_window_effect,
+            hide_to_tray,
+            update_panic_key,
+            update_boss_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -256,3 +267,4 @@ fn setup_desktop_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Er
 
     Ok(())
 }
+

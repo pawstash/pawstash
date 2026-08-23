@@ -286,8 +286,11 @@
 </script>
 
 <div class="template-input-wrapper {extraClass}" bind:this={rootEl}>
-  <!-- svelte-ignore css_unused_selector -->
-  <div style="position:relative; width:100%;">
+  <div
+    class="template-box"
+    class:is-disabled={disabled}
+    class:is-open={isOpen}
+  >
     <input
       bind:this={inputEl}
       type="text"
@@ -298,35 +301,35 @@
       onblur={scheduleClose}
       oninput={handleInput}
       onkeydown={handleKeyDown}
-      class="template-input-field"
-      style="padding-right: 74px;"
+      class="native-input"
       autocomplete="off"
       spellcheck="false"
     />
 
-    <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); display:flex; align-items:center; gap:4px; z-index:10;">
+    <div class="right-actions">
       {#if previewValue}
         <button
           type="button"
+          class="icon-btn"
           use:ripple
           use:tooltip={previewValue}
           onclick={(e) => {
             e.stopPropagation();
             notify.info(previewValue);
           }}
-          style="width:22px; height:22px; border:none; outline:none; background:transparent; display:flex; align-items:center; justify-content:center; color:white; opacity:0.45; cursor:pointer; padding:0; transition:opacity 200ms ease, color 200ms ease;"
-          onmouseenter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-          onmouseleave={(e) => { e.currentTarget.style.opacity = '0.45'; }}
-          aria-label="Preview"
+          aria-label="Preview template result"
           tabindex="-1"
         >
-          <IconEye style="width: 19px; height: 19px;" />
+          <IconEye style="width: 18px; height: 18px;" />
         </button>
       {/if}
 
       <button
         type="button"
+        class="icon-btn"
+        class:is-active={isOpen}
         use:ripple
+        use:tooltip={'Insert variable'}
         onclick={(e) => {
           e.stopPropagation();
           if (isOpen) isOpen = false;
@@ -335,14 +338,10 @@
             openDropdown();
           }
         }}
-        style="width:22px; height:22px; border:none; outline:none; background:transparent; display:flex; align-items:center; justify-content:center; color:white; opacity:{isOpen ? '0.9' : '0.45'}; cursor:pointer; padding:0; transition:opacity 200ms ease, color 200ms ease;"
-        onmouseenter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-        onmouseleave={(e) => { if (!isOpen) e.currentTarget.style.opacity = '0.45'; }}
-        title="Insert variable"
         aria-label="Insert variable"
         tabindex="-1"
       >
-        <IconCode style="width: 19px; height: 19px;" />
+        <IconCode style="width: 18px; height: 18px;" />
       </button>
     </div>
   </div>
@@ -351,22 +350,26 @@
 {#if isOpen && filteredTags.length > 0}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    use:portal
+    use:portal={'body'}
     bind:this={dropdownEl}
     class="template-dropdown"
-    role="dialog"
-    aria-label="Variables"
+    role="listbox"
     tabindex="-1"
-    onmousedown={(e) => e.preventDefault()}
   >
     <div class="dropdown-list" use:scrollable>
-      {#each filteredTags as item, index (item.tag)}
+      {#each filteredTags as item, i (item.tag)}
         <button
           type="button"
-          class="dropdown-item"
-          class:selected={index === selectedIndex}
-          onclick={() => insertTag(item.tag)}
-          onmouseenter={() => (selectedIndex = index)}
+          class="tag-item"
+          class:is-selected={i === selectedIndex}
+          use:ripple
+          onmousedown={(e) => {
+            e.preventDefault();
+            insertTag(item.tag);
+          }}
+          onmouseenter={() => (selectedIndex = i)}
+          role="option"
+          aria-selected={i === selectedIndex}
         >
           <span class="tag-label">{item.label}</span>
           <code class="tag-badge">{item.tag}</code>
@@ -384,38 +387,101 @@
     position: relative;
   }
 
-  .template-input-field {
-    display: block;
+  .template-box {
+    display: flex;
+    align-items: center;
     width: 100%;
     height: 46px;
+    padding: 0 14px;
+    gap: 10px;
     background: var(--bg-card);
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: 14px;
-    padding: 0 74px 0 14px;
-    outline: none;
     box-sizing: border-box;
+    outline: none !important;
+    box-shadow: none !important;
     transition: background var(--duration-fast) var(--ease-expo),
-                border-color var(--duration-fast) var(--ease-expo),
-                box-shadow var(--duration-fast) var(--ease-expo);
+                border-color var(--duration-fast) var(--ease-expo);
   }
 
-  .template-input-field::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
-  }
-
-  .template-input-field:hover {
+  .template-box:hover,
+  .template-box:focus-within,
+  .template-box.is-open {
     background: var(--bg-card-hover);
     border-color: var(--border-color-hover);
   }
 
-  .template-input-field:focus {
-    background: var(--bg-card-hover);
+  .template-box:focus-visible,
+  .template-box:has(:focus-visible) {
     border-color: var(--border-color-focus);
-    box-shadow: 0 0 0 2px var(--accent-glow);
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  .template-box.is-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+
+  .native-input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    padding: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: var(--font-sans);
+    box-sizing: border-box;
+  }
+
+  .native-input:focus,
+  .native-input:focus-visible {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .native-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+    font-size: 13px;
+  }
+
+  .right-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .icon-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    outline: none;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    opacity: 0.45;
+    cursor: pointer;
+    padding: 0;
+    border-radius: var(--radius-sm, 6px);
+    transition: opacity 160ms ease, color 160ms ease;
+  }
+
+  .icon-btn:hover,
+  .icon-btn.is-active,
+  .icon-btn:focus-visible {
+    opacity: 0.95;
+    color: var(--accent);
   }
 
   .template-dropdown {
@@ -468,7 +534,7 @@
     box-sizing: border-box !important;
   }
 
-  .dropdown-item {
+  .tag-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -485,12 +551,12 @@
     flex-shrink: 0;
   }
 
-  .dropdown-item:hover,
-  .dropdown-item.selected {
+  .tag-item:hover,
+  .tag-item.is-selected {
     background: rgba(255, 255, 255, 0.08);
   }
 
-  .dropdown-item.selected {
+  .tag-item.is-selected {
     box-shadow: inset 2px 0 0 var(--accent);
   }
 

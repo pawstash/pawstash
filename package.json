@@ -1,7 +1,7 @@
 {
   "name": "pawstash",
   "private": true,
-  "version": "26.8.2",
+  "version": "26.8.3-1",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {

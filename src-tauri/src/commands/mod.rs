@@ -1033,6 +1033,17 @@ pub fn rename_library_stash(
 }
 
 #[tauri::command]
+pub fn reorder_library_stashes(
+    collection_ids: Vec<String>,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let result = state.library.reorder_stashes(&collection_ids);
+    state.sync_manager.trigger_sync_on_change(app_handle);
+    result
+}
+
+#[tauri::command]
 pub fn clear_library_stash(
     collection_id: String,
     app_handle: tauri::AppHandle,
@@ -1217,6 +1228,68 @@ pub async fn start_download(
             1
         }
     };
+
+    if settings.download_save_metadata {
+        let tags_vec: Option<Vec<String>> = post.tags.as_ref().and_then(|t| {
+            if let Some(arr) = t.as_array() {
+                Some(
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect(),
+                )
+            } else if let Some(s) = t.as_str() {
+                Some(s.split(',').map(|v| v.trim().to_string()).collect())
+            } else {
+                None
+            }
+        });
+
+        let root = std::path::PathBuf::from(&settings.download_dir);
+        let c_name = creator_name.as_deref().unwrap_or("");
+        let ctx = crate::downloader::template::TemplateContext {
+            service: &post.service,
+            creator_id: &post.user,
+            creator_name: c_name,
+            post_id: &post.id,
+            post_title: &post.title,
+            published: post.published.as_deref(),
+            original_filename: &filename,
+            index,
+            media_id: &media_id,
+        };
+        let mut target_dir = root;
+        if settings.download_group_by_creator {
+            let creator_folder = crate::downloader::template::resolve_creator_folder(
+                &settings.download_creator_folder_template,
+                &ctx,
+            );
+            if !creator_folder.is_empty() {
+                target_dir = target_dir.join(creator_folder);
+            }
+        }
+        if settings.download_group_by_post {
+            let post_folder = crate::downloader::template::resolve_post_folder(
+                &settings.download_post_folder_template,
+                &ctx,
+            );
+            if !post_folder.is_empty() {
+                target_dir = target_dir.join(post_folder);
+            }
+        }
+        let _ = std::fs::create_dir_all(&target_dir);
+        let meta = crate::downloader::metadata::PostMetadataExport {
+            service: &post.service,
+            creator_id: &post.user,
+            creator_name: c_name,
+            post_id: &post.id,
+            post_title: &post.title,
+            published: post.published.as_deref(),
+            content: post.content.as_deref(),
+            tags: tags_vec.as_deref(),
+            origin_url: post.origin.clone(),
+        };
+        let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
+    }
 
     state.download_manager.enqueue(
         post.service,
@@ -2015,3 +2088,46 @@ pub async fn pick_folder() -> Result<Option<String>, String> {
 pub async fn get_pending_deep_link() -> Result<Option<String>, String> {
     Ok(crate::downloader::notifications::get_pending_deep_link())
 }
+
+#[tauri::command]
+pub fn hide_to_tray(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        for (_, window) in app_handle.webview_windows() {
+            if window.is_fullscreen().unwrap_or(false) {
+                let _ = window.set_fullscreen(false);
+            }
+            let _ = window.hide();
+        }
+    }
+    let _ = app_handle;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_panic_key(
+    _shortcut: String,
+    _enabled: bool,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app_handle.global_shortcut().unregister_all();
+    }
+    let _ = app_handle;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_boss_key(
+    shortcut: String,
+    enabled: bool,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    update_panic_key(shortcut, enabled, app_handle)
+}
+
+
+

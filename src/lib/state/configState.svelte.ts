@@ -37,10 +37,26 @@ export class ConfigState {
     download_creator_folder_template: '{creator}',
     download_group_by_post: false,
     download_post_folder_template: '{post_title}',
-    download_filename_template: '{post_title} - {filename}'
+    download_filename_template: '{post_title} - {filename}',
+    download_save_metadata: false,
+    download_metadata_format: 'txt',
+    panic_button_enabled: true,
+    panic_button_shortcut: 'H'
   });
 
   updateSettings(newSettings: AppSettings) {
+    const sc = newSettings.panic_button_shortcut || newSettings.boss_key_shortcut;
+    if (!sc || sc === 'Alt+X') {
+      newSettings.panic_button_shortcut = 'H';
+    } else {
+      newSettings.panic_button_shortcut = sc;
+    }
+    if (newSettings.panic_button_enabled === undefined && newSettings.boss_key_enabled !== undefined) {
+      newSettings.panic_button_enabled = newSettings.boss_key_enabled;
+    }
+    if (newSettings.panic_button_enabled === undefined) {
+      newSettings.panic_button_enabled = true;
+    }
     this.settings = newSettings;
     document.documentElement.setAttribute('data-theme', newSettings.theme);
   }

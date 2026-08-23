@@ -70,6 +70,13 @@
     const unlistenDeepLink = listen<string>('open-post-deep-link', (event) => {
       handleDeepLinkJson(event.payload);
     });
+    const unlistenPanic = listen('panic-mode', () => {
+      document.querySelectorAll('video, audio').forEach((el) => {
+        try {
+          (el as HTMLMediaElement).pause();
+        } catch {}
+      });
+    });
 
     void apiGetSettings()
       .then((settings) => {
@@ -92,6 +99,7 @@
       document.removeEventListener('touchstart', preventPinchZoom);
       document.removeEventListener('touchmove', preventPinchZoom);
       void unlistenDeepLink.then((u) => u());
+      void unlistenPanic.then((u) => u());
     };
   });
 </script>

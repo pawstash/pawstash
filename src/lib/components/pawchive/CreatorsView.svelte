@@ -657,15 +657,6 @@
     flex-shrink: 0;
   }
 
-  .creators-tabs :global(.btn) {
-    height: 44px !important;
-    padding: 0 18px !important;
-    font-size: 13.5px !important;
-    border-radius: var(--radius-full) !important;
-    gap: 8px !important;
-    font-weight: 550 !important;
-  }
-
   :global(.select-root.creators-sort-select) {
     width: auto !important;
     max-width: none !important;
@@ -675,10 +666,6 @@
   }
 
   :global(.select-root.creators-sort-select .select-trigger.variant-ghost) {
-    height: 44px !important;
-    font-size: 13px !important;
-    padding: 0 10px !important;
-    border-radius: var(--radius-full) !important;
     min-width: 80px !important;
     width: auto !important;
     max-width: none !important;

@@ -67,22 +67,4 @@
     align-items: center;
     gap: 8px;
   }
-
-  :global(.header-actions-root .btn-icon) {
-    width: 44px !important;
-    height: 44px !important;
-    min-width: 44px !important;
-    padding: 0 !important;
-    border-radius: var(--radius-full, 9999px) !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.header-actions-root .btn-icon svg) {
-    width: 20px !important;
-    height: 20px !important;
-    flex-shrink: 0 !important;
-  }
 </style>

@@ -18,6 +18,7 @@
     apiGetDefaultSettings,
     apiGetSettings,
     apiSaveSettings,
+    apiUpdatePanicKey,
     openExternalUrl,
     apiWipeAllData,
     type CacheStats
@@ -35,6 +36,7 @@
   import Slider from '$lib/components/ui/Slider.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import TemplateInput, { type TemplateTag } from '$lib/components/ui/TemplateInput.svelte';
+  import ShortcutInput from '$lib/components/ui/ShortcutInput.svelte';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconKey from '~icons/fluent/key-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
@@ -70,6 +72,7 @@
   import IconCopy from '~icons/fluent/copy-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
+  import IconVideo from '~icons/fluent/video-24-regular';
   import StorageBar from './StorageBar.svelte';
   import DownloadsStatsBar from '$lib/components/downloads/DownloadsStatsBar.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
@@ -1111,6 +1114,46 @@
             />
           </div>
         </SettingItem>
+
+        {#if !layoutState.isMobile}
+          <SettingItem
+            title={i18n.t('settings.panic_button')}
+            description={i18n.t('settings.panic_button_desc')}
+            icon={IconEye}
+            align="right"
+          >
+            <SegmentedControl
+              options={[
+                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+              ]}
+              value={settings.panic_button_enabled ?? settings.boss_key_enabled ?? true}
+              onchange={(val) => {
+                updateAndSaveSetting('panic_button_enabled', val);
+                void apiUpdatePanicKey(settings.panic_button_shortcut || settings.boss_key_shortcut || 'H', val);
+              }}
+            />
+          </SettingItem>
+
+          {#if (settings.panic_button_enabled ?? settings.boss_key_enabled ?? true)}
+            <SettingItem
+              title={i18n.t('settings.panic_button_shortcut')}
+              description={i18n.t('settings.panic_button_shortcut_desc')}
+              icon={IconKey}
+            >
+              <div class="w-full">
+                <ShortcutInput
+                  bind:value={settings.panic_button_shortcut}
+                  defaultValue="H"
+                  onchange={(val) => {
+                    updateAndSaveSetting('panic_button_shortcut', val || 'H');
+                    void apiUpdatePanicKey(val || 'H', settings.panic_button_enabled ?? settings.boss_key_enabled ?? true);
+                  }}
+                />
+              </div>
+            </SettingItem>
+          {/if}
+        {/if}
       </div>
     </div>
 
@@ -1181,6 +1224,7 @@
           <SettingItem title={i18n.t('settings.proxy_url')} description={i18n.t('settings.proxy_url_desc')} icon={IconGlobe}>
             <div class="w-full">
               <Input
+                clearable={true}
                 placeholder="http://127.0.0.1:8080"
                 bind:value={settings.proxy_url}
                 onblur={() => updateAndSaveSetting('proxy_url', settings.proxy_url)}
@@ -1188,9 +1232,10 @@
             </div>
           </SettingItem>
 
-          <SettingItem title={i18n.t('settings.proxy_username')} description={i18n.t('settings.proxy_username_desc')} icon={IconKey}>
+          <SettingItem title={i18n.t('settings.proxy_username')} description={i18n.t('settings.proxy_username_desc')} icon={IconUser}>
             <div class="w-full">
               <Input
+                clearable={true}
                 placeholder={i18n.t('settings.optional')}
                 bind:value={settings.proxy_username}
                 onblur={() => updateAndSaveSetting('proxy_username', settings.proxy_username)}
@@ -1328,6 +1373,7 @@
         >
           <div class="w-full">
             <Input
+              clearable={true}
               placeholder="api.example.com"
               bind:value={settings.api_domain}
               onblur={() => updateAndSaveSetting('api_domain', settings.api_domain)}
@@ -1338,6 +1384,7 @@
         <SettingItem title={i18n.t('settings.file_domain')} description={i18n.t('settings.file_domain_desc')} icon={IconGlobe}>
           <div class="w-full">
             <Input
+              clearable={true}
               placeholder="files.example.com"
               bind:value={settings.file_domain}
               onblur={() => updateAndSaveSetting('file_domain', settings.file_domain)}
@@ -1348,6 +1395,7 @@
         <SettingItem title={i18n.t('settings.image_domain')} description={i18n.t('settings.image_domain_desc')} icon={IconGlobe}>
           <div class="w-full">
             <Input
+              clearable={true}
               placeholder="images.example.com"
               bind:value={settings.image_domain}
               onblur={() => updateAndSaveSetting('image_domain', settings.image_domain)}
@@ -1469,6 +1517,41 @@
         </SettingItem>
 
         <SettingItem
+          title={i18n.t('settings.download_save_metadata')}
+          description={i18n.t('settings.download_save_metadata_desc')}
+          icon={IconDocument}
+          align="right"
+        >
+          <SegmentedControl
+            options={[
+              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+            ]}
+            value={settings.download_save_metadata ?? false}
+            onchange={(val) => updateAndSaveSetting('download_save_metadata', val)}
+          />
+        </SettingItem>
+
+        {#if settings.download_save_metadata}
+          <SettingItem
+            title={i18n.t('settings.download_metadata_format')}
+            description={i18n.t('settings.download_metadata_format_desc')}
+            icon={IconDocument}
+            align="right"
+          >
+            <SegmentedControl
+              options={[
+                { value: 'txt', label: '.txt' },
+                { value: 'json', label: '.json' },
+                { value: 'both', label: '.txt + .json' }
+              ]}
+              value={settings.download_metadata_format || 'txt'}
+              onchange={(val) => updateAndSaveSetting('download_metadata_format', val)}
+            />
+          </SettingItem>
+        {/if}
+
+        <SettingItem
           title={i18n.t('settings.aria2c_engine')}
           description={i18n.t('settings.aria2c_engine_desc')}
           icon={IconDownload}
@@ -1508,29 +1591,15 @@
           icon={IconFolder}
           class="col-span-full"
         >
-          <div class="w-full relative flex items-center">
-            <div
-              class="w-full h-[46px] px-4 pr-12 rounded-full border flex items-center select-all cursor-text font-mono text-[13px] overflow-hidden whitespace-nowrap text-ellipsis"
-              style="background: var(--bg-card); border-color: var(--border-color); color: var(--text-secondary);"
-            >
-              {fullDownloadPathPreview}
-            </div>
-            <button
-              type="button"
-              use:ripple
-              onclick={copyPreviewPath}
-              style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; border: none; outline: none; background: transparent; display: flex; align-items: center; justify-content: center; color: white; opacity: 0.45; cursor: pointer; z-index: 10; padding: 0; transition: opacity 200ms ease, color 200ms ease;"
-              onmouseenter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-              onmouseleave={(e) => { e.currentTarget.style.opacity = '0.45'; }}
-              title={copiedPreview ? (i18n.t('common.copied') || 'Copied') : (i18n.t('common.copy') || 'Copy')}
-              aria-label="Copy path"
-            >
-              {#if copiedPreview}
-                <IconCheck style="width: 18px; height: 18px; color: var(--accent);" />
-              {:else}
-                <IconCopy style="width: 18px; height: 18px;" />
-              {/if}
-            </button>
+          <div class="w-full">
+            <Input
+              value={fullDownloadPathPreview}
+              readonly={true}
+              class="font-mono text-[13px]"
+              actionIcon={copiedPreview ? IconCheck : IconCopy}
+              actionTooltip={copiedPreview ? (i18n.t('common.copied') || 'Copied') : (i18n.t('common.copy') || 'Copy')}
+              onAction={copyPreviewPath}
+            />
           </div>
         </SettingItem>
       </div>

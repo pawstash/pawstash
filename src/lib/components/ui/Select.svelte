@@ -10,9 +10,10 @@
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
 
-  interface Option {
+  export interface Option {
     value: string | number;
     label: string;
+    icon?: any;
   }
 
   interface Props {
@@ -55,6 +56,8 @@
   let containerEl = $state<HTMLDivElement | null>(null);
   let triggerEl = $state<HTMLButtonElement | null>(null);
   let dropdownEl = $state<HTMLDivElement | null>(null);
+
+  // In-place Creation state
   let isCreating = $state(false);
   let newOptionName = $state('');
   let createInputEl = $state<HTMLInputElement | null>(null);
@@ -88,7 +91,10 @@
     if (!triggerEl || !dropdownEl) return;
 
     const triggerRect = triggerEl.getBoundingClientRect();
-    dropdownEl.style.minWidth = `${Math.max(triggerRect.width, 200)}px`;
+    const targetWidth = Math.max(triggerRect.width, onCreate ? 260 : 200);
+    dropdownEl.style.width = `${targetWidth}px`;
+    dropdownEl.style.minWidth = `${targetWidth}px`;
+    dropdownEl.style.maxWidth = `min(${Math.max(targetWidth, 340)}px, calc(100vw - 24px))`;
 
     const { x, y } = await computePosition(triggerEl, dropdownEl, {
       placement: 'bottom-start',
@@ -224,9 +230,7 @@
   });
 
   onDestroy(() => {
-    if (typeof document !== 'undefined') {
-      document.removeEventListener('click', handleDocumentClick, true);
-    }
+    document.removeEventListener('click', handleDocumentClick, true);
     cleanupAutoUpdate?.();
   });
 </script>
@@ -234,6 +238,8 @@
 <div
   bind:this={containerEl}
   class="select-root {extraClass}"
+  class:is-open={isOpen}
+  class:is-active={selectedValues ? selectedValues.length > 0 : Boolean(value)}
 >
   <button
     bind:this={triggerEl}
@@ -286,8 +292,9 @@
             <div class="select-empty-msg">{placeholder || i18n.t('library.no_stashes') || 'No stashes yet'}</div>
           {/if}
 
-          {#each options as opt}
+          {#each options as opt (opt.value)}
             {@const active = isOptSelected(opt.value)}
+
             <button
               type="button"
               role="option"
@@ -309,31 +316,45 @@
       {#if onCreate}
         <div class="select-footer">
           {#if isCreating}
-            <form class="select-create-form" onsubmit={submitCreate}>
+            <form class="select-create-inline" onsubmit={submitCreate}>
+              <IconAdd class="w-[16px] h-[16px] create-inline-icon" />
               <input
                 bind:this={createInputEl}
                 bind:value={newOptionName}
                 placeholder={i18n.t('library.stash_name') || 'Stash name...'}
-                class="select-create-input"
                 disabled={creatingPending}
+                class="create-inline-input"
+                onkeydown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelCreating(e as any);
+                  }
+                }}
               />
-              <button
-                type="submit"
-                class="select-create-btn-confirm"
-                disabled={!newOptionName.trim() || creatingPending}
-                title="Create"
-              >
-                <IconCheckmark class="w-[14px] h-[14px]" />
-              </button>
-              <button
-                type="button"
-                class="select-create-btn-cancel"
-                onclick={cancelCreating}
-                disabled={creatingPending}
-                title="Cancel"
-              >
-                <IconDismiss class="w-[14px] h-[14px]" />
-              </button>
+              <div class="create-inline-actions">
+                <button
+                  type="submit"
+                  class="create-action-btn confirm"
+                  use:ripple
+                  disabled={!newOptionName.trim() || creatingPending}
+                  title={i18n.t('common.confirm') || 'Create'}
+                  aria-label="Create stash"
+                >
+                  <IconCheckmark class="w-[15px] h-[15px]" />
+                </button>
+                <button
+                  type="button"
+                  class="create-action-btn cancel"
+                  use:ripple
+                  onclick={cancelCreating}
+                  disabled={creatingPending}
+                  title={i18n.t('common.cancel') || 'Cancel'}
+                  aria-label="Cancel"
+                >
+                  <IconDismiss class="w-[15px] h-[15px]" />
+                </button>
+              </div>
             </form>
           {:else}
             <button
@@ -342,8 +363,8 @@
               onclick={startCreating}
               use:ripple
             >
-              <IconAdd class="w-[15px] h-[15px]" />
-              <span>{createLabel || i18n.t('library.new_stash') || 'New stash'}</span>
+              <IconAdd class="w-[16px] h-[16px] create-inline-icon" />
+              <span class="create-trigger-text">{createLabel || i18n.t('library.new_stash') || 'New stash'}</span>
             </button>
           {/if}
         </div>
@@ -355,8 +376,12 @@
 <style>
   .select-root {
     position: relative;
+    display: inline-flex;
     width: 100%;
-    user-select: none;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    flex-shrink: 0;
   }
 
   .select-trigger {
@@ -366,7 +391,7 @@
     gap: 8px;
     width: 100%;
     height: 46px;
-    padding: 0 14px;
+    padding: 0 16px;
     background: var(--bg-card);
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
@@ -376,15 +401,16 @@
     cursor: pointer;
     text-align: left;
     outline: none;
+    box-sizing: border-box;
     transition: background var(--duration-fast) var(--ease-expo),
                 border-color var(--duration-fast) var(--ease-expo),
                 color var(--duration-fast) var(--ease-expo);
   }
 
   .select-trigger.icon-only {
-    width: 44px !important;
-    min-width: 44px !important;
-    height: 44px !important;
+    width: 46px !important;
+    min-width: 46px !important;
+    height: 46px !important;
     padding: 0 !important;
     justify-content: center !important;
     border-radius: var(--radius-full) !important;
@@ -395,9 +421,9 @@
     border-color: var(--border-color-hover);
   }
 
-  .select-trigger.is-open {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-focus);
+  .select-trigger:focus-visible {
+    border-color: var(--border-color-focus, var(--accent-primary));
+    box-shadow: 0 0 0 2px var(--accent-glow, rgba(255, 255, 255, 0.15));
   }
 
   .select-trigger.variant-ghost {
@@ -407,53 +433,41 @@
   }
 
   .select-trigger.variant-ghost:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: transparent;
-    color: var(--text-primary);
-  }
-
-  .select-trigger.variant-ghost.is-open {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: transparent;
+    background: var(--bg-card-hover);
+    border-color: var(--border-color-hover);
     color: var(--text-primary);
   }
 
   .select-trigger.variant-accent {
-    background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-    border-color: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+    background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
     color: var(--accent-primary);
-    font-weight: 550;
   }
 
   .select-trigger.variant-accent:hover {
-    background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-  }
-
-  .select-trigger.variant-accent.is-open {
     background: color-mix(in srgb, var(--accent-primary) 22%, transparent);
-    border-color: var(--accent-primary);
+    border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent);
   }
 
   .trigger-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    opacity: 0.85;
     flex-shrink: 0;
+    opacity: 0.8;
   }
 
   .trigger-label {
     flex: 1;
     min-width: 0;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    font-weight: 500;
   }
 
   .trigger-chevron {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     opacity: 0.45;
@@ -479,16 +493,30 @@
     visibility: hidden;
     background: var(--bg-dropdown);
     border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(var(--backdrop-blur));
+    border-radius: var(--radius-lg, 14px);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
+    animation: selectDropdownIn 0.16s var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+
+  @keyframes selectDropdownIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 
   .select-dropdown-viewport {
-    max-height: 240px;
+    max-height: 280px;
     width: 100%;
   }
 
@@ -498,6 +526,7 @@
     padding: 6px;
     width: 100%;
     box-sizing: border-box;
+    gap: 2px;
   }
 
   .select-empty-msg {
@@ -531,7 +560,7 @@
   }
 
   .select-option:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.05);
     color: var(--text-primary);
   }
 
@@ -541,97 +570,141 @@
     font-weight: 550;
   }
 
+  .select-option.is-selected:hover {
+    background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  }
+
+  .option-label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   :global(.option-check) {
     color: var(--accent-primary);
     flex-shrink: 0;
   }
 
+  /* Footer Creation */
   .select-footer {
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     padding: 6px;
-    background: rgba(0, 0, 0, 0.15);
+    box-sizing: border-box;
+    width: 100%;
+    flex-shrink: 0;
   }
 
-  .select-create-trigger {
+  .select-create-trigger,
+  .select-create-inline {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
-    height: 36px;
-    padding: 0 10px;
+    height: 38px;
+    padding: 0 12px;
     border-radius: 8px;
     background: transparent;
     border: none;
+    box-sizing: border-box;
+    transition: background var(--duration-fast) var(--ease-expo),
+                color var(--duration-fast) var(--ease-expo);
+  }
+
+  .select-create-trigger {
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 13.5px;
     font-family: var(--font-sans);
-    font-weight: 500;
     cursor: pointer;
-    transition: all var(--duration-fast) var(--ease-expo);
+    text-align: left;
+    outline: none;
   }
 
   .select-create-trigger:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+  }
+
+  .select-create-inline {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
   }
 
-  .select-create-form {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 100%;
-  }
-
-  .select-create-input {
-    flex: 1;
-    min-width: 0;
-    height: 34px;
-    padding: 0 10px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-family: var(--font-sans);
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
-
-  .select-create-input:focus {
-    border-color: var(--accent-primary);
-  }
-
-  .select-create-btn-confirm,
-  .select-create-btn-cancel {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    transition: all 0.15s ease;
+  .create-inline-icon {
+    opacity: 0.6;
     flex-shrink: 0;
   }
 
-  .select-create-btn-confirm {
-    background: var(--accent-primary);
-    color: var(--accent-text, #ffffff);
+  .create-trigger-text {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .select-create-btn-confirm:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .create-inline-input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    padding: 0;
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-family: var(--font-sans);
+    box-sizing: border-box;
   }
 
-  .select-create-btn-cancel {
-    background: rgba(255, 255, 255, 0.06);
+  .create-inline-input::placeholder {
     color: var(--text-muted);
+    opacity: 0.55;
+    font-size: 13px;
   }
 
-  .select-create-btn-cancel:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
+  .create-inline-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .create-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-secondary);
+    opacity: 0.6;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+    padding: 0;
+    transition: opacity var(--duration-fast) var(--ease-expo),
+                color var(--duration-fast) var(--ease-expo),
+                background var(--duration-fast) var(--ease-expo);
+  }
+
+  .create-action-btn:hover {
+    opacity: 1;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .create-action-btn.confirm:hover {
+    color: var(--accent-primary);
+  }
+
+  .create-action-btn:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    background: transparent;
   }
 </style>

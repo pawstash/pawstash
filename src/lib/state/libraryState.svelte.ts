@@ -12,6 +12,7 @@ import {
   apiRemoveLibraryPost,
   apiRemoveLibraryPostFromStash,
   apiRenameLibraryStash,
+  apiReorderLibraryStashes,
   apiSaveLibraryPost
 } from '$lib/utils/ipc';
 
@@ -243,6 +244,28 @@ export class LibraryState {
     if (!renamed) return false;
     this.collections = this.collections.map((c) => (c.id === collectionId ? { ...c, name } : c));
     return true;
+  }
+
+  async reorderStashes(collectionIds: string[]) {
+    const stashMap = new Map(this.collections.map((c) => [c.id, c]));
+    const nonStashes = this.collections.filter((c) => c.kind !== 'stash');
+    const orderedStashes: LibraryCollection[] = [];
+    for (const id of collectionIds) {
+      const c = stashMap.get(id);
+      if (c) orderedStashes.push(c);
+    }
+    for (const c of this.collections) {
+      if (c.kind === 'stash' && !collectionIds.includes(c.id)) {
+        orderedStashes.push(c);
+      }
+    }
+    this.collections = [...nonStashes, ...orderedStashes];
+    try {
+      await apiReorderLibraryStashes(collectionIds);
+    } catch (e) {
+      console.error('Failed to persist stash reorder:', e);
+      await this.refreshCollections();
+    }
   }
 
   async clearStash(collectionId: string) {

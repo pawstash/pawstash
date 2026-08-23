@@ -14,6 +14,7 @@
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes } from '$lib/utils/formatters';
   import { isImageUrl, isVideoUrl } from '$lib/utils/media';
+  import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
@@ -185,6 +186,34 @@
     return count;
   });
 
+  let probedMediaSizes = $state<Record<string, number>>({});
+  const probingMediaPaths = new Set<string>();
+
+  function attachmentDownload(file?: { path?: string }) {
+    if (!file?.path) return undefined;
+    return downloadState.downloads.find((item) =>
+      item.service === service &&
+      item.creator_id === creatorId &&
+      item.post_id === postId &&
+      item.media_id === file.path
+    );
+  }
+
+  function getEffectiveFileSize(file?: Attachment | null): number {
+    if (!file) return 0;
+    if (typeof file.size === 'number' && file.size > 0) return file.size;
+    if (typeof (file as any).filesize === 'number' && (file as any).filesize > 0) return (file as any).filesize;
+    if (typeof (file as any).file_size === 'number' && (file as any).file_size > 0) return (file as any).file_size;
+    if (typeof (file as any).bytes === 'number' && (file as any).bytes > 0) return (file as any).bytes;
+    if (typeof file.size === 'string' && Number(file.size) > 0) return Number(file.size);
+    if (file.path && probedMediaSizes[file.path] && probedMediaSizes[file.path] > 0) return probedMediaSizes[file.path];
+    const job = attachmentDownload(file);
+    if (job && (job.total_bytes > 0 || job.downloaded_bytes > 0)) {
+      return Math.max(job.total_bytes, job.downloaded_bytes);
+    }
+    return 0;
+  }
+
   let filteredMedia = $derived.by(() => {
     let list = [...media];
     if (activeMediaTab === 'video') {
@@ -200,13 +229,29 @@
     }
 
     if (mediaSort === 'name_asc') {
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
     } else if (mediaSort === 'name_desc') {
-      list.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+      list.sort((a, b) => (b.name || '').localeCompare(a.name || '', undefined, { numeric: true, sensitivity: 'base' }));
     } else if (mediaSort === 'size_desc') {
-      list.sort((a, b) => (b.size || 0) - (a.size || 0));
+      list.sort((a, b) => {
+        const sizeA = getEffectiveFileSize(a);
+        const sizeB = getEffectiveFileSize(b);
+        if (sizeB !== sizeA) {
+          return sizeB - sizeA;
+        }
+        return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      });
     } else if (mediaSort === 'size_asc') {
-      list.sort((a, b) => (a.size || 0) - (b.size || 0));
+      list.sort((a, b) => {
+        const sizeA = getEffectiveFileSize(a);
+        const sizeB = getEffectiveFileSize(b);
+        if (sizeA === 0 && sizeB > 0) return 1;
+        if (sizeB === 0 && sizeA > 0) return -1;
+        if (sizeA !== sizeB) {
+          return sizeA - sizeB;
+        }
+        return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      });
     }
 
     return list;
@@ -238,7 +283,7 @@
       url,
       name: file.name || i18n.t('post.file'),
       kind: isEmbed ? 'video' : mediaViewerKind(file, url),
-      size: file.size,
+      size: getEffectiveFileSize(file) || file.size,
       width,
       height,
       html: (file as any)?.html,
@@ -387,19 +432,12 @@
   let creatorAvatarFailed = $state(false);
   let deletingDownloadId = $state<string | null>(null);
   let downloadingAll = $state(false);
-  let probedMediaSizes = $state<Record<string, number>>({});
-  const probingMediaPaths = new Set<string>();
   let totalMediaBytes = $derived.by(() => {
     if (media.length === 0) return 0;
 
     let total = 0;
     for (const file of media) {
-      const job = attachmentDownload(file);
-      const size = (file.size ?? 0) > 0
-        ? file.size!
-        : file.path && (probedMediaSizes[file.path] ?? 0) > 0
-          ? probedMediaSizes[file.path]
-          : Math.max(job?.total_bytes ?? 0, job?.downloaded_bytes ?? 0);
+      const size = getEffectiveFileSize(file);
       if (size <= 0) return 0;
       total += size;
     }
@@ -622,15 +660,6 @@
     for (const file of post.attachments ?? []) probeAttachmentSize(file);
   });
 
-  function attachmentDownload(file?: { path?: string }) {
-    if (!file?.path) return undefined;
-    return downloadState.downloads.find((item) =>
-      item.service === service &&
-      item.creator_id === creatorId &&
-      item.post_id === postId &&
-      item.media_id === file.path
-    );
-  }
 
   async function deleteDownload(item: DownloadItem) {
     if (deletingDownloadId) return;
@@ -822,7 +851,7 @@
   {@const active = job && ['queued', 'resolving', 'downloading', 'paused', 'verifying'].includes(job.status)}
   {@const verifying = job?.status === 'verifying'}
   {@const knownTotal = job?.total_bytes || 0}
-  {@const declaredBytes = file.size && file.size > 0 ? file.size : file.path ? probedMediaSizes[file.path] ?? 0 : 0}
+  {@const declaredBytes = getEffectiveFileSize(file)}
   {@const declaredSize = declaredBytes > 0 ? formatBytes(declaredBytes) : ''}
   {@const hasProgress = Boolean(active && !verifying && knownTotal > 0)}
   {@const progress = job && knownTotal > 0 ? Math.min(100, Math.round(job.downloaded_bytes / knownTotal * 100)) : 0}
@@ -1117,7 +1146,13 @@
                       </div>
                     {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                       <!-- svelte-ignore a11y_media_has_caption -->
-                      <video src={postEmbed.url} controls preload="metadata"></video>
+                      <video
+                        src={postEmbed.url}
+                        controls
+                        preload="metadata"
+                        use:panicCapture
+                        onkeydown={handleGlobalPanicKey}
+                      ></video>
                     {:else}
                       <button
                         class="file-placeholder media-open-surface"
@@ -1134,7 +1169,7 @@
                       <button
                         class="media-viewer-open-btn"
                         type="button"
-                        onclick={() => openMediaViewer(embedAttachment!, filteredMedia)}
+                        onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
                         use:tooltip={i18n.t('post.viewer_open')}
                         aria-label={i18n.t('post.viewer_open')}
                       ><IconEye /></button>
@@ -1169,10 +1204,11 @@
                         <p class="placeholder-text text-red-400">{i18n.t('post.file_not_saved')}</p>
                       </div>
                     {:else if isVideoUrl(url) || isImageUrl(url)}
+                      {@const effSize = getEffectiveFileSize(file)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
-                        {#if file?.size}
-                          <span class="media-filesize">({formatBytes(file.size)})</span>
+                        {#if effSize > 0}
+                          <span class="media-filesize">({formatBytes(effSize)})</span>
                         {/if}
                       </div>
                       {#if isVideoUrl(url) && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
@@ -1187,6 +1223,8 @@
                             src={url}
                             controls
                             preload={index === 0 ? 'metadata' : 'none'}
+                            use:panicCapture
+                            onkeydown={handleGlobalPanicKey}
                             onloadedmetadata={(e) => handleVideoMetadata(e, index)}
                             onplay={handleVideoPlay}
                           ></video>
@@ -1211,11 +1249,12 @@
                       {@render mediaDownloadAction(file!, index)}
                     {:else}
                       {@const ext = getFileExtension(file?.name).toUpperCase()}
-                      {@const sizeStr = file?.size ? formatBytes(file.size) : ''}
+                      {@const effSize = getEffectiveFileSize(file)}
+                      {@const sizeStr = effSize > 0 ? formatBytes(effSize) : ''}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
-                        {#if file?.size}
-                          <span class="media-filesize">({formatBytes(file.size)})</span>
+                        {#if effSize > 0}
+                          <span class="media-filesize">({formatBytes(effSize)})</span>
                         {/if}
                       </div>
                       <button class="file-placeholder media-open-surface" type="button" onclick={() => openMediaViewer(file!, filteredMedia)} aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
@@ -2264,10 +2303,10 @@
   }
 
   .sticky-post-info :global(.sticky-back-btn) {
-    flex: 0 0 44px !important;
-    width: 44px !important;
-    height: 44px !important;
-    min-width: 44px !important;
+    flex: 0 0 46px !important;
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
     border-radius: 50% !important;
     padding: 0 !important;
     display: flex !important;
@@ -2312,10 +2351,10 @@
   }
 
   :global(.sticky-header-bar.is-mobile) .sticky-post-actions :global(.btn) {
-    width: 44px !important;
-    height: 44px !important;
-    min-width: 44px !important;
-    flex: 0 0 44px !important;
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    flex: 0 0 46px !important;
     border-radius: 50% !important;
     padding: 0 !important;
     display: flex !important;
@@ -2356,7 +2395,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    min-height: 44px;
+    min-height: 46px;
     margin-top: 0;
     margin-bottom: 24px;
     padding-top: 0;

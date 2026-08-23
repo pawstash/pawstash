@@ -67,6 +67,10 @@ pub struct AppSettings {
     pub download_group_by_post: bool,
     pub download_post_folder_template: String,
     pub download_filename_template: String,
+    pub download_save_metadata: bool,
+    pub download_metadata_format: String,
+    pub panic_button_enabled: bool,
+    pub panic_button_shortcut: String,
 }
 
 impl Default for AppSettings {
@@ -120,6 +124,10 @@ impl Default for AppSettings {
             download_group_by_post: false,
             download_post_folder_template: "{post_title}".to_string(),
             download_filename_template: "{post_title} - {filename}".to_string(),
+            download_save_metadata: false,
+            download_metadata_format: "txt".to_string(),
+            panic_button_enabled: true,
+            panic_button_shortcut: "H".to_string(),
         }
     }
 }
@@ -299,6 +307,16 @@ impl AppSettings {
                 "download_filename_template",
                 self.download_filename_template.clone(),
             ),
+            (
+                "download_save_metadata",
+                self.download_save_metadata.to_string(),
+            ),
+            (
+                "download_metadata_format",
+                self.download_metadata_format.clone(),
+            ),
+            ("panic_button_enabled", self.panic_button_enabled.to_string()),
+            ("panic_button_shortcut", self.panic_button_shortcut.clone()),
         ]
     }
 
@@ -331,6 +349,23 @@ impl AppSettings {
         string!(download_creator_folder_template);
         string!(download_post_folder_template);
         string!(download_filename_template);
+        string!(download_metadata_format);
+        if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
+            if value == "Alt+X" {
+                self.panic_button_shortcut = "H".to_string();
+            } else {
+                self.panic_button_shortcut = value.clone();
+            }
+        }
+        if let Some(value) = get("download_save_metadata").and_then(|v| v.parse().ok()) {
+            self.download_save_metadata = value;
+        }
+        if let Some(value) = get("panic_button_enabled")
+            .or_else(|| get("boss_key_enabled"))
+            .and_then(|v| v.parse().ok())
+        {
+            self.panic_button_enabled = value;
+        }
         if let Some(value) = get("download_group_by_creator").and_then(|v| v.parse().ok()) {
             self.download_group_by_creator = value;
         }

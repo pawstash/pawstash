@@ -890,29 +890,9 @@
     gap: 8px;
   }
 
-  :global(.favorites-tabs .btn) {
-    height: 44px !important;
-    padding: 0 18px !important;
-    border-radius: var(--radius-full) !important;
-    font-size: 13.5px !important;
-    gap: 8px !important;
-  }
-
   :global(.tab-icon) { width: 18px; height: 18px; }
-
-  :global(.btn-icon) {
-    width: 44px !important;
-    height: 44px !important;
-    padding: 0 !important;
-    border-radius: var(--radius-full) !important;
-    flex-shrink: 0;
-  }
-
-  :global(.btn-icon svg) { width: 20px !important; height: 20px !important; }
-
-  :global(.favorites-sort) { height: 44px !important; width: auto !important; }
+  :global(.favorites-sort) { width: auto !important; }
   :global(.favorites-sort:not(:has(.icon-only))) { min-width: 150px; }
-  :global(.favorites-sort .select-trigger) { height: 44px !important; border-radius: var(--radius-full) !important; font-size: 13px !important; }
 
   .status-container {
     min-height: 310px;

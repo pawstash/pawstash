@@ -24,6 +24,8 @@
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
   import { tooltip } from '$lib/motion';
+  import { playbackState } from '$lib/state/playbackState.svelte';
+  import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -57,6 +59,10 @@
   let translateX = $state(0);
   let translateY = $state(0);
   let swipeOffset = $state(0);
+  let dismissOffsetY = $state(0);
+  let isDismissing = $state(false);
+  let dismissScale = $derived(1 - Math.min(0.25, Math.abs(dismissOffsetY) * 0.0005));
+  let dismissOpacity = $derived(Math.max(0.1, 1 - Math.abs(dismissOffsetY) / 350));
   let controlsVisible = $state(true);
   let fullscreen = $state(false);
   let root = $state<HTMLDivElement>();
@@ -79,6 +85,24 @@
     if (!hasAppliedInitialTime && initialTime > 0 && index === initialIndex) {
       hasAppliedInitialTime = true;
       video.currentTime = initialTime;
+    } else if (current) {
+      const saved = playbackState.getTime(current.id || current.url);
+      if (saved !== undefined && saved > 0) {
+        video.currentTime = saved;
+      }
+    }
+  }
+
+  function handleVideoTimeUpdate(e: Event) {
+    const video = e.currentTarget as HTMLVideoElement;
+    if (current && video.duration > 0) {
+      playbackState.saveTime(current.id || current.url, video.currentTime, video.duration);
+    }
+  }
+
+  function handleVideoEnded() {
+    if (current) {
+      playbackState.clearTime(current.id || current.url);
     }
   }
 
@@ -103,7 +127,7 @@
   let currentDownloaded = $derived(current?.downloadStatus === 'completed');
   let currentDownloadBytes = $derived(Math.max(current?.totalBytes || 0, current?.downloadedBytes || 0, current?.size || 0));
   let currentDownloadProgress = $derived(current?.totalBytes ? Math.min(100, Math.round((current.downloadedBytes || 0) / current.totalBytes * 100)) : 0);
-  let transform = $derived(`translate3d(${translateX + swipeOffset}px, ${translateY}px, 0) scale(${scale})`);
+  let transform = $derived(`translate3d(${translateX + swipeOffset}px, ${translateY + dismissOffsetY}px, 0) scale(${scale * dismissScale})`);
   let visibleThumbnails = $derived.by(() => {
     const count = Math.min(9, items.length);
     const start = Math.max(0, Math.min(index - Math.floor(count / 2), items.length - count));
@@ -115,6 +139,8 @@
     translateX = 0;
     translateY = 0;
     swipeOffset = 0;
+    dismissOffsetY = 0;
+    isDismissing = false;
     pointers.clear();
   }
 
@@ -267,13 +293,24 @@
     if (scale > MIN_SCALE + 0.05 && current?.kind === 'image') {
       clampTranslation(translateX + deltaX, translateY + deltaY);
       event.preventDefault();
-    } else if (items.length > 1) {
+    } else {
       const totalDeltaX = event.clientX - previous.startX;
       const totalDeltaY = event.clientY - previous.startY;
-      // Allow horizontal swipe drag
-      if (Math.abs(totalDeltaX) > 6 || Math.abs(swipeOffset) > 0) {
-        swipeOffset = Math.max(-180, Math.min(180, totalDeltaX));
+
+      // Detect vertical swipe gesture to dismiss (up or down with single pointer)
+      if (pointers.size === 1 && Math.abs(totalDeltaY) > 8 && Math.abs(totalDeltaY) > Math.abs(totalDeltaX) * 1.1) {
+        dismissOffsetY = totalDeltaY;
+        swipeOffset = 0;
         event.preventDefault();
+        return;
+      }
+
+      if (dismissOffsetY === 0 && items.length > 1) {
+        // Allow horizontal swipe drag
+        if (Math.abs(totalDeltaX) > 6 || Math.abs(swipeOffset) > 0) {
+          swipeOffset = Math.max(-180, Math.min(180, totalDeltaX));
+          event.preventDefault();
+        }
       }
     }
   }
@@ -282,6 +319,23 @@
     const point = pointers.get(event.pointerId);
     pointers.delete(event.pointerId);
     if (!point) return;
+
+    if (dismissOffsetY !== 0) {
+      const deltaY = event.clientY - point.startY;
+      const elapsed = Math.max(1, performance.now() - point.startedAt);
+      const velocityY = Math.abs(deltaY) / elapsed;
+
+      if (Math.abs(dismissOffsetY) > 110 || (Math.abs(dismissOffsetY) > 30 && velocityY > 0.25)) {
+        isDismissing = true;
+        dismissOffsetY = dismissOffsetY > 0 ? 600 : -600;
+        setTimeout(() => {
+          close();
+        }, 140);
+        return;
+      } else {
+        dismissOffsetY = 0;
+      }
+    }
 
     if (scale <= MIN_SCALE + 0.05 && items.length > 1) {
       const deltaX = event.clientX - point.startX;
@@ -322,6 +376,8 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (handleGlobalPanicKey(event)) return;
+
     if (event.key === 'Tab' && root) {
       const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), video[controls], audio[controls], [tabindex]:not([tabindex="-1"])')];
       if (focusable.length > 0) {
@@ -419,6 +475,8 @@
   use:portal
   class="media-viewer"
   class:controls-hidden={!controlsVisible}
+  class:is-dismissing={isDismissing}
+  style:opacity={dismissOffsetY !== 0 ? dismissOpacity : undefined}
   role="dialog"
   aria-modal="true"
   aria-label={i18n.t('post.viewer_title')}
@@ -462,7 +520,7 @@
     bind:this={stage}
     class="media-viewer-stage"
     class:image-interactive={current?.kind === 'image'}
-    class:is-swiping={swipeOffset !== 0}
+    class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
     class:can-swipe={items.length > 1 && scale <= MIN_SCALE}
     role="group"
     aria-label={current?.name || i18n.t('post.file')}
@@ -478,7 +536,7 @@
         <div
           bind:this={fitFrame}
           class="media-fit-frame"
-          class:is-swiping={swipeOffset !== 0}
+          class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
           class:file-frame={!['image', 'video'].includes(current.kind)}
         >
         {#if current.kind === 'image'}
@@ -486,7 +544,7 @@
             bind:this={mediaElement}
             class="media-viewer-media image-media"
             class:zoomed={scale > MIN_SCALE}
-            class:is-swiping={swipeOffset !== 0}
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
             src={current.url}
             alt={current.name}
             draggable="false"
@@ -496,8 +554,8 @@
         {:else if current.html}
           <div
             class="viewer-embed-state"
-            class:is-swiping={swipeOffset !== 0}
-            style:transform={swipeOffset !== 0 ? `translate3d(${swipeOffset}px, 0, 0)` : undefined}
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
+            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <div class="viewer-embed-iframe-wrapper">
               {@html current.html}
@@ -508,20 +566,24 @@
           <video
             bind:this={videoElement}
             class="media-viewer-media"
-            class:is-swiping={swipeOffset !== 0}
-            style:transform={swipeOffset !== 0 ? `translate3d(${swipeOffset}px, 0, 0)` : undefined}
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
+            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
             src={current.url}
             poster={current.poster}
             controls
             autoplay
             playsinline
+            use:panicCapture
+            onkeydown={handleGlobalPanicKey}
             onloadedmetadata={handleVideoMetadata}
+            ontimeupdate={handleVideoTimeUpdate}
+            onended={handleVideoEnded}
           ></video>
         {:else if current.kind === 'audio'}
           <div
             class="viewer-file-state"
-            class:is-swiping={swipeOffset !== 0}
-            style:transform={swipeOffset !== 0 ? `translate3d(${swipeOffset}px, 0, 0)` : undefined}
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
+            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <IconMusic />
             <strong>{current.name}</strong>
@@ -531,8 +593,8 @@
         {:else}
           <div
             class="viewer-file-state"
-            class:is-swiping={swipeOffset !== 0}
-            style:transform={swipeOffset !== 0 ? `translate3d(${swipeOffset}px, 0, 0)` : undefined}
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
+            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <IconDocument />
             <strong>{current.name}</strong>
@@ -615,6 +677,15 @@
     outline: none;
     animation: viewer-enter 180ms var(--ease-expo, ease-out);
     overscroll-behavior: none;
+  }
+
+  .media-viewer.is-dismissing {
+    transition: opacity 140ms ease-out;
+    pointer-events: none;
+  }
+
+  .media-viewer.is-dismissing .media-fit-frame {
+    transition: transform 140ms ease-out;
   }
 
   @keyframes viewer-enter {

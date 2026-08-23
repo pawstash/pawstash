@@ -158,4 +158,37 @@
     height: 24px;
     flex-shrink: 0;
   }
+
+  .btn.btn-icon,
+  :global(.btn.btn-icon) {
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    padding: 0 !important;
+    border-radius: var(--radius-full) !important;
+    flex-shrink: 0;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .btn.btn-icon :global(svg),
+  :global(.btn.btn-icon svg) {
+    width: 20px !important;
+    height: 20px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .btn.btn-icon.btn-sm,
+  :global(.btn.btn-icon.btn-sm) {
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+
+  .btn.btn-icon.btn-sm :global(svg),
+  :global(.btn.btn-icon.btn-sm svg) {
+    width: 16px !important;
+    height: 16px !important;
+  }
 </style>

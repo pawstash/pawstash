@@ -164,6 +164,9 @@ export const apiDeleteLibraryStash = (collectionId: string) =>
 export const apiRenameLibraryStash = (collectionId: string, name: string) =>
   invoke<boolean>('rename_library_stash', { collectionId, name });
 
+export const apiReorderLibraryStashes = (collectionIds: string[]) =>
+  invoke<boolean>('reorder_library_stashes', { collectionIds });
+
 export const apiClearLibraryStash = (collectionId: string) =>
   invoke<number>('clear_library_stash', { collectionId });
 
@@ -252,4 +255,13 @@ export const apiResolveSyncConflict = (resolution: 'local' | 'remote') =>
   invoke<SyncStatus>('resolve_sync_conflict', { resolution });
 
 export const apiGetPendingDeepLink = () => invoke<string | null>('get_pending_deep_link');
+
+export const apiHideToTray = () => invoke<void>('hide_to_tray');
+
+export const apiUpdatePanicKey = (shortcut: string, enabled: boolean) =>
+  invoke<void>('update_panic_key', { shortcut, enabled });
+
+export const apiUpdateBossKey = (shortcut: string, enabled: boolean) =>
+  apiUpdatePanicKey(shortcut, enabled);
+
 

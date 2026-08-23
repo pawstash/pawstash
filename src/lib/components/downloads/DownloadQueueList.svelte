@@ -564,11 +564,8 @@
 </SelectionActionBar>
 
 <style>
-  :global(.btn-icon) { width: 44px !important; height: 44px !important; padding: 0 !important; border-radius: var(--radius-full) !important; flex-shrink: 0; display: inline-flex !important; align-items: center !important; justify-content: center !important; }
-  :global(.btn-icon svg) { width: 20px !important; height: 20px !important; flex-shrink: 0 !important; }
   .downloads-tabs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .downloads-tabs::-webkit-scrollbar { display: none; }
-  :global(.downloads-tabs .downloads-tab) { height: 44px !important; padding: 0 18px !important; font-size: 13.5px !important; border-radius: var(--radius-full) !important; flex-shrink: 0 !important; display: inline-flex !important; align-items: center !important; gap: 6px !important; }
   .filter-label { display: block; padding: 5px 7px 9px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .view-option { width: 100%; min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 11px; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; text-align: left; transition: background var(--duration-fast), color var(--duration-fast); }
   button.view-option { font-family: inherit; cursor: pointer; }

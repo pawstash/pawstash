@@ -1,5 +1,6 @@
 pub mod aria2c;
 pub mod manager;
+pub mod metadata;
 pub mod native;
 pub mod notifications;
 pub mod template;

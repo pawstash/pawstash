@@ -35,4 +35,10 @@ export interface AppSettings {
   download_group_by_post: boolean;
   download_post_folder_template: string;
   download_filename_template: string;
+  download_save_metadata?: boolean;
+  download_metadata_format?: 'txt' | 'json' | 'both';
+  panic_button_enabled?: boolean;
+  panic_button_shortcut?: string;
+  boss_key_enabled?: boolean;
+  boss_key_shortcut?: string;
 }

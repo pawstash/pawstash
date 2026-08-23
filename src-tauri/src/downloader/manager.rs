@@ -100,6 +100,21 @@ impl DownloadManager {
 
         std::fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
 
+        if settings.download_save_metadata {
+            let meta = crate::downloader::metadata::PostMetadataExport {
+                service: &service,
+                creator_id: &creator_id,
+                creator_name: c_name,
+                post_id: &post_id,
+                post_title: p_title,
+                published: published.as_deref(),
+                content: None,
+                tags: None,
+                origin_url: None,
+            };
+            let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
+        }
+
         let resolved_filename = resolve_filename(&settings.download_filename_template, &ctx);
         let final_path = self.unique_final_path(&target_dir, &resolved_filename)?;
         let id = Uuid::new_v4().to_string();

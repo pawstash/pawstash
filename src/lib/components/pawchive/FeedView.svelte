@@ -661,36 +661,11 @@
 />
 
 <style>
-  :global(.btn-icon) {
-    width: 44px !important;
-    height: 44px !important;
-    padding: 0 !important;
-    border-radius: var(--radius-full) !important;
-    flex-shrink: 0;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  :global(.btn-icon svg) {
-    width: 20px !important;
-    height: 20px !important;
-    flex-shrink: 0 !important;
-  }
-
   .feed-tabs {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
-  }
-
-  :global(.feed-tabs .btn) {
-    height: 44px !important;
-    padding: 0 18px !important;
-    font-size: 13.5px !important;
-    border-radius: var(--radius-full) !important;
-    gap: 8px !important;
   }
 
   :global(.popular-period-select) {
@@ -700,10 +675,6 @@
   }
 
   :global(.popular-period-select .select-trigger.variant-ghost) {
-    height: 44px !important;
-    font-size: 13px !important;
-    padding: 0 14px !important;
-    border-radius: var(--radius-full) !important;
     min-width: 80px !important;
     width: auto !important;
     max-width: none !important;
@@ -717,17 +688,8 @@
     pointer-events: none;
   }
 
-  :global(.popular-period-select) {
-    width: auto !important;
-    flex-shrink: 0 !important;
-  }
-
   :global(.popular-period-select .select-trigger) {
-    height: 44px !important;
-    font-size: 13.5px !important;
-    padding: 0 16px !important;
-    border-radius: var(--radius-full) !important;
-    width: auto !important;
     min-width: 180px !important;
+    width: auto !important;
   }
 </style>
