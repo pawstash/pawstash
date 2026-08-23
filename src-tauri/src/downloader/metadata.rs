@@ -1,5 +1,5 @@
-use std::path::Path;
 use crate::config::settings::AppSettings;
+use std::path::Path;
 
 pub struct PostMetadataExport<'a> {
     pub service: &'a str,
@@ -34,9 +34,15 @@ pub fn save_post_metadata(
                 lines.push(format!("Title: {}", metadata.post_title));
             }
             if !metadata.creator_name.is_empty() {
-                lines.push(format!("Creator: {} ({})", metadata.creator_name, metadata.service));
+                lines.push(format!(
+                    "Creator: {} ({})",
+                    metadata.creator_name, metadata.service
+                ));
             } else {
-                lines.push(format!("Creator: {} ({})", metadata.creator_id, metadata.service));
+                lines.push(format!(
+                    "Creator: {} ({})",
+                    metadata.creator_id, metadata.service
+                ));
             }
             if let Some(pub_date) = metadata.published {
                 if !pub_date.is_empty() {

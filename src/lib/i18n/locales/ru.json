@@ -94,7 +94,8 @@
     "status_verifying": "Проверка",
     "title": "Загрузки",
     "unknown_post": "Скачанные медиа",
-    "view": "Отображение"
+    "view": "Отображение",
+    "view_mode": "Режим отображения"
   },
   "favorites": {
     "creators": "Авторы",
@@ -388,6 +389,8 @@
     "appearance_section": "Внешний Вид и Тема",
     "aria2c_engine": "Использовать движок aria2c",
     "aria2c_engine_desc": "Передаёт загрузки aria2c и использует указанное ниже число соединений.",
+    "download_max_concurrent": "Параллельные загрузки",
+    "download_max_concurrent_desc": "Сколько файлов скачивать одновременно.",
     "auto_check_updates": "Автопроверка обновлений",
     "auto_check_updates_desc": "Автоматически проверять наличие новых версий при каждом запуске приложения",
     "background_blur": "Размытие фона",

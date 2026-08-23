@@ -133,7 +133,10 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
             current_version: current_version.clone(),
             latest_version: latest_tag.to_string(),
             is_prerelease: latest.prerelease,
-            release_name: latest.name.clone().unwrap_or_else(|| latest.tag_name.clone()),
+            release_name: latest
+                .name
+                .clone()
+                .unwrap_or_else(|| latest.tag_name.clone()),
             release_notes: combined_notes,
             published_at: latest.published_at.clone().unwrap_or_default(),
             release_url: latest.html_url.clone(),

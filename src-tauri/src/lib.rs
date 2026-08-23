@@ -39,10 +39,13 @@ pub fn run() {
     let pawchive_client = Arc::new(
         PawchiveClient::new(settings.clone()).expect("Failed to initialize Pawchive HTTP client"),
     );
+    let config_manager = Arc::new(config_mgr);
     let download_repository =
         Arc::new(DownloadRepository::new().expect("Failed to initialize download queue"));
-    let download_manager = Arc::new(DownloadManager::new(download_repository));
-    let config_manager = Arc::new(config_mgr);
+    let download_manager = Arc::new(DownloadManager::new(
+        download_repository,
+        config_manager.clone(),
+    ));
     let subscription_repository = Arc::new(
         SubscriptionRepository::new().expect("Failed to initialize creator subscriptions"),
     );
@@ -92,7 +95,7 @@ pub fn run() {
                 }
             });
 
-            download_manager.recover(settings.clone(), app.handle().clone());
+            download_manager.start(app.handle().clone());
             subscription_manager.start(app.handle().clone());
             sync_manager.start(app.handle().clone());
 
@@ -267,4 +270,3 @@ fn setup_desktop_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Er
 
     Ok(())
 }
-

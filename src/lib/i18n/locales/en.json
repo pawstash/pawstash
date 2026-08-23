@@ -94,7 +94,8 @@
     "status_verifying": "Verifying",
     "title": "Downloads",
     "unknown_post": "Downloaded media",
-    "view": "View"
+    "view": "View",
+    "view_mode": "View mode"
   },
   "favorites": {
     "creators": "Creators",
@@ -388,6 +389,8 @@
     "appearance_section": "Appearance & Theme",
     "aria2c_engine": "Use aria2c Engine",
     "aria2c_engine_desc": "Delegate downloads to aria2c and use the connection count configured below.",
+    "download_max_concurrent": "Concurrent downloads",
+    "download_max_concurrent_desc": "How many files can download at the same time.",
     "auto_check_updates": "Auto-check for updates",
     "auto_check_updates_desc": "Automatically check for newer versions every time the application launches",
     "background_blur": "Background blur",

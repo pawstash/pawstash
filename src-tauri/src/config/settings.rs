@@ -69,6 +69,7 @@ pub struct AppSettings {
     pub download_filename_template: String,
     pub download_save_metadata: bool,
     pub download_metadata_format: String,
+    pub download_max_concurrent: u32,
     pub panic_button_enabled: bool,
     pub panic_button_shortcut: String,
 }
@@ -126,6 +127,7 @@ impl Default for AppSettings {
             download_filename_template: "{post_title} - {filename}".to_string(),
             download_save_metadata: false,
             download_metadata_format: "txt".to_string(),
+            download_max_concurrent: 3,
             panic_button_enabled: true,
             panic_button_shortcut: "H".to_string(),
         }
@@ -315,7 +317,14 @@ impl AppSettings {
                 "download_metadata_format",
                 self.download_metadata_format.clone(),
             ),
-            ("panic_button_enabled", self.panic_button_enabled.to_string()),
+            (
+                "download_max_concurrent",
+                self.download_max_concurrent.to_string(),
+            ),
+            (
+                "panic_button_enabled",
+                self.panic_button_enabled.to_string(),
+            ),
             ("panic_button_shortcut", self.panic_button_shortcut.clone()),
         ]
     }
@@ -359,6 +368,9 @@ impl AppSettings {
         }
         if let Some(value) = get("download_save_metadata").and_then(|v| v.parse().ok()) {
             self.download_save_metadata = value;
+        }
+        if let Some(value) = get("download_max_concurrent").and_then(|v| v.parse().ok()) {
+            self.download_max_concurrent = value;
         }
         if let Some(value) = get("panic_button_enabled")
             .or_else(|| get("boss_key_enabled"))
@@ -440,6 +452,7 @@ impl AppSettings {
     fn normalize(&mut self) {
         self.cache_max_mb = self.cache_max_mb.clamp(64, 2048);
         self.grid_scale = self.grid_scale.clamp(60, 160);
+        self.download_max_concurrent = self.download_max_concurrent.clamp(1, 10);
         if !matches!(self.layout_mode.as_str(), "auto" | "mobile" | "desktop") {
             self.layout_mode = "auto".to_string();
         }

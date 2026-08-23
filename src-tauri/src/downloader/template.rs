@@ -105,18 +105,30 @@ struct DateParts {
 
 fn parse_date_parts(published: Option<&str>) -> DateParts {
     let raw = published.unwrap_or("").trim();
-    let (year, month, day) = if raw.len() >= 10 && &raw[4..5] == "-" && &raw[7..8] == "-" {
-        (raw[0..4].to_string(), raw[5..7].to_string(), raw[8..10].to_string())
-    } else if raw.len() >= 10 && &raw[4..5] == "/" && &raw[7..8] == "/" {
-        (raw[0..4].to_string(), raw[5..7].to_string(), raw[8..10].to_string())
+    let (year, month, day) = if raw.len() >= 10
+        && ((&raw[4..5] == "-" && &raw[7..8] == "-") || (&raw[4..5] == "/" && &raw[7..8] == "/"))
+    {
+        (
+            raw[0..4].to_string(),
+            raw[5..7].to_string(),
+            raw[8..10].to_string(),
+        )
     } else if raw.len() >= 10 && &raw[2..3] == "." && &raw[5..6] == "." {
-        (raw[6..10].to_string(), raw[3..5].to_string(), raw[0..2].to_string())
+        (
+            raw[6..10].to_string(),
+            raw[3..5].to_string(),
+            raw[0..2].to_string(),
+        )
     } else {
         ("".to_string(), "".to_string(), "".to_string())
     };
 
     if !year.is_empty() && !month.is_empty() && !day.is_empty() {
-        let year_short = if year.len() >= 4 { year[2..4].to_string() } else { year.clone() };
+        let year_short = if year.len() >= 4 {
+            year[2..4].to_string()
+        } else {
+            year.clone()
+        };
         DateParts {
             date_iso: format!("{year}-{month}-{day}"),
             date_compact: format!("{year}{month}{day}"),
@@ -130,8 +142,8 @@ fn parse_date_parts(published: Option<&str>) -> DateParts {
     } else {
         DateParts {
             date_iso: raw.to_string(),
-            date_compact: raw.replace('-', "").replace('.', "").replace('/', ""),
-            date_dots: raw.replace('-', ".").replace('/', "."),
+            date_compact: raw.replace(['-', '.', '/'], ""),
+            date_dots: raw.replace(['-', '/'], "."),
             year: String::new(),
             year_short: String::new(),
             month: String::new(),
@@ -321,8 +333,14 @@ mod tests {
 
     #[test]
     fn test_sanitization() {
-        assert_eq!(sanitize_path_segment("foo/bar:baz*qux", 100), "foo_bar_baz_qux");
-        assert_eq!(sanitize_path_segment("  hello world...  ", 100), "hello world");
+        assert_eq!(
+            sanitize_path_segment("foo/bar:baz*qux", 100),
+            "foo_bar_baz_qux"
+        );
+        assert_eq!(
+            sanitize_path_segment("  hello world...  ", 100),
+            "hello world"
+        );
         assert_eq!(sanitize_path_segment("CON", 100), "_CON");
         assert_eq!(sanitize_path_segment("aux", 100), "_aux");
     }
@@ -360,7 +378,10 @@ mod tests {
             index: 1,
             media_id: "file1",
         };
-        assert_eq!(resolve_post_folder("{post_title}", &ctx), "Summer Beach 2024");
+        assert_eq!(
+            resolve_post_folder("{post_title}", &ctx),
+            "Summer Beach 2024"
+        );
         assert_eq!(
             resolve_post_folder("[{date}] {post_id} - {title}", &ctx),
             "[2024-08-20] 999 - Summer Beach 2024"

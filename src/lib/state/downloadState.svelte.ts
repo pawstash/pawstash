@@ -70,9 +70,8 @@ export class DownloadState {
       this.downloads = [item, ...this.downloads];
       return;
     }
-    const next = [...this.downloads];
-    next[index] = item;
-    this.downloads = next;
+    const target = this.downloads[index];
+    Object.assign(target, item);
   }
 
   async refresh() {

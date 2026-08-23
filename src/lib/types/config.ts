@@ -37,6 +37,7 @@ export interface AppSettings {
   download_filename_template: string;
   download_save_metadata?: boolean;
   download_metadata_format?: 'txt' | 'json' | 'both';
+  download_max_concurrent?: number;
   panic_button_enabled?: boolean;
   panic_button_shortcut?: string;
   boss_key_enabled?: boolean;

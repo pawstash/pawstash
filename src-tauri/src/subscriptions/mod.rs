@@ -99,7 +99,7 @@ impl SubscriptionManager {
         self: &Arc<Self>,
         id: &str,
         initial: bool,
-        app_handle: &tauri::AppHandle,
+        _app_handle: &tauri::AppHandle,
     ) -> Result<Subscription, String> {
         let subscription = self
             .repository
@@ -144,12 +144,7 @@ impl SubscriptionManager {
                     self.library
                         .save_post(post, Some(&subscription.destination_collection_id))?;
                     if subscription.auto_download {
-                        self.enqueue_media(
-                            post,
-                            &subscription.download_scope,
-                            &settings,
-                            app_handle,
-                        );
+                        self.enqueue_media(post, &subscription.download_scope, &settings);
                     }
                 }
             }
@@ -165,13 +160,7 @@ impl SubscriptionManager {
         format!("{}:{}:{}", post.service, post.user, post.id)
     }
 
-    fn enqueue_media(
-        self: &Arc<Self>,
-        post: &PawchivePost,
-        scope: &str,
-        settings: &AppSettings,
-        app_handle: &tauri::AppHandle,
-    ) {
+    fn enqueue_media(self: &Arc<Self>, post: &PawchivePost, scope: &str, settings: &AppSettings) {
         let mut files: Vec<&Attachment> = Vec::new();
         if let Some(file) = post.file.as_ref().filter(|file| file.path.is_some()) {
             files.push(file);
@@ -214,8 +203,6 @@ impl SubscriptionManager {
                 url,
                 filename,
                 index + 1,
-                settings.clone(),
-                app_handle.clone(),
             );
         }
     }

@@ -254,6 +254,7 @@ pub async fn save_settings(
         return Err(error);
     }
     let _ = state.content.set_cache_limit_mb(settings.cache_max_mb);
+    state.download_manager.notify_scheduler();
     Ok(())
 }
 
@@ -1140,7 +1141,7 @@ pub async fn start_download(
     media_id: String,
     url: String,
     filename: String,
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
     let settings = state.config_manager.load()?;
@@ -1237,10 +1238,9 @@ pub async fn start_download(
                         .filter_map(|v| v.as_str().map(String::from))
                         .collect(),
                 )
-            } else if let Some(s) = t.as_str() {
-                Some(s.split(',').map(|v| v.trim().to_string()).collect())
             } else {
-                None
+                t.as_str()
+                    .map(|s| s.split(',').map(|v| v.trim().to_string()).collect())
             }
         });
 
@@ -1302,8 +1302,6 @@ pub async fn start_download(
         url,
         filename,
         index,
-        settings,
-        app_handle,
     )
 }
 
@@ -1363,23 +1361,17 @@ pub fn cancel_download(
 #[tauri::command]
 pub fn resume_download(
     download_id: String,
-    app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
-    state
-        .download_manager
-        .resume(download_id, state.config_manager.load()?, app_handle)
+    state.download_manager.resume(&download_id)
 }
 
 #[tauri::command]
 pub fn retry_download(
     download_id: String,
-    app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
-    state
-        .download_manager
-        .retry(download_id, state.config_manager.load()?, app_handle)
+    state.download_manager.retry(&download_id)
 }
 
 #[tauri::command]
@@ -1866,9 +1858,7 @@ pub fn show_in_folder(path: String) -> Result<(), String> {
 
         let canonical = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
         let path_str = canonical.to_string_lossy().to_string();
-        let clean_path = path_str
-            .trim_start_matches(r"\\?\")
-            .replace('/', "\\");
+        let clean_path = path_str.trim_start_matches(r"\\?\").replace('/', "\\");
 
         if canonical.is_file() {
             std::process::Command::new("explorer.exe")
@@ -2128,6 +2118,3 @@ pub fn update_boss_key(
 ) -> Result<(), String> {
     update_panic_key(shortcut, enabled, app_handle)
 }
-
-
-

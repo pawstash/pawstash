@@ -1586,6 +1586,22 @@
         {/if}
 
         <SettingItem
+          title={i18n.t('settings.download_max_concurrent')}
+          description={i18n.t('settings.download_max_concurrent_desc')}
+          icon={IconDownload}
+        >
+          <div class="flex items-center gap-4 w-full">
+            <Slider
+              min={1}
+              max={10}
+              value={settings.download_max_concurrent ?? 3}
+              oninput={(value) => updateAndSaveSetting('download_max_concurrent', value)}
+            />
+            <span class="text-sm font-mono text-gray-300 w-8 text-right shrink-0">{settings.download_max_concurrent ?? 3}</span>
+          </div>
+        </SettingItem>
+
+        <SettingItem
           title={i18n.t('settings.template_preview')}
           description={i18n.t('settings.download_preview_desc') || 'Resolved destination path for saved files'}
           icon={IconFolder}

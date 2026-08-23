@@ -174,6 +174,36 @@ impl DownloadRepository {
         Ok(ids)
     }
 
+    pub fn next_queued_jobs(&self, limit: usize) -> Result<Vec<String>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM download_jobs
+                 WHERE status = 'queued'
+                 ORDER BY updated_at ASC, id ASC
+                 LIMIT ?1",
+            )
+            .map_err(|error| error.to_string())?;
+        let ids = statement
+            .query_map(params![limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(ids)
+    }
+
+    pub fn cancel_all_queued(&self) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "UPDATE download_jobs SET status = 'cancelled', speed_bps = 0, updated_at = CURRENT_TIMESTAMP
+                 WHERE status IN ('queued', 'resolving')",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn update_status(&self, id: &str, status: &str) -> Result<DownloadJob, String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection

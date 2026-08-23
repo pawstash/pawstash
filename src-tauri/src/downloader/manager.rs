@@ -1,4 +1,4 @@
-use crate::config::settings::{AppSettings, ProxyMode};
+use crate::config::settings::{AppSettings, ConfigManager, ProxyMode};
 use crate::db::downloads::{DownloadJob, DownloadRepository, NewDownloadJob};
 use crate::downloader::aria2c::Aria2cManager;
 use crate::downloader::native::NativeDownloader;
@@ -16,26 +16,93 @@ use uuid::Uuid;
 
 pub struct DownloadManager {
     repository: Arc<DownloadRepository>,
+    config: Arc<ConfigManager>,
     active: Mutex<HashMap<String, Arc<DownloadControl>>>,
+    notify: Arc<tokio::sync::Notify>,
 }
 
 impl DownloadManager {
-    pub fn new(repository: Arc<DownloadRepository>) -> Self {
+    pub fn new(repository: Arc<DownloadRepository>, config: Arc<ConfigManager>) -> Self {
         Self {
             repository,
+            config,
             active: Mutex::new(HashMap::new()),
+            notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    pub fn notify_scheduler(&self) {
+        self.notify.notify_waiters();
     }
 
     pub fn list(&self) -> Result<Vec<DownloadJob>, String> {
         self.repository.list()
     }
 
-    pub fn recover(self: &Arc<Self>, settings: AppSettings, app_handle: tauri::AppHandle) {
-        if let Ok(ids) = self.repository.recover_interrupted() {
-            for id in ids {
-                let _ = self.start_existing(id, settings.clone(), app_handle.clone());
+    pub fn start(self: &Arc<Self>, app_handle: tauri::AppHandle) {
+        let manager = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(ids) = manager.repository.recover_interrupted() {
+                if !ids.is_empty() {
+                    manager.notify.notify_waiters();
+                }
             }
+
+            loop {
+                tokio::select! {
+                    _ = manager.notify.notified() => {},
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {},
+                }
+
+                manager.schedule_next(&app_handle).await;
+            }
+        });
+    }
+
+    async fn schedule_next(self: &Arc<Self>, app_handle: &tauri::AppHandle) {
+        let settings = match self.config.load() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let max_concurrent = settings.download_max_concurrent.clamp(1, 10) as usize;
+
+        let active_count = match self.active.lock() {
+            Ok(guard) => guard.len(),
+            Err(_) => return,
+        };
+
+        if active_count >= max_concurrent {
+            return;
+        }
+
+        let available_slots = max_concurrent - active_count;
+        let queued_ids = match self.repository.next_queued_jobs(available_slots) {
+            Ok(ids) => ids,
+            Err(_) => return,
+        };
+
+        for id in queued_ids {
+            let control = Arc::new(DownloadControl::new());
+            {
+                let mut active = match self.active.lock() {
+                    Ok(g) => g,
+                    Err(_) => continue,
+                };
+                if active.len() >= max_concurrent {
+                    break;
+                }
+                if active.contains_key(&id) {
+                    continue;
+                }
+                active.insert(id.clone(), control.clone());
+            }
+
+            let manager = self.clone();
+            let settings = settings.clone();
+            let app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                manager.run(id, settings, control, app_handle).await;
+            });
         }
     }
 
@@ -52,9 +119,8 @@ impl DownloadManager {
         url: String,
         filename: String,
         index: usize,
-        settings: AppSettings,
-        app_handle: tauri::AppHandle,
     ) -> Result<DownloadJob, String> {
+        let settings = self.config.load()?;
         let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Only HTTP and HTTPS downloads are supported".to_string());
@@ -128,7 +194,7 @@ impl DownloadManager {
             "native"
         };
         let logical_key = format!("{service}:{creator_id}:{post_id}:{media_id}");
-        let job = self.repository.create_or_get(NewDownloadJob {
+        let mut job = self.repository.create_or_get(NewDownloadJob {
             id: &id,
             logical_key: &logical_key,
             service: &service,
@@ -145,25 +211,30 @@ impl DownloadManager {
             final_path: &final_path.to_string_lossy(),
             engine,
         })?;
+
         if matches!(
             job.status.as_str(),
-            "queued" | "paused" | "failed" | "cancelled" | "missing"
+            "paused" | "failed" | "cancelled" | "missing"
         ) {
-            self.start_existing(job.id.clone(), settings, app_handle)?;
+            job = self.repository.retry(&job.id)?;
         }
+        self.notify.notify_waiters();
         Ok(job)
     }
 
     pub fn pause(&self, id: &str) -> Result<DownloadJob, String> {
-        let control = self
-            .active
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "Download is not active".to_string())?;
+        let active_ctrl = {
+            self.active
+                .lock()
+                .map_err(|error| error.to_string())?
+                .get(id)
+                .cloned()
+        };
         let job = self.repository.update_status(id, "paused")?;
-        control.pause();
+        if let Some(control) = active_ctrl {
+            control.pause();
+        }
+        self.notify.notify_waiters();
         Ok(job)
     }
 
@@ -188,6 +259,7 @@ impl DownloadManager {
             let _ = std::fs::remove_file(&job.temp_path);
             let _ = std::fs::remove_file(format!("{}.aria2", job.temp_path));
         }
+        self.notify.notify_waiters();
         Ok(job)
     }
 
@@ -197,37 +269,29 @@ impl DownloadManager {
                 control.cancel();
             }
         }
+        let _ = self.repository.cancel_all_queued();
+        self.notify.notify_waiters();
     }
 
-    pub fn resume(
-        self: &Arc<Self>,
-        id: String,
-        settings: AppSettings,
-        app_handle: tauri::AppHandle,
-    ) -> Result<DownloadJob, String> {
+    pub fn resume(&self, id: &str) -> Result<DownloadJob, String> {
         let current = self
             .repository
-            .get(&id)?
+            .get(id)?
             .ok_or_else(|| "Download job not found".to_string())?;
         if current.status != "paused" {
             return Err("Only paused downloads can be resumed".to_string());
         }
-        let job = self.repository.update_status(&id, "queued")?;
-        self.start_existing(id, settings, app_handle)?;
+        let job = self.repository.update_status(id, "queued")?;
+        self.notify.notify_waiters();
         Ok(job)
     }
 
-    pub fn retry(
-        self: &Arc<Self>,
-        id: String,
-        settings: AppSettings,
-        app_handle: tauri::AppHandle,
-    ) -> Result<DownloadJob, String> {
-        let job = self.repository.retry(&id)?;
+    pub fn retry(&self, id: &str) -> Result<DownloadJob, String> {
+        let job = self.repository.retry(id)?;
         if job.status != "queued" {
             return Err("Only failed, cancelled, or missing downloads can be retried".to_string());
         }
-        self.start_existing(id, settings, app_handle)?;
+        self.notify.notify_waiters();
         Ok(job)
     }
 
@@ -278,6 +342,7 @@ impl DownloadManager {
                 }
             }
         }
+        self.notify.notify_waiters();
         Ok(changed)
     }
 
@@ -285,7 +350,9 @@ impl DownloadManager {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
+            use windows_sys::Win32::Storage::FileSystem::{
+                SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN,
+            };
 
             let wide: Vec<u16> = path
                 .as_os_str()
@@ -353,27 +420,6 @@ impl DownloadManager {
         std::fs::remove_file(canonical).map_err(|error| error.to_string())
     }
 
-    fn start_existing(
-        self: &Arc<Self>,
-        id: String,
-        settings: AppSettings,
-        app_handle: tauri::AppHandle,
-    ) -> Result<(), String> {
-        let control = Arc::new(DownloadControl::new());
-        {
-            let mut active = self.active.lock().map_err(|error| error.to_string())?;
-            if active.contains_key(&id) {
-                return Ok(());
-            }
-            active.insert(id.clone(), control.clone());
-        }
-        let manager = self.clone();
-        tauri::async_runtime::spawn(async move {
-            manager.run(id, settings, control, app_handle).await;
-        });
-        Ok(())
-    }
-
     async fn run(
         self: Arc<Self>,
         id: String,
@@ -407,6 +453,7 @@ impl DownloadManager {
                 crate::downloader::notifications::stop_download_service();
             }
         }
+        self.notify.notify_waiters();
     }
 
     async fn run_inner(
@@ -518,8 +565,8 @@ impl DownloadManager {
                 "Downloaded file size changed during verification".to_string(),
             ));
         }
-        let root = Self::ensure_download_root(&settings.download_dir)
-            .map_err(DownloadRunError::Failed)?;
+        let root =
+            Self::ensure_download_root(&settings.download_dir).map_err(DownloadRunError::Failed)?;
         let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
         let blob_path = root.join(&relative_blob);
         if let Some(parent) = blob_path.parent() {
