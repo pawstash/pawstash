@@ -1,7 +1,7 @@
 {
   "name": "pawstash",
   "private": true,
-  "version": "26.8.3",
+  "version": "26.8.4",
   "description": "A beautiful cross-platform client, downloader, and stash manager for pawchive, with server sync and more sources in mind.",
   "license": "GPL-3.0-or-later",
   "type": "module",

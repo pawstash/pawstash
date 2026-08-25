@@ -3237,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "pawstash"
-version = "26.8.3"
+version = "26.8.4"
 dependencies = [
  "aes",
  "anyhow",

@@ -19,12 +19,45 @@ export function isOnlyHavenService(service?: string): boolean {
   return s === 'onlyfans' || s === 'fansly' || s === 'candfans';
 }
 
+export function deriveSubdomainOrigin(baseUrl: string, kind: 'image' | 'file' | 'api'): string {
+  const origin = siteOrigin(baseUrl);
+  if (kind === 'api') return origin;
+
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+
+    if (host.includes('cum.st') || host.includes('coomer')) {
+      const parts = host.split('.');
+      const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
+      if (kind === 'image') return `${url.protocol}//img.${baseHost}`;
+      if (kind === 'file') return `${url.protocol}//e1.${baseHost}`;
+      return origin;
+    }
+
+    if (host.includes('kemono')) {
+      const parts = host.split('.');
+      const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
+      if (kind === 'image') return `${url.protocol}//img.${baseHost}`;
+      if (kind === 'file') return `${url.protocol}//c1.${baseHost}`;
+      return origin;
+    }
+
+    const parts = host.split('.');
+    const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
+    const prefix = kind === 'image' ? 'img' : 'file';
+    return `${url.protocol}//${prefix}.${baseHost}`;
+  } catch {
+    return origin;
+  }
+}
+
 export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'file' = 'api'): string {
   if (service) {
     if (isOnlyHavenService(service)) {
-      if (kind === 'image') return 'https://img.cum.st';
-      if (kind === 'file') return 'https://e1.cum.st';
-      return 'https://cum.st';
+      const havenProviders = providerState.getProvidersForService(service);
+      const havenBase = havenProviders[0]?.api_url || 'https://cum.st';
+      return deriveSubdomainOrigin(havenBase, kind);
     }
     const providers = providerState.getProvidersForService(service);
     if (providers.length > 0) {
@@ -32,14 +65,12 @@ export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'fil
       if (kind === 'image') {
         if (p.image_url) return siteOrigin(p.image_url);
         if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
-        if (p.api_url?.includes('kemono')) return 'https://img.kemono.su';
-        return 'https://img.pawchive.pw';
+        return deriveSubdomainOrigin(p.api_url, 'image');
       }
       if (kind === 'file') {
         if (p.file_url) return siteOrigin(p.file_url);
         if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
-        if (p.api_url) return siteOrigin(p.api_url);
-        return 'https://pawchive.pw';
+        return deriveSubdomainOrigin(p.api_url, 'file');
       }
       if (p.api_url) return siteOrigin(p.api_url);
     }
@@ -51,27 +82,24 @@ export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'fil
     if (kind === 'image') {
       if (p.image_url) return siteOrigin(p.image_url);
       if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
-      if (p.api_url?.includes('kemono')) return 'https://img.kemono.su';
-      if (p.api_url?.includes('cum.st') || p.api_url?.includes('coomer')) return 'https://img.cum.st';
-      return 'https://img.pawchive.pw';
+      return deriveSubdomainOrigin(p.api_url, 'image');
     }
     if (kind === 'file') {
       if (p.file_url) return siteOrigin(p.file_url);
       if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
-      if (p.api_url?.includes('cum.st') || p.api_url?.includes('coomer')) return 'https://e1.cum.st';
-      if (p.api_url) return siteOrigin(p.api_url);
-      return 'https://pawchive.pw';
+      return deriveSubdomainOrigin(p.api_url, 'file');
     }
     if (p.api_url) return siteOrigin(p.api_url);
   }
 
+  const defaultApi = configState.settings.api_domain || 'pawchive.pw';
   if (kind === 'image') {
-    return siteOrigin(configState.settings.image_domain || 'img.pawchive.pw');
+    return siteOrigin(configState.settings.image_domain || deriveSubdomainOrigin(defaultApi, 'image'));
   }
   if (kind === 'file') {
-    return siteOrigin(configState.settings.file_domain || configState.settings.api_domain || 'pawchive.pw');
+    return siteOrigin(configState.settings.file_domain || deriveSubdomainOrigin(defaultApi, 'file'));
   }
-  return siteOrigin(configState.settings.api_domain || 'pawchive.pw');
+  return siteOrigin(defaultApi);
 }
 
 export function cleanMediaPath(rawPath: string): string {
@@ -147,6 +175,23 @@ export function attachmentMediaUrl(file: Attachment, service: string): string {
 
   const origin = file.server ? siteOrigin(file.server) : getProviderOrigin(service, 'file');
   return `${origin}/data/${key}`;
+}
+
+export function attachmentThumbnailUrl(file: Attachment, service: string): string {
+  if (!file?.path) return '';
+  if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
+    return file.path;
+  }
+
+  const key = cleanMediaPath(file.path);
+  const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
+
+  if (isHaven) {
+    return `https://img.cum.st/thumbnail/${key}/preview.webp`;
+  }
+
+  const origin = getProviderOrigin(service, 'image');
+  return `${origin}/thumbnail/data/${key}`;
 }
 
 export function postThumbnailUrl(post: PawchivePost): string | null {

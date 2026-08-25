@@ -932,6 +932,45 @@ impl PawchiveProvider {
     }
 }
 
+fn derive_subdomain_url(api_url: &str, kind: &str) -> String {
+    let clean_url = if api_url.starts_with("http://") || api_url.starts_with("https://") {
+        api_url.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", api_url.trim_end_matches('/'))
+    };
+
+    if let Ok(parsed) = reqwest::Url::parse(&clean_url) {
+        let host = parsed.host_str().unwrap_or("pawchive.pw");
+        let scheme = parsed.scheme();
+
+        if host.contains("kemono") {
+            let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
+            if kind == "image" {
+                return format!("{scheme}://img.{base_host}");
+            } else if kind == "file" {
+                return format!("{scheme}://c1.{base_host}");
+            }
+        } else if host.contains("cum.st") || host.contains("coomer") {
+            let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
+            if kind == "image" {
+                return format!("{scheme}://img.{base_host}");
+            } else if kind == "file" {
+                return format!("{scheme}://e1.{base_host}");
+            }
+        } else {
+            let parts: Vec<&str> = host.split('.').collect();
+            let base_host = if parts.len() > 2 {
+                parts[parts.len() - 2..].join(".")
+            } else {
+                host.to_string()
+            };
+            let prefix = if kind == "image" { "img" } else { "file" };
+            return format!("{scheme}://{prefix}.{base_host}");
+        }
+    }
+    clean_url
+}
+
 #[async_trait]
 impl SourceProvider for PawchiveProvider {
     fn id(&self) -> &str {
@@ -1152,33 +1191,50 @@ impl SourceProvider for PawchiveProvider {
 
     fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String {
         let conf = self.config.read().unwrap();
-        let domain = server
-            .or(conf.file_url.as_deref())
-            .unwrap_or(conf.api_url.as_str());
         let clean = file_path
             .trim_start_matches('/')
             .trim_start_matches("data/")
             .trim_start_matches('/');
-        let base = if domain.starts_with("http://") || domain.starts_with("https://") {
-            domain.trim_end_matches('/').to_string()
-        } else {
-            format!("https://{}", domain.trim_end_matches('/'))
-        };
+
+        if let Some(srv) = server.filter(|s| !s.trim().is_empty()) {
+            let base = if srv.starts_with("http://") || srv.starts_with("https://") {
+                srv.trim_end_matches('/').to_string()
+            } else {
+                format!("https://{}", srv.trim_end_matches('/'))
+            };
+            return format!("{base}/data/{clean}");
+        }
+
+        if let Some(file_url) = conf.file_url.as_deref().filter(|s| !s.trim().is_empty()) {
+            let base = if file_url.starts_with("http://") || file_url.starts_with("https://") {
+                file_url.trim_end_matches('/').to_string()
+            } else {
+                format!("https://{}", file_url.trim_end_matches('/'))
+            };
+            return format!("{base}/data/{clean}");
+        }
+
+        let base = derive_subdomain_url(&conf.api_url, "file");
         format!("{base}/data/{clean}")
     }
 
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
         let conf = self.config.read().unwrap();
-        let domain = conf.image_url.as_deref().unwrap_or("img.pawchive.pw");
         let clean = thumb_path
             .trim_start_matches('/')
             .trim_start_matches("data/")
             .trim_start_matches('/');
-        let base = if domain.starts_with("http://") || domain.starts_with("https://") {
-            domain.trim_end_matches('/').to_string()
-        } else {
-            format!("https://{}", domain.trim_end_matches('/'))
-        };
+
+        if let Some(img_url) = conf.image_url.as_deref().filter(|s| !s.trim().is_empty()) {
+            let base = if img_url.starts_with("http://") || img_url.starts_with("https://") {
+                img_url.trim_end_matches('/').to_string()
+            } else {
+                format!("https://{}", img_url.trim_end_matches('/'))
+            };
+            return format!("{base}/thumbnail/data/{clean}");
+        }
+
+        let base = derive_subdomain_url(&conf.api_url, "image");
         format!("{base}/thumbnail/data/{clean}")
     }
 

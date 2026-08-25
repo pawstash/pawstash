@@ -19,7 +19,7 @@
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, isAttachmentVideo, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
   import { extractCloudLinks } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { logger } from '$lib/utils/logger';
@@ -640,6 +640,7 @@
     return {
       id: file.path || `${file.name || 'media'}:${itemIndex}`,
       url,
+      poster: attachmentThumbnailUrl(file, service),
       name: file.name || i18n.t('post.file'),
       kind: isEmbed ? 'video' : mediaViewerKind(file, url),
       size: getEffectiveFileSize(file) || file.size,
@@ -1155,7 +1156,7 @@
     const localJob = attachmentDownload(file);
     const localPath = (localJob && localJob.status === 'completed' && localJob.final_path)
       ? localJob.final_path
-      : (file.path === post?.file?.path && post?.local_preview_path ? String(post.local_preview_path) : '');
+      : '';
 
     if (localPath) {
       if (mediaPort) {
@@ -1917,7 +1918,19 @@
                             onclick={() => openMediaViewer(file!, filteredMedia)}
                             aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || post.title}`}
                           >
-                            <img src={url} alt={file?.name || post.title} loading={index < 2 ? 'eager' : 'lazy'} decoding="async" />
+                            <img
+                              src={url}
+                              alt={file?.name || post.title}
+                              loading={index < 2 ? 'eager' : 'lazy'}
+                              decoding="async"
+                              onerror={(e) => {
+                                const target = e.currentTarget as HTMLImageElement;
+                                const fallback = attachmentThumbnailUrl(file!, service);
+                                if (fallback && target.src !== fallback) {
+                                  target.src = fallback;
+                                }
+                              }}
+                            />
                           </button>
                         {/if}
                       {/if}

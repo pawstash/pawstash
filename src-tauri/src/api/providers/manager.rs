@@ -61,7 +61,7 @@ impl ProviderManager {
                 enabled: true,
                 api_url: "https://pawchive.pw".into(),
                 fallback_urls: vec!["https://kemono.su".into()],
-                file_url: Some("https://pawchive.pw".into()),
+                file_url: Some("https://file.pawchive.pw".into()),
                 image_url: Some("https://img.pawchive.pw".into()),
                 session_cookie: String::new(),
                 username: String::new(),
@@ -546,7 +546,7 @@ impl ProviderManager {
             if let Some(first) = enabled.first() {
                 first.resolve_media_url(file_path, server)
             } else {
-                format!("https://pawchive.pw/{}", file_path.trim_start_matches('/'))
+                format!("https://file.pawchive.pw/{}", file_path.trim_start_matches('/'))
             }
         }
     }
@@ -560,7 +560,7 @@ impl ProviderManager {
             if let Some(first) = enabled.first() {
                 first.resolve_thumbnail_url(thumb_path)
             } else {
-                format!("https://pawchive.pw/{}", thumb_path.trim_start_matches('/'))
+                format!("https://img.pawchive.pw/thumbnail/{}", thumb_path.trim_start_matches('/'))
             }
         }
     }
