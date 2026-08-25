@@ -369,7 +369,7 @@ impl DownloadManager {
         }
     }
 
-    fn ensure_download_root(preferred: &str) -> Result<PathBuf, String> {
+    pub fn ensure_download_root(preferred: &str) -> Result<PathBuf, String> {
         let root = PathBuf::from(preferred);
         let temp = root.join(".temp");
         let media = root.join(".media");
@@ -482,9 +482,17 @@ impl DownloadManager {
             );
         }
 
+        let effective_url = if job.url.starts_with("https://pawchive.pw/data/") {
+            job.url.replacen("https://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+        } else if job.url.starts_with("http://pawchive.pw/data/") {
+            job.url.replacen("http://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+        } else {
+            job.url.clone()
+        };
+
         let task = DownloadTask {
             id: job.id.clone(),
-            url: job.url.clone(),
+            url: effective_url,
             output_dir: job.output_dir.clone(),
             temp_path: job.temp_path.clone(),
             final_path: job.final_path.clone(),

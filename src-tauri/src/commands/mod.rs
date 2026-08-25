@@ -1371,7 +1371,8 @@ pub async fn start_download(
             }
         });
 
-        let root = std::path::PathBuf::from(&settings.download_dir);
+        let root = crate::downloader::manager::DownloadManager::ensure_download_root(&settings.download_dir)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&settings.download_dir));
         let c_name = creator_name.as_deref().unwrap_or("");
         let ctx = crate::downloader::template::TemplateContext {
             service: &post.service,

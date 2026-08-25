@@ -29,6 +29,13 @@ use tauri::{Listener, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     logging::init_logging();
     let config_mgr = ConfigManager::new().expect("Failed to initialize SQLite settings");
     let settings = config_mgr.load().expect("Failed to load settings");

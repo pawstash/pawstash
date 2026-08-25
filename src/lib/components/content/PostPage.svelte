@@ -448,14 +448,11 @@
   function isH265Video(filename?: string) {
     if (!filename) return false;
     const name = filename.toLowerCase();
-    return name.includes('h265') || name.includes('hevc') || name.includes('x265') || name.includes('265');
+    return /\b(h265|hevc|x265)\b|\.(h265|hevc)$/i.test(name);
   }
 
-  function handleVideoMetadata(e: Event, index: number) {
-    const video = e.target as HTMLVideoElement;
-    if (video.videoWidth === 0 && video.videoHeight === 0) {
-      videoFailures[index] = true;
-    }
+  function handleVideoError(index: number) {
+    videoFailures[index] = true;
   }
 
   function isHtmlContentEmpty(html?: string) {
@@ -1772,6 +1769,7 @@
                       <video
                         src={postEmbed.url}
                         controls
+                        playsinline
                         preload="metadata"
                         use:panicCapture
                         onkeydown={handleGlobalPanicKey}
@@ -1897,11 +1895,13 @@
                           <!-- svelte-ignore a11y_media_has_caption -->
                           <video
                             src={url}
+                            poster={attachmentThumbnailUrl(file, service)}
                             controls
+                            playsinline
                             preload={index === 0 ? 'metadata' : 'none'}
                             use:panicCapture
                             onkeydown={handleGlobalPanicKey}
-                            onloadedmetadata={(e) => handleVideoMetadata(e, index)}
+                            onerror={() => handleVideoError(index)}
                             onplay={handleVideoPlay}
                           ></video>
                           <button

@@ -579,11 +579,9 @@
             controls
             autoplay
             playsinline
+            preload="auto"
             use:panicCapture
             onkeydown={handleGlobalPanicKey}
-            onloadedmetadata={handleVideoMetadata}
-            ontimeupdate={handleVideoTimeUpdate}
-            onended={handleVideoEnded}
           ></video>
         {:else if current.kind === 'audio'}
           <div
