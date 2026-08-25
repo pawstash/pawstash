@@ -282,7 +282,7 @@
         {#if icon}
           {@const IconComp = icon}
           <span class="trigger-icon">
-            <IconComp class="w-[16px] h-[16px]" />
+            <IconComp class="w-[18px] h-[18px]" />
           </span>
         {/if}
         <span class="trigger-label">{selectedLabel}</span>

@@ -14,15 +14,20 @@ pub struct Attachment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PawchivePost {
+    #[serde(deserialize_with = "deserialize_flexible_id")]
     pub id: String,
+    #[serde(deserialize_with = "deserialize_flexible_id")]
     pub user: String,
     pub service: String,
     #[serde(default)]
     pub title: String,
     pub content: Option<String>,
     pub substring: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub published: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub added: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub edited: Option<String>,
     pub embed: Option<Value>,
     pub shared_file: Option<bool>,
@@ -31,11 +36,15 @@ pub struct PawchivePost {
     pub poll: Option<Value>,
     pub captions: Option<Value>,
     pub tags: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub origin: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub preview_state: Option<String>,
     pub has_full: Option<bool>,
     pub detail_fetched: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub next: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_flexible_string")]
     pub prev: Option<String>,
     #[serde(
         default,

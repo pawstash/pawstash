@@ -27,12 +27,12 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function postCacheKey(service: string, creatorId: string, postId: string) {
-  return `${service}:${creatorId}:${postId}`;
+export function postCacheKey(service: string, creatorId: string | number, postId: string | number) {
+  return `${String(service || '').toLowerCase()}:${String(creatorId || '').toLowerCase()}:${String(postId || '')}`;
 }
 
-export function creatorCacheKey(service: string, creatorId: string) {
-  return `${service}:${creatorId}`;
+export function creatorCacheKey(service: string, creatorId: string | number) {
+  return `${String(service || '').toLowerCase()}:${String(creatorId || '').toLowerCase()}`;
 }
 
 export class ContentState {
@@ -45,29 +45,35 @@ export class ContentState {
     if (!existing) {
       this.posts[key] = { post, loading: false, loaded: post.detail_fetched === true, error: null };
     } else if (!existing.loaded) {
-      existing.post = { ...existing.post, ...post };
+      this.posts[key] = {
+        ...existing,
+        post: { ...(existing.post || {}), ...post }
+      };
     }
   }
 
-  getPost(service: string, creatorId: string, postId: string) {
+  getPost(service: string, creatorId: string | number, postId: string | number) {
     const key = postCacheKey(service, creatorId, postId);
     this.posts[key] ??= { post: null, loading: false, loaded: false, error: null };
     return this.posts[key];
   }
 
-  async loadPost(service: string, creatorId: string, postId: string, force = false) {
+  async loadPost(service: string, creatorId: string | number, postId: string | number, force = false) {
+    const key = postCacheKey(service, creatorId, postId);
     const entry = this.getPost(service, creatorId, postId);
     if (!force && entry.loaded && entry.post?.detail_fetched) return;
     if (entry.loading) return;
 
     if (!entry.post) {
       try {
-        const cached = await apiGetCachedPost(service, creatorId, postId);
+        const cached = await apiGetCachedPost(String(service), String(creatorId), String(postId));
         if (cached) {
-          entry.post = cached;
-          if (cached.detail_fetched) {
-            entry.loaded = true;
-          }
+          this.posts[key] = {
+            post: cached,
+            loading: false,
+            loaded: cached.detail_fetched === true,
+            error: null
+          };
           logger.debug(`[Content] Hydrated post ${service}:${creatorId}:${postId} from local cache`);
         }
       } catch {
@@ -75,28 +81,44 @@ export class ContentState {
       }
     }
 
-    if (!force && entry.loaded && entry.post?.detail_fetched) return;
+    const currentEntry = this.posts[key] ?? entry;
+    if (!force && currentEntry.loaded && currentEntry.post?.detail_fetched) return;
 
-    entry.loading = true;
-    entry.error = null;
+    this.posts[key] = {
+      ...currentEntry,
+      loading: true,
+      error: null
+    };
 
     try {
-      const detail = await apiFetchPost(service, creatorId, postId);
-      entry.post = {
-        ...entry.post,
-        ...detail,
-        favorite_count: entry.post?.favorite_count ?? detail.favorite_count,
-        attachment_count: detail.attachments?.length ?? entry.post?.attachment_count,
-        detail_fetched: true
+      const detail = await apiFetchPost(String(service), String(creatorId), String(postId));
+      this.posts[key] = {
+        post: {
+          ...(currentEntry.post || {}),
+          ...detail,
+          favorite_count: currentEntry.post?.favorite_count ?? detail.favorite_count,
+          attachment_count: detail.attachments?.length ?? currentEntry.post?.attachment_count,
+          detail_fetched: true
+        },
+        loading: false,
+        loaded: true,
+        error: null
       };
-      entry.loaded = true;
     } catch (error) {
-      if (!entry.post) {
-        entry.error = errorMessage(error);
+      if (!currentEntry.post) {
+        this.posts[key] = {
+          post: null,
+          loading: false,
+          loaded: false,
+          error: errorMessage(error)
+        };
         logger.error(`Failed to load post ${service}:${creatorId}:${postId}`, error);
+      } else {
+        this.posts[key] = {
+          ...currentEntry,
+          loading: false
+        };
       }
-    } finally {
-      entry.loading = false;
     }
   }
 

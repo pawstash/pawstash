@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { contentState, postCacheKey, type CachedPost } from '$lib/state/contentState.svelte';
+  import { contentState, postCacheKey, creatorCacheKey, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -17,6 +17,7 @@
   import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder, apiStartDownload } from '$lib/utils/ipc';
   import type { Attachment, Comment, PawchivePost } from '$lib/types/pawchive';
   import type { DownloadItem } from '$lib/types/download';
+  import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
@@ -136,12 +137,48 @@
       ? (post.embed as PostEmbed)
       : null
   );
-  let newerPost = $derived.by(() => post?.prev
-    ? contentState.posts[postCacheKey(service, creatorId, post.prev)]?.post ?? null
-    : null);
-  let olderPost = $derived.by(() => post?.next
-    ? contentState.posts[postCacheKey(service, creatorId, post.next)]?.post ?? null
-    : null);
+  let creatorPosts = $derived.by(() => {
+    const key = creatorCacheKey(service, creatorId);
+    return contentState.creators[key]?.posts || [];
+  });
+
+  let currentPostIndexInCreator = $derived.by(() => {
+    if (creatorPosts.length === 0) return -1;
+    return creatorPosts.findIndex((p) => String(p.id) === String(postId));
+  });
+
+  let effectivePrevId = $derived.by(() => {
+    if (post?.prev) return String(post.prev);
+    if (currentPostIndexInCreator > 0) {
+      return String(creatorPosts[currentPostIndexInCreator - 1].id);
+    }
+    return '';
+  });
+
+  let effectiveNextId = $derived.by(() => {
+    if (post?.next) return String(post.next);
+    if (currentPostIndexInCreator >= 0 && currentPostIndexInCreator < creatorPosts.length - 1) {
+      return String(creatorPosts[currentPostIndexInCreator + 1].id);
+    }
+    return '';
+  });
+
+  let newerPost = $derived.by(() => {
+    if (!effectivePrevId) return null;
+    const prevKey = postCacheKey(service, creatorId, effectivePrevId);
+    const cached = contentState.posts[prevKey]?.post;
+    if (cached?.title) return cached;
+    return creatorPosts.find((p) => String(p.id) === effectivePrevId) ?? cached ?? null;
+  });
+
+  let olderPost = $derived.by(() => {
+    if (!effectiveNextId) return null;
+    const nextKey = postCacheKey(service, creatorId, effectiveNextId);
+    const cached = contentState.posts[nextKey]?.post;
+    if (cached?.title) return cached;
+    return creatorPosts.find((p) => String(p.id) === effectiveNextId) ?? cached ?? null;
+  });
+
   let leftPostTitle = $derived(newerPost?.title?.trim() || i18n.t('post.next'));
   let rightPostTitle = $derived(olderPost?.title?.trim() || i18n.t('post.previous'));
   
@@ -943,14 +980,27 @@
   
   let saved = $derived(post ? libraryState.isSaved(post) : false);
   let saving = $derived(post ? libraryState.isPending(post) : false);
-  let stashes = $derived(libraryState.collections.filter((collection) => collection.kind === 'stash'));
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: s.name })));
-  let postStashes = $derived(post ? libraryState.getCustomPostStashes(post) : []);
-  let postStashNames = $derived(post ? libraryState.getPostStashNames(post) : []);
-  let stashSelectPlaceholder = $derived.by(() => {
-    if (postStashes.length === 0) return i18n.t('library.add_to_stash') || 'Add to stash';
-    if (postStashes.length === 1) return postStashNames[0] || (i18n.t('library.add_to_stash') || 'Add to stash');
-    return i18n.t('library.in_stashes_count', { count: postStashes.length }) || `${postStashes.length} stashes`;
+  let stashes = $derived(libraryState.allStashes);
+  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  let postStashes = $derived(post ? libraryState.getPostStashes(post) : []);
+  let customStashes = $derived(post ? libraryState.getCustomPostStashes(post) : []);
+  let customStashNames = $derived(
+    customStashes
+      .map((id) => libraryState.collections.find((c) => c.id === id))
+      .filter((c): c is LibraryCollection => Boolean(c))
+      .map((c) => libraryState.getStashDisplayName(c))
+  );
+  let libraryButtonLabel = $derived.by(() => {
+    if (!saved && postStashes.length === 0) {
+      return i18n.t('library.save') || 'Save to library';
+    }
+    if (customStashNames.length === 1) {
+      return customStashNames[0];
+    }
+    if (customStashNames.length > 1) {
+      return i18n.t('library.in_stashes_count', { count: customStashes.length }) || `${customStashes.length} stashes`;
+    }
+    return i18n.t('library.saved') || 'Saved';
   });
   let authenticated = $derived(accountState.session.authenticated);
 
@@ -1039,8 +1089,8 @@
   $effect(() => {
     const currentService = service;
     const currentCreatorId = creatorId;
-    const prevId = post?.prev;
-    const nextId = post?.next;
+    const prevId = effectivePrevId;
+    const nextId = effectiveNextId;
     if (currentService && currentCreatorId) {
       if (prevId) {
         untrack(() => {
@@ -1374,13 +1424,24 @@
   async function handleStashToggle(collectionId: string) {
     if (!post || !collectionId) return;
     const isCurrentlyIn = postStashes.includes(collectionId);
+    const collection = libraryState.collections.find((c) => c.id === collectionId);
     try {
-      if (isCurrentlyIn) {
-        await libraryState.removeFromStash(collectionId, post);
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
+      if (collection?.kind === 'inbox') {
+        if (isCurrentlyIn) {
+          await libraryState.remove(post);
+          notify.success(i18n.t('library.removed'), post.title || undefined);
+        } else {
+          await libraryState.save(post, collectionId);
+          notify.success(i18n.t('library.saved'), post.title || undefined);
+        }
       } else {
-        await libraryState.save(post, collectionId);
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash', post.title || undefined);
+        if (isCurrentlyIn) {
+          await libraryState.removeFromStash(collectionId, post);
+          notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
+        } else {
+          await libraryState.save(post, collectionId);
+          notify.success(i18n.t('library.added_to_stash') || 'Added to stash', post.title || undefined);
+        }
       }
     } catch (error) {
       notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
@@ -1570,33 +1631,20 @@
             <span class="btn-text">{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
           </Button>
 
-          <Button
-            variant={saved ? 'accent' : 'ghost'}
-            disabled={saving}
-            onclick={() => void toggleLibrary()}
-            class="sticky-action-btn"
-            title={i18n.t(saved ? 'library.saved' : 'library.save')}
-          >
-            {#if saved}
-              <IconSaved class="w-[20px] h-[20px]" />
-            {:else}
-              <IconSave class="w-[20px] h-[20px]" />
-            {/if}
-            <span class="btn-text">{i18n.t(saved ? 'library.saved' : 'library.save')}</span>
-          </Button>
-
           <div class="sticky-stash-select">
             <Select
               options={stashOptions}
               selectedValues={postStashes}
-              placeholder={stashSelectPlaceholder}
+              placeholder={libraryButtonLabel}
               onchange={handleStashToggle}
               createLabel={i18n.t('library.new_stash')}
               onCreate={handleCreateStash}
-              variant={postStashes.length > 0 ? 'accent' : 'ghost'}
+              variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
               multi={true}
               closeOnChange={false}
-              icon={IconFolder}
+              iconOnly={layoutState.isMobile}
+              icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
+              disabled={saving}
             />
           </div>
 
@@ -1643,36 +1691,21 @@
           <span>{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
         </Button>
 
-        <div class="library-controls">
-          <Button
-            variant={saved ? 'accent' : 'primary'}
+        <div class="stash-select-container">
+          <Select
+            options={stashOptions}
+            selectedValues={postStashes}
+            placeholder={libraryButtonLabel}
+            onchange={handleStashToggle}
+            createLabel={i18n.t('library.new_stash')}
+            onCreate={handleCreateStash}
+            variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
+            multi={true}
+            closeOnChange={false}
+            icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
             disabled={saving}
-            onclick={() => void toggleLibrary()}
-            class="action-btn"
-          >
-            {#if saved}
-              <IconSaved class="w-[18px] h-[18px]" />
-            {:else}
-              <IconSave class="w-[18px] h-[18px]" />
-            {/if}
-            <span>{i18n.t(saved ? 'library.saved' : 'library.save')}</span>
-          </Button>
-
-          <div class="stash-select-container">
-            <Select
-              options={stashOptions}
-              selectedValues={postStashes}
-              placeholder={stashSelectPlaceholder}
-              onchange={handleStashToggle}
-              createLabel={i18n.t('library.new_stash')}
-              onCreate={handleCreateStash}
-              variant={postStashes.length > 0 ? 'accent' : 'ghost'}
-              multi={true}
-              closeOnChange={false}
-              icon={IconFolder}
-              class="stash-select"
-            />
-          </div>
+            class="stash-select"
+          />
         </div>
       {/if}
     </div>
@@ -2130,7 +2163,7 @@
               void apiOpenInBrowser(url).catch((err) => console.warn('Failed to open post URL in browser:', err));
             }}
             class="post-footer-action"
-            title={i18n.t('post.open_in_browser')}
+            title={postPageUrl(service, creatorId, postId)}
           >
             <IconOpen class="w-[18px] h-[18px]" />
             <span>{i18n.t('post.open_in_browser')}</span>
@@ -2141,10 +2174,10 @@
           <div class="footer-nav-left">
             <Button
               variant="ghost"
-              disabled={!post.prev}
-              onclick={() => post?.prev && navigationState.openPost(service, creatorId, post.prev)}
+              disabled={!effectivePrevId}
+              onclick={() => effectivePrevId && navigationState.openPost(service, creatorId, effectivePrevId)}
               class="footer-nav-btn"
-              title={leftPostTitle}
+              title={i18n.t('post.next') || 'Next'}
             >
               <IconChevronLeft class="w-[18px] h-[18px]" />
               <span>{leftPostTitle}</span>
@@ -2154,10 +2187,10 @@
           <div class="footer-nav-right">
             <Button
               variant="ghost"
-              disabled={!post.next}
-              onclick={() => post?.next && navigationState.openPost(service, creatorId, post.next)}
+              disabled={!effectiveNextId}
+              onclick={() => effectiveNextId && navigationState.openPost(service, creatorId, effectiveNextId)}
               class="footer-nav-btn"
-              title={rightPostTitle}
+              title={i18n.t('post.previous') || 'Previous'}
             >
               <span>{rightPostTitle}</span>
               <IconChevronRight class="w-[18px] h-[18px]" />
@@ -2345,15 +2378,10 @@
     object-fit: cover;
   }
 
-  .library-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
-  }
-
   .stash-select-container {
-    width: 170px;
+    margin-left: auto;
+    min-width: 170px;
+    max-width: 260px;
   }
 
   .stash-select-container :global(.select-trigger),
@@ -3174,7 +3202,34 @@
   }
 
   .sticky-stash-select {
-    display: none;
+    display: flex;
+    align-items: center;
+  }
+
+  :global(.sticky-header-bar.is-mobile) .sticky-stash-select {
+    display: flex;
+    width: 46px;
+    height: 46px;
+    flex-shrink: 0;
+  }
+
+  :global(.sticky-header-bar.is-mobile) .sticky-stash-select :global(.select-trigger) {
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    max-width: 46px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+
+  :global(.sticky-header-bar.is-mobile) .sticky-stash-select :global(.select-trigger svg) {
+    width: 20px !important;
+    height: 20px !important;
+    flex-shrink: 0 !important;
   }
 
   :global(.sticky-header-bar.is-mobile) .sticky-post-actions :global(.btn) {
@@ -3209,7 +3264,8 @@
 
   :global(.sticky-header-bar:not(.is-mobile)) .sticky-stash-select {
     display: block;
-    width: 170px;
+    min-width: 170px;
+    max-width: 240px;
   }
 
   :global(.sticky-header-bar:not(.is-mobile)) .sticky-post-title {
