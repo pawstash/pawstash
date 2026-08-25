@@ -155,6 +155,8 @@ class DownloadForegroundService : Service() {
                     ).apply {
                         description = "Shows live download progress and speed"
                         setShowBadge(false)
+                        setSound(null, null)
+                        enableVibration(false)
                     }
                     manager.createNotificationChannel(channel)
                 }
@@ -208,7 +210,11 @@ class DownloadForegroundService : Service() {
             .setContentText("Starting download...")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setSound(null)
+            .setVibrate(null)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
         try {
@@ -310,7 +316,11 @@ class DownloadForegroundService : Service() {
             .setProgress(100, progressPercent, isIndeterminate)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setSound(null)
+            .setVibrate(null)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setContentIntent(pendingIntent)
             .build()
 
