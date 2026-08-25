@@ -17,7 +17,7 @@ android {
     compileSdk = 35
     namespace = "app.pawstash.client"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "app.pawstash.client"
         minSdk = 24
         targetSdk = 35
