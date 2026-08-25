@@ -316,48 +316,84 @@ export function isDocumentUrl(url: string | null): boolean {
 }
 
 export function getPostFormats(post: PawchivePost): string[] {
-  const formats: string[] = [];
-  const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
-  for (const item of items) {
-    const path = (item.path || '').toLowerCase();
-    const kind = ((item.extra as any)?.kind || '').toLowerCase();
-    if (kind === 'image' || kind === 'gif' || isImageUrl(path)) {
-      if (!formats.includes('image')) formats.push('image');
-    }
-    if (kind === 'video' || isVideoUrl(path)) {
-      if (!formats.includes('video')) formats.push('video');
-    }
-    if (kind === 'audio' || isAudioUrl(path)) {
-      if (!formats.includes('audio')) formats.push('audio');
-    }
-    if (isCompressedUrl(path)) {
-      if (!formats.includes('compressed')) formats.push('compressed');
-    }
-    if (isDocumentUrl(path)) {
-      if (!formats.includes('document')) formats.push('document');
+  const allFiles: string[] = [];
+  if (post.file?.path) allFiles.push(post.file.path.toLowerCase());
+  if (post.file?.name) allFiles.push(post.file.name.toLowerCase());
+  if (post.attachments && Array.isArray(post.attachments)) {
+    for (const att of post.attachments) {
+      if (att?.path) allFiles.push(att.path.toLowerCase());
+      if (att?.name) allFiles.push(att.name.toLowerCase());
     }
   }
+
+  const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
+  const hasVideoAttachment = items.some((it) => isAttachmentVideo(it, it.path));
+  const hasImageAttachment = items.some((it) => isAttachmentImage(it, it.path));
+
+  const embedStr = JSON.stringify(post.embed || {}).toLowerCase();
+  const contentStr = (post.content || '').toLowerCase();
+  const titleStr = (post.title || '').toLowerCase();
+  const tagsStr = Array.isArray(post.tags)
+    ? post.tags.join(' ').toLowerCase()
+    : typeof post.tags === 'string'
+      ? post.tags.toLowerCase()
+      : '';
+
+  const formats: string[] = [];
+
+  // Video
+  const hasVideoFile = allFiles.some((f) => /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f));
+  const hasVideoEmbed = /youtube|youtu\.be|vimeo|bilibili|streamable|gfycat|coomer|kemono|sproutvideo|vids\.io|redgifs|\.(mp4|webm|mkv|mov|m4v)/i.test(embedStr) || /<video|\.(mp4|webm|mkv|mov|m4v)/i.test(contentStr);
+  const hasVideoTitle = /\b(video|mp4|webm|movie|animation|anim|clip|mkv|mov|4k|1080p|720p|60fps|short|pv|trailer)\b/i.test(titleStr);
+  if (hasVideoAttachment || hasVideoFile || hasVideoEmbed || hasVideoTitle) {
+    formats.push('video');
+  }
+
+  // Image
+  const hasImageFile = allFiles.some((f) => /\.(avif|bmp|gif|jpe?g|png|webp)(?:$|[?#])/i.test(f));
+  const hasImageEmbed = /\.(avif|bmp|gif|jpe?g|png|webp)|<img/i.test(embedStr) || /<img/i.test(contentStr);
+  if (hasImageAttachment || hasImageFile || hasImageEmbed || Boolean(post.file?.path || post.file?.name)) {
+    formats.push('image');
+  }
+
+  // Audio
+  const hasAudioFile = allFiles.some((f) => /\.(mp3|wav|ogg|m4a|flac|aac|opus|wma)(?:$|[?#])/i.test(f));
+  const hasAudioEmbed = /soundcloud|bandcamp|spotify|audio|\.(mp3|wav|ogg|m4a|flac)/i.test(embedStr) || /<audio|\.(mp3|wav|ogg|m4a|flac)/i.test(contentStr);
+  const hasAudioTitle = /\b(audio|mp3|wav|flac|sound|track|voice|podcast|asmr|song|music|ost)\b/i.test(titleStr);
+  if (hasAudioFile || hasAudioEmbed || hasAudioTitle) {
+    formats.push('audio');
+  }
+
+  // Text
+  const hasTextContent = Boolean(post.content && post.content.trim().length > 20);
+  const isTextOnlyPost = (post.attachment_count ?? 0) === 0 && !post.file?.path && !post.file?.name;
+  if (hasTextContent || isTextOnlyPost) {
+    formats.push('text');
+  }
+
+  // Archive / Files
+  const hasArchiveFile = allFiles.some((f) => /\.(zip|rar|7z|tar|gz|pdf|txt|epub|html|cbz|cbr|psd|clip|blend|fbx|obj|stl)(?:$|[?#])/i.test(f));
+  const hasArchiveLink = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(contentStr) || /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(embedStr);
+  const hasArchiveTitle = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|file|files|psd|clip|brush|brushes|model|blend)\b/i.test(titleStr);
+  if (hasArchiveFile || hasArchiveLink || hasArchiveTitle) {
+    formats.push('archive');
+  }
+
+  // WIP (Work in Progress / Sketches / Drafts / Previews)
+  const isWipTag = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|progress|in\s+progress)\b/i.test(tagsStr);
+  const isWipTitle = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|in\s+progress)\b|[\[\(]wip[\]\)]|wip\s*#?\d+/i.test(titleStr);
+  const isWipContent = /#(wip|sketch|workinprogress|draft|preview|doodle)\b|\[wip\]|\(wip\)/i.test(contentStr);
+  if (isWipTag || isWipTitle || isWipContent) {
+    formats.push('wip');
+  }
+
   if (formats.length === 0) formats.push('text');
   return formats;
 }
 
-export function matchesPostFormat(
-  post: PawchivePost,
-  format: 'all' | 'image' | 'video' | 'audio' | 'compressed' | 'document' | 'other'
-): boolean {
+export function matchesPostFormat(post: PawchivePost, format: string): boolean {
   if (format === 'all') return true;
-  const targetMedia = post.file?.path ? post.file : post.attachments?.[0];
-  if (!targetMedia?.path) return format === 'other';
-
-  const path = targetMedia.path.toLowerCase();
-  const kind = (targetMedia.extra as any)?.kind?.toLowerCase();
-
-  if (format === 'image') return kind === 'image' || kind === 'gif' || isImageUrl(path);
-  if (format === 'video') return kind === 'video' || isVideoUrl(path);
-  if (format === 'audio') return kind === 'audio' || isAudioUrl(path);
-  if (format === 'compressed') return isCompressedUrl(path);
-  if (format === 'document') return isDocumentUrl(path);
-  return true;
+  return getPostFormats(post).includes(format);
 }
 
 export interface DownloadTarget {
