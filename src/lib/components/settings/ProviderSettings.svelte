@@ -62,13 +62,10 @@
 
   {#each providerState.providers as provider (provider.id)}
     {@const pName = formatProviderName(provider.name)}
-    {@const servicesFormatted = provider.services.length > 0 
-      ? provider.services.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(', ') 
-      : 'All'}
 
     <SettingItem
       title={pName}
-      description={i18n.t('settings.provider_enable_desc', { provider: pName, services: servicesFormatted })}
+      description={i18n.t('settings.provider_enable_desc', { provider: pName })}
       icon={IconGlobe}
       align="right"
     >

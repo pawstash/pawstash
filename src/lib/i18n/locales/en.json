@@ -602,7 +602,7 @@
     "provider_add": "Add Source",
     "provider_api_url": "API Domain",
     "provider_api_url_desc": "API server URL used for {provider} requests",
-    "provider_enable_desc": "Fetch posts and creators from {provider} ({services})",
+    "provider_enable_desc": "Fetch posts and creators from {provider}",
     "provider_fallbacks": "Fallback Mirrors",
     "provider_healthy": "Healthy",
     "provider_name": "Source Name",

@@ -602,7 +602,7 @@
     "provider_add": "Добавить источник",
     "provider_api_url": "Домен API",
     "provider_api_url_desc": "Адрес сервера API для запросов к {provider}",
-    "provider_enable_desc": "Получать посты и авторов с {provider} ({services})",
+    "provider_enable_desc": "Получать посты и авторов с {provider}",
     "provider_fallbacks": "Резервные зеркала",
     "provider_healthy": "Доступен",
     "provider_name": "Название источника",
