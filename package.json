@@ -1,7 +1,7 @@
 {
   "name": "pawstash",
   "private": true,
-  "version": "26.8.3-1",
+  "version": "26.8.3-2",
   "description": "A beautiful cross-platform client, downloader, and stash manager for pawchive, with server sync and more sources in mind.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -39,7 +39,8 @@
     "overlayscrollbars": "^2.16.0",
     "svelte": "^5.25.0",
     "svelte-sonner": "^0.3.28",
-    "tailwind-merge": "^3.0.1"
+    "tailwind-merge": "^3.0.1",
+    "thumbhash": "^0.1.1"
   },
   "devDependencies": {
     "@fontsource/inter": "^5.3.0",

@@ -12,14 +12,15 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
-  import PostGrid from '$lib/components/pawchive/PostGrid.svelte';
-  import ServiceIcon from '$lib/components/pawchive/ServiceIcon.svelte';
+  import PostGrid from './PostGrid.svelte';
+  import ServiceIcon from './ServiceIcon.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
+  import { ripple } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
@@ -77,14 +78,14 @@
      (activeTab === 'creators' && selectionState.scope === 'creators'))
   );
   let selectedPosts = $derived(activeTab === 'posts' && isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
-  let stashes = $derived(libraryState.collections.filter((c) => c.kind === 'stash'));
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: s.name })));
+  let stashes = $derived(libraryState.allStashes);
+  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
   let batchSelectedStashes = $derived.by(() => {
     if (selectedPosts.length === 0) return [];
     const stashCounts = new Map<string, number>();
     for (const post of selectedPosts) {
-      const ids = libraryState.getCustomPostStashes(post);
+      const ids = libraryState.getPostStashes(post);
       for (const id of ids) {
         stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
       }
@@ -523,7 +524,7 @@
   }
 
   function getAvatarUrl(creator: Creator) {
-    return avatarUrls[`${creator.service}:${creator.id}`] || creatorAvatarUrl(creator.service, creator.id);
+    return avatarUrls[`${creator.service}:${creator.id}`] || creatorAvatarUrl(creator.service, creator.id, (creator.extra as any)?.avatar_thumbhash);
   }
 
   function formatDate(value: unknown) {
@@ -583,7 +584,7 @@
       onclick={clearServices}
       class="filter-chip chip-all {Object.keys(currentServices).length === 0 ? 'state-include' : ''}"
     >
-      <IconGlobe class="w-[14px] h-[14px]" />
+      <IconGlobe class="w-5 h-5" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each availableServices as service}
@@ -594,12 +595,18 @@
         onclick={() => toggleService(service)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <ServiceIcon {service} class="w-[14px] h-[14px]" />
+        <ServiceIcon {service} class="w-5 h-5" />
         <span>{service}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
   {#if activeTab === 'posts'}
+    <div class="floating-divider"></div>
     <span class="filter-label">{i18n.t('feed.format')}</span>
     <div class="service-options">
       {#each formatList as fmt}
@@ -611,23 +618,35 @@
           onclick={() => toggleFormat(fmt.id)}
           class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
         >
-          <IconComponent class="w-[14px] h-[14px]" />
+          <IconComponent class="w-5 h-5" />
           <span>{fmt.label()}</span>
+          {#if state === 'include'}
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          {:else if state === 'exclude'}
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          {/if}
         </Button>
       {/each}
     </div>
+    <div class="floating-divider"></div>
     <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-    <div class="view-option" class:active={onlyWithAttachments}>
+    <button
+      type="button"
+      class="view-option"
+      class:active={onlyWithAttachments}
+      use:ripple
+      onclick={() => onlyWithAttachments = !onlyWithAttachments}
+    >
       <Checkbox
         checked={onlyWithAttachments}
         onchange={(v) => onlyWithAttachments = v}
       />
-      <button type="button" onclick={() => onlyWithAttachments = !onlyWithAttachments}>
+      <span>
         <strong>{i18n.t('feed.with_attachments')}</strong>
         <small>{i18n.t('feed.with_attachments_desc')}</small>
-      </button>
+      </span>
       <IconDocument class="view-option-icon w-[20px] h-[20px]" />
-    </div>
+    </button>
   {/if}
 {/snippet}
 

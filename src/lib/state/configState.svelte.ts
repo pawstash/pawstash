@@ -1,4 +1,5 @@
 import type { AppSettings } from '$lib/types/config';
+import { providerState } from '$lib/state/providerState.svelte';
 
 export class ConfigState {
   settings = $state<AppSettings>({
@@ -56,6 +57,9 @@ export class ConfigState {
     }
     if (newSettings.panic_button_enabled === undefined) {
       newSettings.panic_button_enabled = true;
+    }
+    if (newSettings.providers && Array.isArray(newSettings.providers)) {
+      providerState.providers = newSettings.providers;
     }
     this.settings = newSettings;
     document.documentElement.setAttribute('data-theme', newSettings.theme);

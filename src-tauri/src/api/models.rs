@@ -37,7 +37,13 @@ pub struct PawchivePost {
     pub detail_fetched: Option<bool>,
     pub next: Option<String>,
     pub prev: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "favs",
+        alias = "favorites",
+        alias = "fav_count",
+        alias = "favorite_count"
+    )]
     pub favorite_count: Option<u64>,
     #[serde(default)]
     pub attachment_count: Option<u64>,
@@ -356,5 +362,33 @@ mod tests {
         .unwrap();
         assert_eq!(revision.revision_id, 42);
         assert_eq!(revision.post.id, "1");
+    }
+
+    #[test]
+    fn real_pawchive_revisions_deserializes() {
+        let json = r#"[
+            {
+                "revision_id": 19576,
+                "id": "149912585",
+                "user": "5564244",
+                "service": "patreon",
+                "title": "Links to All My Animations",
+                "content": "<p>Content</p>",
+                "embed": {},
+                "shared_file": false,
+                "added": "2026-06-10T05:00:00",
+                "published": "2026-02-04T11:29:36",
+                "edited": "2026-06-18T09:42:05",
+                "file": {},
+                "attachments": [],
+                "poll": null,
+                "captions": null,
+                "tags": "{Pack,animation,gif,mp4,nsfw}"
+            }
+        ]"#;
+        let revs: Vec<PostRevision> = serde_json::from_str(json).unwrap();
+        assert_eq!(revs.len(), 1);
+        assert_eq!(revs[0].revision_id, 19576);
+        assert_eq!(revs[0].post.id, "149912585");
     }
 }

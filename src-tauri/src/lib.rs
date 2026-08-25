@@ -1,14 +1,17 @@
 pub mod api;
+pub mod cloud;
 pub mod commands;
 pub mod config;
 pub mod db;
 pub mod downloader;
+pub mod logging;
 pub mod server;
 pub mod smart_links;
 pub mod subscriptions;
 pub mod sync;
 
 use api::pawchive::PawchiveClient;
+use api::provider_manager::ProviderManager;
 use commands::*;
 use config::settings::ConfigManager;
 use db::content::ContentRepository;
@@ -26,6 +29,7 @@ use tauri::{Listener, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::init_logging();
     let config_mgr = ConfigManager::new().expect("Failed to initialize SQLite settings");
     let settings = config_mgr.load().expect("Failed to load settings");
 
@@ -36,6 +40,7 @@ pub fn run() {
     let _ = content.set_cache_limit_mb(settings.cache_max_mb);
     let library = Arc::new(LibraryRepository::new().expect("Failed to initialize local library"));
 
+    let provider_manager = Arc::new(ProviderManager::new(settings.providers.clone()));
     let pawchive_client = Arc::new(
         PawchiveClient::new(settings.clone()).expect("Failed to initialize Pawchive HTTP client"),
     );
@@ -51,7 +56,7 @@ pub fn run() {
     );
     let subscription_manager = Arc::new(SubscriptionManager::new(
         subscription_repository,
-        pawchive_client.clone(),
+        provider_manager.clone(),
         library.clone(),
         content.clone(),
         download_manager.clone(),
@@ -109,6 +114,7 @@ pub fn run() {
 
             app.manage(AppState {
                 axum_port,
+                provider_manager: provider_manager.clone(),
                 pawchive_client: pawchive_client.clone(),
                 content: content.clone(),
                 library: library.clone(),
@@ -140,6 +146,9 @@ pub fn run() {
             show_in_folder,
             pick_folder,
             save_settings,
+            list_providers,
+            save_providers,
+            test_provider_connection,
             get_account_session,
             login_account,
             logout_account,
@@ -152,8 +161,11 @@ pub fn run() {
             fetch_announcements,
             fetch_fancards,
             fetch_creator_links,
+            fetch_similar_creators,
             fetch_post,
+            get_cached_post,
             resolve_external_post_link,
+            resolve_cloud_link,
             fetch_account_favorites,
             set_post_favorite,
             set_creator_favorite,
@@ -210,7 +222,12 @@ pub fn run() {
             commands::window_effects::set_window_effect,
             hide_to_tray,
             update_panic_key,
-            update_boss_key
+            update_boss_key,
+            log_message,
+            get_debug_log_path,
+            read_recent_logs,
+            open_logs_folder,
+            clear_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

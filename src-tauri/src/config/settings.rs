@@ -72,6 +72,8 @@ pub struct AppSettings {
     pub download_max_concurrent: u32,
     pub panic_button_enabled: bool,
     pub panic_button_shortcut: String,
+    pub providers: Vec<crate::api::provider::ProviderConfig>,
+    pub smart_merge_attachments: bool,
 }
 
 impl Default for AppSettings {
@@ -130,12 +132,15 @@ impl Default for AppSettings {
             download_max_concurrent: 3,
             panic_button_enabled: true,
             panic_button_shortcut: "H".to_string(),
+            providers: crate::api::provider_manager::ProviderManager::default_configs(),
+            smart_merge_attachments: true,
         }
     }
 }
 
 pub struct ConfigManager {
     conn: Mutex<Connection>,
+    cached: Mutex<Option<AppSettings>>,
 }
 
 impl ConfigManager {
@@ -144,6 +149,7 @@ impl ConfigManager {
 
         let manager = Self {
             conn: Mutex::new(conn),
+            cached: Mutex::new(None),
         };
         manager.initialize()?;
         Ok(manager)
@@ -170,6 +176,12 @@ impl ConfigManager {
     }
 
     pub fn load(&self) -> Result<AppSettings, String> {
+        if let Ok(guard) = self.cached.lock() {
+            if let Some(cached) = guard.as_ref() {
+                return Ok(cached.clone());
+            }
+        }
+
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut statement = conn
             .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'setting.%'")
@@ -187,6 +199,11 @@ impl ConfigManager {
         settings.session_cookie = Self::load_secret_string(PAWCHIVE_SESSION_SECRET)?;
         settings.proxy_password = Self::load_secret_string(PROXY_PASSWORD_SECRET)?;
         settings.normalize();
+
+        if let Ok(mut guard) = self.cached.lock() {
+            *guard = Some(settings.clone());
+        }
+
         Ok(settings)
     }
 
@@ -217,10 +234,20 @@ impl ConfigManager {
             )
             .map_err(|e| e.to_string())?;
         transaction.commit().map_err(|e| e.to_string())?;
+
+        if let Ok(mut guard) = self.cached.lock() {
+            *guard = Some(settings.clone());
+        }
+
         Ok(())
     }
 
     pub fn clear_session_cookie(&self) -> Result<(), String> {
+        if let Ok(mut guard) = self.cached.lock() {
+            if let Some(cached) = guard.as_mut() {
+                cached.session_cookie.clear();
+            }
+        }
         SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)
     }
 
@@ -326,6 +353,14 @@ impl AppSettings {
                 self.panic_button_enabled.to_string(),
             ),
             ("panic_button_shortcut", self.panic_button_shortcut.clone()),
+            (
+                "providers_json",
+                serde_json::to_string(&self.providers).unwrap_or_else(|_| "[]".to_string()),
+            ),
+            (
+                "smart_merge_attachments",
+                self.smart_merge_attachments.to_string(),
+            ),
         ]
     }
 
@@ -359,6 +394,33 @@ impl AppSettings {
         string!(download_post_folder_template);
         string!(download_filename_template);
         string!(download_metadata_format);
+        if let Some(value) = get("providers_json") {
+            if let Ok(mut providers) =
+                serde_json::from_str::<Vec<crate::api::provider::ProviderConfig>>(value)
+            {
+                if !providers.is_empty() {
+                    for p in &mut providers {
+                        if p.name.contains("Coomer") || p.name.contains("cum.st") {
+                            p.name = "OnlyHaven".into();
+                        }
+                        if p.id == "coomer"
+                            && (p.api_url.contains("coomer.su")
+                                || p.api_url.contains("coomer.party"))
+                        {
+                            p.api_url = "https://cum.st".into();
+                            p.name = "OnlyHaven".into();
+                            if !p.fallback_urls.iter().any(|u| u.contains("coomer.su")) {
+                                p.fallback_urls.push("https://coomer.su".into());
+                            }
+                        }
+                    }
+                    self.providers = providers;
+                }
+            }
+        }
+        if let Some(value) = get("smart_merge_attachments").and_then(|v| v.parse().ok()) {
+            self.smart_merge_attachments = value;
+        }
         if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
             if value == "Alt+X" {
                 self.panic_button_shortcut = "H".to_string();
@@ -458,6 +520,19 @@ impl AppSettings {
         }
         if !matches!(self.titlebar_style.as_str(), "auto" | "windows" | "macos") {
             self.titlebar_style = "auto".to_string();
+        }
+        if self.providers.is_empty() {
+            self.providers = crate::api::provider_manager::ProviderManager::default_configs();
+        }
+        if !self.session_cookie.is_empty() {
+            if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
+                if pawchive.session_cookie.is_empty() {
+                    pawchive.session_cookie = self.session_cookie.clone();
+                }
+                if pawchive.username.is_empty() {
+                    pawchive.username = self.pawchive_username.clone();
+                }
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { CloudFolderResult } from '$lib/types/cloud';
 import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
 import type { CreatorSubscription, SubscriptionInput } from '$lib/types/subscription';
@@ -96,8 +97,14 @@ export const apiFetchFancards = (service: string, creatorId: string) =>
 export const apiFetchCreatorLinks = (service: string, creatorId: string) =>
   invoke<CreatorProfile[]>('fetch_creator_links', { service, creatorId });
 
+export const apiFetchSimilarCreators = (service: string, creatorId: string) =>
+  invoke<CreatorProfile[]>('fetch_similar_creators', { service, creatorId });
+
 export const apiFetchPost = (service: string, creatorId: string, postId: string) =>
   invoke<PawchivePost>('fetch_post', { service, creatorId, postId });
+
+export const apiGetCachedPost = (service: string, creatorId: string, postId: string) =>
+  invoke<PawchivePost | null>('get_cached_post', { service, creatorId, postId });
 
 export const apiResolveExternalPostLink = (
   url: string,
@@ -263,5 +270,8 @@ export const apiUpdatePanicKey = (shortcut: string, enabled: boolean) =>
 
 export const apiUpdateBossKey = (shortcut: string, enabled: boolean) =>
   apiUpdatePanicKey(shortcut, enabled);
+
+export const apiResolveCloudLink = (url: string) =>
+  invoke<CloudFolderResult>('resolve_cloud_link', { url });
 
 

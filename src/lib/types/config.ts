@@ -42,4 +42,6 @@ export interface AppSettings {
   panic_button_shortcut?: string;
   boss_key_enabled?: boolean;
   boss_key_shortcut?: string;
+  providers?: import('./provider').ProviderConfig[];
+  smart_merge_attachments?: boolean;
 }

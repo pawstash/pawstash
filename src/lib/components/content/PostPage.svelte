@@ -1,5 +1,10 @@
+<script module lang="ts">
+  const globalCloudFolderCache = new Map<string, import('$lib/types/cloud').CloudFolderResult>();
+  const globalPostCloudNodes = new Map<string, import('$lib/types/pawchive').Attachment[]>();
+</script>
+
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { contentState, postCacheKey, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
@@ -8,12 +13,17 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder } from '$lib/utils/ipc';
-  import type { Attachment, Comment } from '$lib/types/pawchive';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder, apiStartDownload } from '$lib/utils/ipc';
+  import type { Attachment, Comment, PawchivePost } from '$lib/types/pawchive';
   import type { DownloadItem } from '$lib/types/download';
   import { i18n } from '$lib/i18n';
-  import { formatDate, formatBytes } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl } from '$lib/utils/media';
+  import { toast } from 'svelte-sonner';
+  import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, isAttachmentVideo, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
+  import { extractCloudLinks } from './RichContent.svelte';
+  import { apiResolveCloudLink } from '$lib/utils/ipc';
+  import { logger } from '$lib/utils/logger';
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
@@ -22,14 +32,18 @@
   import { tooltip } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
+  import SearchBar from '$lib/components/ui/SearchBar.svelte';
+  import TagList from '$lib/components/ui/TagList.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import RichContent from './RichContent.svelte';
   import PostPoll from './PostPoll.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
-  import pawchiveLogo from './pawchive-favicon.png';
+  import IconCloud from '~icons/fluent/cloud-24-regular';
+  import IconSearch from '~icons/fluent/search-24-regular';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
+  import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconCheck from '~icons/fluent/checkmark-20-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -53,6 +67,11 @@
   import IconFolderAdd from '~icons/fluent/folder-add-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
+  import IconSparkle from '~icons/fluent/sparkle-24-regular';
+  import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
+  import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
+  import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
 
   interface PostEmbed {
@@ -76,7 +95,41 @@
 
   const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
   let entry = $derived.by(() => contentState.posts[postCacheKey(service, creatorId, postId)] ?? emptyEntry);
-  let post = $derived(entry.post);
+  let rawPost = $derived(entry.post);
+
+  let postKey = $derived(providerState.getPostKey(service, creatorId, postId));
+  let postRevisions = $derived(providerState.postRevisions[postKey] || []);
+  let selectedRevId = $derived(providerState.selectedRevision[postKey] ?? null);
+  let candidateProviders = $derived(providerState.getProvidersForService(service));
+  let providerSelectOptions = $derived.by(() => {
+    if (candidateProviders.length <= 1) {
+      return candidateProviders.map((p) => ({
+        value: p.id,
+        label: formatProviderName(p.name)
+      }));
+    }
+    return [
+      { value: 'auto', label: i18n.t('post.source_auto') || 'Merged' },
+      ...candidateProviders.map((p) => ({
+        value: p.id,
+        label: formatProviderName(p.name)
+      }))
+    ];
+  });
+  let activeProviderId = $derived(
+    candidateProviders.length === 1
+      ? candidateProviders[0].id
+      : providerState.getSelectedProvider(service, creatorId, postId)
+  );
+
+  let post = $derived.by(() => {
+    if (selectedRevId !== null) {
+      const found = postRevisions.find((r) => r.revision_id === selectedRevId);
+      if (found) return ((found as any).post || found) as PawchivePost;
+    }
+    return rawPost;
+  });
+
   let postEmbed = $derived<PostEmbed | null>(
     (post?.embed && typeof post.embed === 'object' && Object.keys(post.embed).length > 0)
       ? (post.embed as PostEmbed)
@@ -92,6 +145,232 @@
   let nextPostTitle = $derived(nextPost?.title?.trim() || i18n.t('post.next'));
   
   let richContent = $derived(post?.content || post?.substring || '');
+  let postTags = $derived(parseTags(post?.tags));
+
+  let publishedDateStr = $derived(formatDate(post?.published || post?.added));
+  let editedDateStr = $derived(post?.edited ? formatDate(post.edited) : '');
+  let addedDateStr = $derived(post?.added ? formatDate(post.added) : '');
+
+  let showEdited = $derived(Boolean(
+    post?.edited &&
+    editedDateStr &&
+    editedDateStr !== publishedDateStr
+  ));
+
+  let showImported = $derived(Boolean(
+    post?.added &&
+    post?.published &&
+    addedDateStr &&
+    addedDateStr !== publishedDateStr &&
+    (!showEdited || addedDateStr !== editedDateStr)
+  ));
+
+  let revisionSelectOptions = $derived.by(() => {
+    return [
+      { value: 'latest', label: `${i18n.t('post.revision_current') || 'Latest'} [current]` },
+      ...postRevisions.map((rev, idx) => {
+        const revPost = (rev as any).post || rev;
+        const revDate = revPost.edited || revPost.added || revPost.published;
+        const providerName = (rev as any).provider_id ? ` • ${(rev as any).provider_id}` : '';
+        return {
+          value: String(rev.revision_id),
+          label: `v${rev.revision_id || postRevisions.length - idx}${providerName} (${formatDate(revDate)})`
+        };
+      })
+    ];
+  });
+
+  function onRevisionChange(val: string) {
+    if (val === 'latest') {
+      providerState.setSelectedRevision(service, creatorId, postId, null);
+    } else {
+      const revId = Number(val);
+      providerState.setSelectedRevision(service, creatorId, postId, revId);
+      const found = postRevisions.find((r) => r.revision_id === revId);
+      const provId = (found as any)?.provider_id;
+      if (provId && candidateProviders.some((p) => p.id === provId)) {
+        providerState.setSelectedProvider(service, creatorId, postId, provId);
+      }
+    }
+  }
+
+  let resolvedCloudAttachments = $state<Attachment[]>([]);
+  let cloudResolving = $state(false);
+  let cloudResolvedVersion = $state(0);
+  let activeCloudModalFolder = $state<CloudFolderResult | null>(null);
+  let activeCloudModalInitialFolderId = $state<string | null>(null);
+  let isCloudModalOpen = $state(false);
+  let cloudFolderResults = $state<Map<string, CloudFolderResult>>(new Map(globalCloudFolderCache));
+
+  function openCloudFolderModal(folderResult?: CloudFolderResult, folderId?: string | null) {
+    if (!folderResult) return;
+    activeCloudModalFolder = folderResult;
+    activeCloudModalInitialFolderId = folderId || null;
+    isCloudModalOpen = true;
+  }
+
+  async function downloadCloudSubfolder(folderResult?: CloudFolderResult, folderId?: string | null) {
+    if (!folderResult) return;
+    const targetNodes: CloudNode[] = [];
+    const queue = [folderId];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      for (const n of folderResult.nodes) {
+        if (n.parent_id === cur) {
+          if (n.is_folder) queue.push(n.id);
+          else targetNodes.push(n);
+        }
+      }
+    }
+    if (targetNodes.length === 0) {
+      targetNodes.push(...folderResult.nodes.filter((n) => !n.is_folder && (folderId ? n.parent_id === folderId : true)));
+    }
+
+    const targetPost = post || {
+      id: folderResult.title,
+      service: folderResult.provider,
+      user: 'cloud',
+      title: folderResult.title,
+      content: folderResult.url
+    };
+
+    let started = 0;
+    for (const node of targetNodes) {
+      const port = mediaPort ?? 0;
+      const streamUrl = node.stream_url?.startsWith('/cloud_stream/') && port > 0
+        ? `http://127.0.0.1:${port}${node.stream_url}`
+        : (node.download_url || '');
+      if (!streamUrl) continue;
+      try {
+        await apiStartDownload(targetPost, node.id, streamUrl, node.name);
+        started++;
+      } catch (err) {
+        console.error('Failed to queue download:', node.name, err);
+      }
+    }
+    toast.success(
+      i18n.t('feed.download_started') || 'Download started',
+      { description: `${started} ${started === 1 ? 'file' : 'files'} added to queue` }
+    );
+  }
+
+  async function handleOpenCloudFromText(url: string) {
+    let existing = cloudFolderResults.get(url) || globalCloudFolderCache.get(url);
+    if (!existing) {
+      try {
+        existing = await apiResolveCloudLink(url);
+        cloudFolderResults.set(url, existing);
+        globalCloudFolderCache.set(url, existing);
+        cloudResolvedVersion++;
+      } catch (err) {
+        console.warn('Failed to resolve cloud link from text:', url, err);
+      }
+    }
+    if (existing) {
+      openCloudFolderModal(existing, null);
+    } else {
+      void apiOpenInBrowser(url);
+    }
+  }
+
+  let lastResolvedPostKey = '';
+  $effect(() => {
+    const currentPostKey = postKey;
+    const content = post?.content || post?.substring || '';
+    let sources = content;
+    if (postEmbed?.url) sources += ' ' + postEmbed.url;
+    if (postEmbed?.html) sources += ' ' + postEmbed.html;
+    if (postEmbed?.description) sources += ' ' + postEmbed.description;
+
+    untrack(() => {
+      const cachedNodes = globalPostCloudNodes.get(currentPostKey);
+      if (cachedNodes && cachedNodes.length > 0) {
+        resolvedCloudAttachments = cachedNodes;
+        cloudResolving = false;
+        return;
+      }
+
+      const cloudUrls = extractCloudLinks(sources);
+      if (cloudUrls.length === 0) {
+        resolvedCloudAttachments = [];
+        globalPostCloudNodes.delete(currentPostKey);
+        cloudResolving = false;
+        return;
+      }
+
+      if (lastResolvedPostKey === currentPostKey && resolvedCloudAttachments.length > 0) {
+        return;
+      }
+      lastResolvedPostKey = currentPostKey;
+      cloudResolving = true;
+
+      (async () => {
+        const allCloudNodes: Attachment[] = [];
+        for (const url of cloudUrls) {
+          try {
+            let res = globalCloudFolderCache.get(url);
+            if (!res) {
+              res = await apiResolveCloudLink(url);
+              globalCloudFolderCache.set(url, res);
+              logger.info(`[Cloud] Resolved link: ${url} (${res.nodes.length} items)`);
+            }
+            cloudFolderResults.set(url, res);
+
+            const root = res.nodes.find((n) => n.is_folder && !n.parent_id);
+            const rootId = root ? root.id : null;
+
+            let topNodes = res.nodes.filter((n) => (rootId ? n.parent_id === rootId : !n.parent_id));
+            if (topNodes.length === 0) {
+              topNodes = res.nodes;
+            }
+
+            for (const node of topNodes) {
+              if (node.is_folder) {
+                const childrenCount = res.nodes.filter((n) => n.parent_id === node.id).length;
+                allCloudNodes.push({
+                  name: node.name,
+                  path: `cloud_folder:${res.provider}:${node.id}`,
+                  size: undefined,
+                  server: '',
+                  is_cloud: true,
+                  is_cloud_folder: true,
+                  cloud_provider: res.provider,
+                  cloud_node_id: node.id,
+                  cloud_folder_title: res.title,
+                  cloud_folder_result: res,
+                  cloud_child_count: childrenCount
+                } as any);
+              } else {
+                allCloudNodes.push({
+                  name: node.name,
+                  path: node.stream_url || node.download_url || `cloud:${res.provider}:${node.id}`,
+                  size: typeof node.size === 'number' && node.size > 0 ? node.size : undefined,
+                  server: '',
+                  is_cloud: true,
+                  is_cloud_folder: false,
+                  cloud_provider: res.provider,
+                  cloud_node_id: node.id,
+                  cloud_folder_title: res.title,
+                  cloud_folder_result: res
+                } as any);
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to auto-resolve cloud link for post gallery:', url, err);
+          }
+        }
+
+        if (postKey === currentPostKey) {
+          resolvedCloudAttachments = allCloudNodes;
+          if (allCloudNodes.length > 0) {
+            globalPostCloudNodes.set(currentPostKey, allCloudNodes);
+          }
+          cloudResolving = false;
+          cloudResolvedVersion++;
+        }
+      })();
+    });
+  });
 
   let media = $derived.by(() => {
     if (!post) return [];
@@ -110,11 +389,52 @@
         }
       }
     }
+    if (resolvedCloudAttachments.length > 0) {
+      for (const att of resolvedCloudAttachments) {
+        const exists = items.some(
+          (existing) => (existing.path && existing.path === att.path) || (!existing.path && existing.name === att.name)
+        );
+        if (!exists) {
+          items.push(att);
+        }
+      }
+    }
+
+    // Include completed downloaded items for this post (enables 100% offline playback)
+    const postDownloads = downloadState.downloads.filter((d) =>
+      d.service === service &&
+      d.creator_id === creatorId &&
+      d.post_id === postId &&
+      d.status === 'completed' &&
+      d.final_path
+    );
+    for (const d of postDownloads) {
+      const port = mediaPort ?? 0;
+      const encoded = d.final_path!.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : d.url;
+      const exists = items.some(
+        (existing) => (existing.path && (existing.path === streamUrl || existing.path === d.url || existing.path === d.media_id)) ||
+                      (existing.name && existing.name === d.filename)
+      );
+      if (!exists) {
+        items.push({
+          name: d.filename,
+          path: streamUrl,
+          size: d.total_bytes || d.downloaded_bytes,
+          server: '',
+          is_cloud: true,
+          is_cloud_folder: false,
+          cloud_provider: 'download'
+        } as any);
+      }
+    }
+
     return items;
   });
 
-  let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file'>('all');
+  let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud'>('all');
   let mediaSort = $state<'default' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'>('default');
+  let mediaSearchQuery = $state('');
   let viewerIndex = $state<number | null>(null);
   let viewerFiles = $state<Attachment[]>([]);
   let contentExpanded = $state(false);
@@ -155,16 +475,36 @@
     }
   });
 
-  let hasEmbed = $derived(Boolean(postEmbed && (postEmbed.url || postEmbed.subject || postEmbed.html)));
+  let isEmbedResolvedToCloud = $derived(Boolean(
+    postEmbed?.url && (
+      postEmbed.url.includes('iframely.net') ||
+      postEmbed.url.includes('iframe.ly') ||
+      postEmbed.url.includes('mega.nz') ||
+      postEmbed.url.includes('dropbox.com') ||
+      postEmbed.url.includes('pixeldrain.com')
+    ) && resolvedCloudAttachments.length > 0
+  ));
+
+  let hasEmbed = $derived(Boolean(!isEmbedResolvedToCloud && postEmbed && (postEmbed.url || postEmbed.subject || postEmbed.html)));
+  let embedMatchesSearch = $derived.by(() => {
+    const q = mediaSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const title = (postEmbed?.subject || postEmbed?.description || post?.title || '').toLowerCase();
+    return title.includes(q);
+  });
 
   let mediaCounts = $derived.by(() => {
     let videos = 0;
     let photos = 0;
     let files = 0;
+    let cloud = 0;
     for (const file of media) {
+      if ((file as any).is_cloud) {
+        cloud++;
+      }
       const url = file.path ? fileUrl(file) : (file.name || '');
-      if (isVideoUrl(url) || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(file.name || '')) videos++;
-      else if (isImageUrl(url) || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(file.name || '')) photos++;
+      if (isAttachmentVideo(file, url)) videos++;
+      else if (isAttachmentImage(file, url)) photos++;
       else files++;
     }
     if (hasEmbed) {
@@ -174,7 +514,8 @@
       all: media.length + (hasEmbed ? 1 : 0),
       video: videos,
       photo: photos,
-      file: files
+      file: files,
+      cloud
     };
   });
 
@@ -183,19 +524,24 @@
     if (mediaCounts.video > 0) count++;
     if (mediaCounts.photo > 0) count++;
     if (mediaCounts.file > 0) count++;
+    if (mediaCounts.cloud > 0) count++;
     return count;
   });
 
   let probedMediaSizes = $state<Record<string, number>>({});
   const probingMediaPaths = new Set<string>();
 
-  function attachmentDownload(file?: { path?: string }) {
-    if (!file?.path) return undefined;
+  function attachmentDownload(file?: { path?: string; name?: string; cloud_node_id?: string }) {
+    if (!file) return undefined;
     return downloadState.downloads.find((item) =>
       item.service === service &&
       item.creator_id === creatorId &&
       item.post_id === postId &&
-      item.media_id === file.path
+      (
+        (Boolean(file.path) && item.media_id === file.path) ||
+        (Boolean((file as any).cloud_node_id) && item.media_id === (file as any).cloud_node_id) ||
+        (Boolean(file.name) && item.filename === file.name)
+      )
     );
   }
 
@@ -217,14 +563,27 @@
   let filteredMedia = $derived.by(() => {
     let list = [...media];
     if (activeMediaTab === 'video') {
-      list = list.filter((file) => isVideoUrl(file.path ? fileUrl(file) : '') || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(file.name || ''));
+      list = list.filter((file) => isAttachmentVideo(file, file.path ? fileUrl(file) : ''));
     } else if (activeMediaTab === 'photo') {
-      list = list.filter((file) => isImageUrl(file.path ? fileUrl(file) : '') || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(file.name || ''));
+      list = list.filter((file) => isAttachmentImage(file, file.path ? fileUrl(file) : ''));
     } else if (activeMediaTab === 'file') {
       list = list.filter((file) => {
-        const isVid = isVideoUrl(file.path ? fileUrl(file) : '') || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(file.name || '');
-        const isImg = isImageUrl(file.path ? fileUrl(file) : '') || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(file.name || '');
+        const url = file.path ? fileUrl(file) : '';
+        const isVid = isAttachmentVideo(file, url);
+        const isImg = isAttachmentImage(file, url);
         return !isVid && !isImg;
+      });
+    } else if (activeMediaTab === 'cloud') {
+      list = list.filter((file) => (file as any).is_cloud === true);
+    }
+
+    const query = mediaSearchQuery.trim().toLowerCase();
+    if (query) {
+      list = list.filter((file) => {
+        const name = (file.name || '').toLowerCase();
+        const path = (file.path || '').toLowerCase();
+        const provider = String((file as any).cloud_provider || '').toLowerCase();
+        return name.includes(query) || path.includes(query) || provider.includes(query);
       });
     }
 
@@ -259,8 +618,8 @@
 
   function mediaViewerKind(file: Attachment, url: string): MediaViewerKind {
     const filename = `${file.name ?? ''} ${file.path ?? ''}`.toLocaleLowerCase();
-    if (isImageUrl(url)) return 'image';
-    if (isVideoUrl(url)) return 'video';
+    if (isAttachmentImage(file, url)) return 'image';
+    if (isAttachmentVideo(file, url)) return 'video';
     if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(?:$|[?#])/i.test(filename)) return 'audio';
     return 'file';
   }
@@ -274,7 +633,7 @@
 
   let viewerItems = $derived.by((): MediaViewerItem[] => viewerFiles.map((file, itemIndex) => {
     const isEmbed = file === embedAttachment || Boolean((file as any)?.html);
-    const url = file.path ? (file.path.startsWith('http') ? file.path : fileUrl(file)) : '';
+    const url = file.path ? fileUrl(file) : '';
     const job = attachmentDownload(file);
     const width = typeof file.width === 'number' && file.width > 0 ? file.width : undefined;
     const height = typeof file.height === 'number' && file.height > 0 ? file.height : undefined;
@@ -324,19 +683,146 @@
 
     viewerInitialTime = time;
 
-    const allSource = embedAttachment && !source.some((s) => s.path === embedAttachment!.path)
+    let allSource = embedAttachment && !source.some((s) => s.path === embedAttachment!.path)
       ? [embedAttachment, ...source]
-      : source;
-    const sourceItems = [post?.file, ...allSource]
+      : [...source];
+
+    if ((file as any)?.cloud_folder_result) {
+      const fRes = (file as any).cloud_folder_result as CloudFolderResult;
+      const port = mediaPort ?? 0;
+      const cloudFiles = fRes.nodes.filter((n) => !n.is_folder).map((n) => {
+        const streamUrl = n.stream_url?.startsWith('/cloud_stream/') && port > 0
+          ? `http://127.0.0.1:${port}${n.stream_url}`
+          : (n.download_url || '');
+        return {
+          name: n.name,
+          path: streamUrl || n.stream_url || n.download_url || `cloud:${fRes.provider}:${n.id}`,
+          size: n.size,
+          server: '',
+          is_cloud: true,
+          cloud_provider: fRes.provider,
+          cloud_node_id: n.id,
+          cloud_folder_title: fRes.title,
+          cloud_folder_result: fRes
+        } as Attachment;
+      });
+      for (const cf of cloudFiles) {
+        if (!allSource.some((s) => s.path === cf.path || (s.name && cf.name && s.name === cf.name))) {
+          allSource.push(cf);
+        }
+      }
+    }
+
+    const sourceItems = allSource
       .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
       .filter((item, itemIndex, list) => list.findIndex((candidate) => candidate.path === item.path) === itemIndex);
-    const nextIndex = sourceItems.findIndex((item) => item.path === file.path);
+
+    if (post?.file?.path && !sourceItems.some((s) => s.path === post?.file?.path)) {
+      sourceItems.push(post.file);
+    }
+
+    const nextIndex = sourceItems.findIndex((item) => (item.path && item.path === file.path) || (item.name && file.name && item.name === file.name));
     viewerFiles = nextIndex >= 0 ? sourceItems : [file, ...sourceItems];
     viewerIndex = nextIndex >= 0 ? nextIndex : 0;
   }
 
   let initialViewerHandled = $state(false);
   let lastHandledPostId = $state('');
+
+  function findTargetAttachment(needleStr: string): Attachment | undefined {
+    const raw = decodeURIComponent(needleStr).trim();
+    const normNeedle = raw.toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+    const needleBase = normNeedle.split('/').pop() || normNeedle;
+
+    // 1. Direct search in post attachments / media
+    const directMatch = media.find((f) => {
+      const fPath = decodeURIComponent(f.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+      const fName = (f.name || '').toLowerCase();
+      const fBase = fPath.split('/').pop() || fPath;
+      return (
+        fPath === normNeedle ||
+        fName === normNeedle ||
+        fBase === needleBase ||
+        (fName && (normNeedle.endsWith(fName) || normNeedle.includes(fName) || fName.includes(needleBase) || needleBase.includes(fName))) ||
+        (fPath && (normNeedle.endsWith(fPath) || normNeedle.includes(fPath) || fPath.includes(needleBase)))
+      );
+    });
+    if (directMatch) return directMatch;
+
+    // 2. Search across all resolved cloud folder results
+    for (const [_, res] of cloudFolderResults) {
+      const matchingNode = res.nodes.find((n) => {
+        if (n.is_folder) return false;
+        const nName = (n.name || '').toLowerCase();
+        const nPath = decodeURIComponent(n.stream_url || n.download_url || n.id || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+        const nBase = nPath.split('/').pop() || nName;
+        return (
+          n.id === raw ||
+          n.id === normNeedle ||
+          nName === normNeedle ||
+          nName === needleBase ||
+          nName.includes(needleBase) ||
+          needleBase.includes(nName) ||
+          normNeedle.includes(nName) ||
+          (nPath && (nPath === normNeedle || nPath.endsWith(needleBase) || normNeedle.endsWith(nPath)))
+        );
+      });
+
+      if (matchingNode) {
+        const port = mediaPort ?? 0;
+        const streamUrl = matchingNode.stream_url?.startsWith('/cloud_stream/') && port > 0
+          ? `http://127.0.0.1:${port}${matchingNode.stream_url}`
+          : (matchingNode.download_url || '');
+        return {
+          name: matchingNode.name,
+          path: streamUrl || matchingNode.stream_url || matchingNode.download_url || `cloud:${res.provider}:${matchingNode.id}`,
+          size: matchingNode.size,
+          server: '',
+          is_cloud: true,
+          is_cloud_folder: false,
+          cloud_provider: res.provider,
+          cloud_node_id: matchingNode.id,
+          cloud_folder_title: res.title,
+          cloud_folder_result: res,
+        } as any;
+      }
+    }
+
+    // 3. Search across completed downloaded files in downloadState (for 100% offline access)
+    const downloadedMatch = downloadState.downloads.find((d) => {
+      if (d.service !== service || d.creator_id !== creatorId || d.post_id !== postId) return false;
+      const dName = (d.filename || '').toLowerCase();
+      const dPath = (d.final_path || d.media_id || d.url || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+      const dBase = dPath.split('/').pop() || dName;
+      return (
+        d.media_id === raw ||
+        d.media_id === normNeedle ||
+        dName === normNeedle ||
+        dName === needleBase ||
+        dName.includes(needleBase) ||
+        needleBase.includes(dName) ||
+        normNeedle.includes(dName) ||
+        (dPath && (dPath === normNeedle || dPath.endsWith(needleBase) || normNeedle.endsWith(dPath)))
+      );
+    });
+
+    if (downloadedMatch && downloadedMatch.status === 'completed' && downloadedMatch.final_path) {
+      const port = mediaPort ?? 0;
+      const encoded = downloadedMatch.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : downloadedMatch.url;
+      return {
+        name: downloadedMatch.filename,
+        path: streamUrl,
+        size: downloadedMatch.total_bytes || downloadedMatch.downloaded_bytes,
+        server: '',
+        is_cloud: true,
+        is_cloud_folder: false,
+        cloud_provider: 'download'
+      } as any;
+    }
+
+    return undefined;
+  }
 
   $effect(() => {
     if (postId !== lastHandledPostId) {
@@ -346,29 +832,60 @@
   });
 
   $effect(() => {
-    if (!initialViewerHandled && (openViewer || initialMedia) && media.length > 0) {
-      initialViewerHandled = true;
+    const _ver = cloudResolvedVersion;
+    const isPostLoading = entry.loading;
+    const isCloudResolving = cloudResolving;
+    const mediaCount = media.length;
+
+    if (!initialViewerHandled && (openViewer || initialMedia)) {
+      if (isPostLoading && mediaCount === 0) {
+        return;
+      }
+
       let targetFile: Attachment | undefined;
       if (initialMedia) {
-        const needle = initialMedia.toLowerCase();
-        targetFile = media.find((f) => {
-          const path = (f.path || '').toLowerCase();
-          const name = (f.name || '').toLowerCase();
-          return (
-            path === needle ||
-            name === needle ||
-            (name && needle.endsWith(name)) ||
-            (path && needle.endsWith(path)) ||
-            (path && path.endsWith(needle)) ||
-            (needle.includes(name) && name.length > 3)
-          );
-        });
+        targetFile = findTargetAttachment(initialMedia);
       }
-      if (!targetFile) {
-        targetFile = post?.file || media[0];
+
+      // If looking for a specific media item and cloud link resolution is still ongoing, wait
+      if (initialMedia && !targetFile && (isPostLoading || isCloudResolving)) {
+        return;
       }
+
+      // Fallback: if specific item was not found but openViewer was requested, open first media item
+      if (!targetFile && openViewer && mediaCount > 0) {
+        targetFile = (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || post?.file || media[0];
+      }
+
       if (targetFile) {
+        initialViewerHandled = true;
         openMediaViewer(targetFile, media);
+      }
+    }
+  });
+
+  $effect(() => {
+    if (viewerIndex !== null && media.length > 0) {
+      const currentSelected = viewerFiles[viewerIndex];
+      const allSource = embedAttachment && !media.some((s) => s.path === embedAttachment!.path)
+        ? [embedAttachment, ...media]
+        : media;
+      const updatedSourceItems = allSource
+        .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
+        .filter((item, itemIndex, list) => list.findIndex((candidate) => candidate.path === item.path) === itemIndex);
+
+      if (post?.file?.path && !updatedSourceItems.some((s) => s.path === post?.file?.path)) {
+        updatedSourceItems.push(post.file);
+      }
+
+      if (updatedSourceItems.length !== viewerFiles.length) {
+        viewerFiles = updatedSourceItems;
+        if (currentSelected) {
+          const idx = updatedSourceItems.findIndex((item) => (item.path && item.path === currentSelected.path) || (currentSelected.name && item.name === currentSelected.name));
+          if (idx >= 0) {
+            viewerIndex = idx;
+          }
+        }
       }
     }
   });
@@ -448,7 +965,7 @@
 
   let deferredAttachments = $derived.by(() => {
     if (!post?.attachments) return [];
-    return post.attachments.filter((att) => att.deferred === true || (!att.path && att.name));
+    return post.attachments.filter((att: Attachment) => (att as any).deferred === true || (!att.path && att.name));
   });
 
   let limitWarningText = $derived.by(() => {
@@ -472,8 +989,8 @@
       return '';
     }
 
-    const videoCount = deferredAttachments.filter((f) => isVideoUrl(f.name || '') || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f.name || '')).length;
-    const photoCount = deferredAttachments.filter((f) => isImageUrl(f.name || '') || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(f.name || '')).length;
+    const videoCount = deferredAttachments.filter((f: Attachment) => isVideoUrl(f.name || '') || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f.name || '')).length;
+    const photoCount = deferredAttachments.filter((f: Attachment) => isImageUrl(f.name || '') || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(f.name || '')).length;
     const otherCount = deferredAttachments.length - videoCount - photoCount;
 
     const parts: string[] = [];
@@ -491,6 +1008,7 @@
       void contentState.loadPost(service, creatorId, postId).then(() => {
         void checkFavoriteStatus();
       });
+      void providerState.loadPostRevisions(service, creatorId, postId);
     }
   });
 
@@ -628,26 +1146,53 @@
     }
   }
 
-  function remoteFileUrl(file: { path?: string; server?: string }) {
-    const cdn = file.server || `https://${configState.settings.file_domain}`;
-    return `${cdn}/data${file.path}`;
+  function remoteFileUrl(file: Attachment) {
+    return attachmentMediaUrl(file, service);
   }
 
-  function fileUrl(file: { path?: string; server?: string }) {
-    const localDownload = downloadState.downloads.find((item) => item.service === service && item.creator_id === creatorId && item.post_id === postId && item.media_id === file.path && item.status === 'completed');
-    const localPath = localDownload?.final_path || (file.path === post?.file?.path ? String(post?.local_preview_path || '') : '');
-    if (localPath && mediaPort) {
-      const encoded = localPath.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+  function fileUrl(file: { path?: string; server?: string; name?: string; cloud_node_id?: string }) {
+    // 1. Check if the file is already downloaded to local disk
+    const localJob = attachmentDownload(file);
+    const localPath = (localJob && localJob.status === 'completed' && localJob.final_path)
+      ? localJob.final_path
+      : (file.path === post?.file?.path && post?.local_preview_path ? String(post.local_preview_path) : '');
+
+    if (localPath) {
+      if (mediaPort) {
+        const encoded = localPath.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+        return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+      }
+      return convertFileSrc(localPath);
     }
-    return remoteFileUrl(file);
+
+    // 2. Cloud streaming via local Axum proxy
+    if (file.path?.startsWith('/cloud_stream/') && mediaPort) {
+      return `http://127.0.0.1:${mediaPort}${file.path}`;
+    }
+
+    // 3. Absolute http / https URL
+    if (file.path?.startsWith('http://') || file.path?.startsWith('https://')) {
+      return file.path;
+    }
+
+    // 4. Remote Kemono / Coomer / Fanbox attachment URL
+    return remoteFileUrl(file as Attachment);
   }
 
   function probeAttachmentSize(file?: Attachment) {
     const path = file?.path;
-    if (!path || (file.size ?? 0) > 0 || probedMediaSizes[path] || probingMediaPaths.has(path)) return;
+    if (!path) return;
+    const currentSize = getEffectiveFileSize(file);
+    if (currentSize > 0 || probedMediaSizes[path] || probingMediaPaths.has(path)) return;
+
+    const url = path.startsWith('http://') || path.startsWith('https://')
+      ? path
+      : remoteFileUrl(file);
+
+    if (!url || !url.startsWith('http')) return;
     probingMediaPaths.add(path);
-    void apiProbeDownloadSize(remoteFileUrl(file))
+
+    void apiProbeDownloadSize(url)
       .then((size) => {
         if (size && size > 0) probedMediaSizes = { ...probedMediaSizes, [path]: size };
       })
@@ -656,8 +1201,10 @@
 
   $effect(() => {
     if (!post) return;
-    probeAttachmentSize(post.file);
-    for (const file of post.attachments ?? []) probeAttachmentSize(file);
+    if (post.file) probeAttachmentSize(post.file);
+    for (const file of media) {
+      probeAttachmentSize(file);
+    }
   });
 
 
@@ -1062,8 +1609,66 @@
     {#if post}
       <header class="detail-header">
         <div class="min-w-0 flex-1">
-          <h1>{post.title || i18n.t('feed.untitled')}</h1>
-          <p class="post-date">{formatDate(post.published || post.added)}</p>
+          <h1>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
+          <div class="post-date post-meta-row flex items-center flex-wrap gap-2 mt-2 min-h-[38px] text-sm text-[var(--fg-muted)]">
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-[var(--fg-subtle)]">{i18n.t('post.published_at')}:</span>
+              <strong class="font-semibold text-[var(--fg-default)]">{publishedDateStr}</strong>
+            </div>
+
+            {#if showEdited}
+              <span class="text-[var(--fg-subtle)]">·</span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at') || 'Edited'}:</span>
+                <strong class="font-medium text-[var(--fg-default)]">{editedDateStr}</strong>
+              </div>
+            {/if}
+
+            {#if showImported}
+              <span class="text-[var(--fg-subtle)]">·</span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[var(--fg-subtle)]">{i18n.t('post.imported_at')}:</span>
+                <strong class="font-medium text-[var(--fg-default)]">{addedDateStr}</strong>
+              </div>
+            {/if}
+
+            {#if candidateProviders.length > 0}
+              <span class="text-[var(--fg-subtle)]">·</span>
+              <div class="inline-flex items-center shrink-0">
+                <Select
+                  variant="ghost"
+                  disabled={candidateProviders.length === 1}
+                  options={providerSelectOptions}
+                  value={activeProviderId}
+                  onchange={(val) => providerState.setSelectedProvider(service, creatorId, postId, val)}
+                />
+              </div>
+            {/if}
+
+            {#if postRevisions.length > 0}
+              <span class="text-[var(--fg-subtle)]">·</span>
+              <div class="inline-flex items-center shrink-0">
+                <Select
+                  variant="ghost"
+                  options={revisionSelectOptions}
+                  value={selectedRevId !== null ? String(selectedRevId) : 'latest'}
+                  onchange={onRevisionChange}
+                />
+              </div>
+            {/if}
+          </div>
+
+          {#if postTags.length > 0}
+            <div class="post-tags-row mt-2">
+              <TagList
+                tags={postTags}
+                maxVisible={16}
+                onclick={(_tag) => {
+                  navigationState.openCreator(service, creatorId);
+                }}
+              />
+            </div>
+          {/if}
         </div>
       </header>
 
@@ -1106,38 +1711,55 @@
                     <CountBadge count={mediaCounts.file} />
                   </Button>
                 {/if}
+                {#if mediaCounts.cloud > 0}
+                  <Button variant={activeMediaTab === 'cloud' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'cloud'}>
+                    <IconCloud class="w-[16px] h-[16px]" />
+                    <span>{i18n.t('post.tab_cloud') || 'Cloud Files'}</span>
+                    <CountBadge count={mediaCounts.cloud} />
+                  </Button>
+                {/if}
               </nav>
             {/if}
 
-            {#if media.length > 1}
-              <div class="media-sort-selector">
-                <Select
-                  options={[
-                    { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
-                    { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') || 'Name (A-Z)' },
-                    { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') || 'Name (Z-A)' },
-                    { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') || 'Size (Largest)' },
-                    { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') || 'Size (Smallest)' }
-                  ]}
-                  value={mediaSort}
-                  onchange={(val) => mediaSort = val as any}
-                  variant="ghost"
-                />
-              </div>
-            {/if}
+            <div class="media-controls-actions">
+              {#if media.length >= 20 || mediaSearchQuery}
+                <div class="media-search-wrapper">
+                  <SearchBar
+                    bind:value={mediaSearchQuery}
+                    placeholder={i18n.t('post.search_media') || 'Search media...'}
+                    expandable={true}
+                  />
+                </div>
+              {/if}
+
+              {#if media.length > 1}
+                <div class="media-sort-selector">
+                  <Select
+                    options={[
+                      { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
+                      { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') || 'Name (A-Z)' },
+                      { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') || 'Name (Z-A)' },
+                      { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') || 'Size (Largest)' },
+                      { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') || 'Size (Smallest)' }
+                    ]}
+                    value={mediaSort}
+                    onchange={(val) => mediaSort = val as any}
+                    variant="ghost"
+                  />
+                </div>
+              {/if}
+            </div>
           </div>
 
-          {#if filteredMedia.length > 0 || (hasEmbed && (activeMediaTab === 'all' || activeMediaTab === 'video'))}
-            <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
-              <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
-                {#if postEmbed && (activeMediaTab === 'all' || activeMediaTab === 'video')}
+          {#if filteredMedia.length > 0 || (hasEmbed && (activeMediaTab === 'all' || activeMediaTab === 'video') && embedMatchesSearch)}
+            <div class="media-gallery-wrapper">
+              <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
+                <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
+                {#if postEmbed && !isEmbedResolvedToCloud && (activeMediaTab === 'all' || activeMediaTab === 'video') && embedMatchesSearch}
                   <div class="media-item is-embed-item">
                     <div class="media-header">
-                      <span class="media-embed-tag">
-                        <IconGlobe class="w-[12px] h-[12px]" />
-                        <span>{postEmbed.provider || postEmbed.provider_url || 'Embed'}</span>
-                      </span>
                       <span class="media-filename">{postEmbed.subject || postEmbed.description || post.title}</span>
+                      <span class="cloud-source-badge">{postEmbed.provider || postEmbed.provider_url || 'Embed'}</span>
                     </div>
 
                     {#if postEmbed.html}
@@ -1176,48 +1798,101 @@
                     {/if}
 
                     {#if postEmbed.url}
-                      <Button
-                        variant="ghost"
-                        onclick={() => postEmbed?.url && void apiOpenInBrowser(postEmbed.url)}
-                        class="media-download-btn is-embed-btn"
-                        title={i18n.t('post.open_link')}
-                      >
-                        <span class="attachment-button-state">
-                          <IconOpen class="w-[16px] h-[16px]" />
-                          <span>{i18n.t('post.open_link')}</span>
-                        </span>
-                      </Button>
+                      <div class="media-download-group">
+                        <Button
+                          variant="ghost"
+                          onclick={() => postEmbed?.url && void apiOpenInBrowser(postEmbed.url)}
+                          class="media-download-btn is-embed-btn"
+                          title={i18n.t('post.open_link')}
+                        >
+                          <span class="attachment-button-state">
+                            <IconOpen class="w-[16px] h-[16px]" />
+                            <span>{i18n.t('post.open_link')}</span>
+                          </span>
+                        </Button>
+                      </div>
                     {/if}
                   </div>
                 {/if}
 
                 {#each filteredMedia as file, index}
+                  {@const isCloudFolder = (file as any)?.is_cloud_folder === true}
                   {@const isDeferred = file?.deferred === true || (!file?.path && Boolean(file?.name))}
                   {@const url = file?.path ? fileUrl(file) : ''}
-                  <div class="media-item" class:is-deferred={isDeferred}>
-                    {#if isDeferred}
+                  {@const isCloud = (file as any)?.is_cloud === true}
+                  <div class="media-item" class:is-deferred={isDeferred} class:is-folder-item={isCloudFolder}>
+                    {#if isCloudFolder}
+                      {@const fRes = (file as any).cloud_folder_result}
+                      {@const fNodeId = (file as any).cloud_node_id}
+                      {@const fChildCount = (file as any).cloud_child_count || 0}
+                      <div class="media-header">
+                        <span class="media-filename">{file?.name || 'Folder'}</span>
+                        <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {#if fChildCount > 0}
+                          <span class="media-filesize">({fChildCount} items)</span>
+                        {/if}
+                      </div>
+                      <button
+                        type="button"
+                        class="file-placeholder media-open-surface cursor-pointer hover:bg-[var(--bg-card-hover)] transition-colors"
+                        onclick={() => openCloudFolderModal(fRes, fNodeId)}
+                        aria-label="Open folder {file?.name}"
+                      >
+                        <IconFolder class="placeholder-icon text-[var(--accent)]" />
+                        <p class="placeholder-text font-medium">{file?.name}</p>
+                      </button>
+                      <div class="media-download-group">
+                        <Button
+                          variant="ghost"
+                          class="media-download-btn"
+                          onclick={() => openCloudFolderModal(fRes, fNodeId)}
+                          title={i18n.t('post.browse_folder') || 'Browse Folder'}
+                        >
+                          <span class="attachment-button-state">
+                            <IconFolder class="w-[16px] h-[16px]" />
+                            <span>{i18n.t('post.browse_folder') || 'Browse Folder'}</span>
+                          </span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          class="media-action-icon-btn"
+                          onclick={() => downloadCloudSubfolder(fRes, fNodeId)}
+                          tooltip={i18n.t('post.download') || 'Download'}
+                          aria-label={i18n.t('post.download') || 'Download'}
+                        >
+                          <IconDownload class="w-[18px] h-[18px]" />
+                        </Button>
+                      </div>
+                    {:else if isDeferred}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
+                        {#if isCloud}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {/if}
                       </div>
                       <div class="file-placeholder media-open-surface is-deferred-placeholder" title={i18n.t('post.file_not_saved_desc')}>
                         <IconWarning class="placeholder-icon text-red-500" />
                         <p class="placeholder-text text-red-400">{i18n.t('post.file_not_saved')}</p>
                       </div>
-                    {:else if isVideoUrl(url) || isImageUrl(url)}
+                    {:else if isAttachmentVideo(file, url) || isAttachmentImage(file, url)}
+                      {@const isVid = isAttachmentVideo(file, url)}
                       {@const effSize = getEffectiveFileSize(file)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
+                        {#if isCloud}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {/if}
                         {#if effSize > 0}
                           <span class="media-filesize">({formatBytes(effSize)})</span>
                         {/if}
                       </div>
-                      {#if isVideoUrl(url) && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
+                      {#if isVid && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
                         <div class="video-placeholder">
                           <IconVideoOff class="placeholder-icon" />
                           <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
                         </div>
                       {:else}
-                        {#if isVideoUrl(url)}
+                        {#if isVid}
                           <!-- svelte-ignore a11y_media_has_caption -->
                           <video
                             src={url}
@@ -1253,6 +1928,9 @@
                       {@const sizeStr = effSize > 0 ? formatBytes(effSize) : ''}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
+                        {#if isCloud}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {/if}
                         {#if effSize > 0}
                           <span class="media-filesize">({formatBytes(effSize)})</span>
                         {/if}
@@ -1267,6 +1945,7 @@
                 {/each}
               </section>
             </div>
+
             {#if isGalleryOverflowing && !galleryExpanded}
               <div class="gallery-fade-overlay">
                 <Button variant="ghost" onclick={() => galleryExpanded = true} class="gallery-expand-btn">
@@ -1282,6 +1961,13 @@
                 </Button>
               </div>
             {/if}
+          </div>
+          {:else if mediaSearchQuery.trim()}
+            <div class="media-search-empty">
+              <IconSearch class="media-search-empty-icon" />
+              <p class="media-search-empty-title">{i18n.t('post.no_media_found') || 'No media found'}</p>
+              <p class="media-search-empty-desc">{i18n.t('post.no_media_found_desc') || 'No attachments match your search query.'}</p>
+            </div>
           {/if}
         </div>
       {/if}
@@ -1290,7 +1976,7 @@
         <section class="post-content">
           <div class="html-content-container" class:is-collapsed={isOverflowing && !contentExpanded}>
             <div class="html-content" bind:clientHeight={contentHeight}>
-              <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} />
+              <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} onopencloud={handleOpenCloudFromText} />
             </div>
           </div>
 
@@ -1354,13 +2040,13 @@
           <Button
             variant="ghost"
             onclick={() => {
-              const url = `https://${configState.settings.api_domain}/${service}/user/${creatorId}/post/${postId}`;
+              const url = postPageUrl(service, creatorId, postId);
               void apiOpenInBrowser(url).catch((err) => console.warn('Failed to open post URL in browser:', err));
             }}
             class="post-footer-action"
             title={i18n.t('post.open_in_browser')}
           >
-            <img src={pawchiveLogo} alt="" class="pawchive-action-icon" />
+            <IconOpen class="w-[18px] h-[18px]" />
             <span>{i18n.t('post.open_in_browser')}</span>
           </Button>
         </div>
@@ -1505,6 +2191,14 @@
   />
 {/if}
 
+<CloudFolderModal
+  folder={activeCloudModalFolder}
+  initialFolderId={activeCloudModalInitialFolderId}
+  post={post}
+  open={isCloudModalOpen}
+  onclose={() => isCloudModalOpen = false}
+/>
+
 <style>
   .post-content-wrapper {
     position: relative;
@@ -1636,6 +2330,49 @@
     flex-shrink: 0;
   }
 
+  .media-controls-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .media-search-wrapper {
+    display: flex;
+    align-items: center;
+  }
+
+  .media-search-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 56px 20px;
+    text-align: center;
+    gap: 6px;
+    color: var(--text-secondary);
+  }
+
+  .media-search-empty :global(.media-search-empty-icon) {
+    width: 44px;
+    height: 44px;
+    opacity: 0.35;
+    margin-bottom: 4px;
+  }
+
+  .media-search-empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  .media-search-empty-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
   .media-gallery {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
@@ -1645,19 +2382,6 @@
     padding: 16px 0;
   }
   
-  .media-embed-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    border-radius: var(--radius-full, 9999px);
-    background: var(--accent-glow, rgba(255, 255, 255, 0.1));
-    color: var(--accent-primary, #fff);
-    font-size: 11px;
-    font-weight: 600;
-    flex-shrink: 0;
-  }
-
   .media-embed-player {
     position: relative;
     width: 100%;
@@ -1668,6 +2392,7 @@
     justify-content: center;
     align-items: center;
     max-height: 520px;
+    border: var(--border-width) solid var(--border-color, rgba(255, 255, 255, 0.08));
   }
 
   .media-embed-player :global(iframe) {
@@ -1765,6 +2490,18 @@
     opacity: 0.55;
     flex-shrink: 0;
     white-space: nowrap;
+  }
+
+  .cloud-source-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg-default);
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    text-transform: uppercase;
   }
 
   .media-item img {
@@ -1959,8 +2696,12 @@
     position: relative;
   }
 
-  .media-gallery-container {
+  .media-gallery-wrapper {
     position: relative;
+    width: 100%;
+  }
+
+  .media-gallery-container {
     width: 100%;
     transition: max-height var(--duration-normal) var(--ease-expo);
   }
@@ -2455,14 +3196,6 @@
   .post-footer-toolbar :global(.btn svg) {
     width: 18px;
     height: 18px;
-  }
-
-  .pawchive-action-icon {
-    width: 18px;
-    height: 18px;
-    flex: 0 0 18px;
-    object-fit: contain;
-    filter: brightness(0) invert(1);
   }
 
   .is-deferred-placeholder {

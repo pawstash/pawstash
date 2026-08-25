@@ -2,7 +2,6 @@
   import type { Snippet } from 'svelte';
   import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
   import { portal } from '$lib/actions/portal';
-  import { scrollable } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
   import IconFilter from '~icons/fluent/filter-24-regular';
 
@@ -157,9 +156,8 @@
   {#if open}
     <div
       use:portal={'body'}
-      use:scrollable
       bind:this={dropdownEl}
-      class="popover-menu-dropdown unified-filter-menu popover-portal {menuClass}"
+      class="popover-menu-dropdown floating-surface popover-portal {menuClass || 'unified-filter-menu'}"
       style:--popover-menu-width={width}
       style="position: fixed; visibility: hidden; z-index: 10000;"
       role="menu"
@@ -206,15 +204,18 @@
 
   :global(.popover-menu-dropdown.popover-portal) {
     position: fixed;
-    width: var(--popover-menu-width, min(330px, calc(100vw - 32px)));
+    width: var(--popover-menu-width, max-content);
+    min-width: min(220px, calc(100vw - 32px));
+    max-width: min(420px, calc(100vw - 32px));
     max-height: min(600px, calc(100vh - 100px));
-    padding: 10px;
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-xl);
-    background: var(--bg-dropdown);
-    box-shadow: 0 18px 55px rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    padding: var(--floating-padding);
+    border: var(--floating-border);
+    border-radius: var(--floating-radius);
+    background: var(--floating-bg);
+    box-shadow: var(--floating-shadow);
+    backdrop-filter: var(--floating-backdrop);
+    -webkit-backdrop-filter: var(--floating-backdrop);
+    overflow-x: hidden !important;
     box-sizing: border-box;
     animation: popoverMenuIn 0.18s var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }

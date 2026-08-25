@@ -115,16 +115,13 @@ impl LibraryRepository {
     }
 
     pub fn rename_stash(&self, id: &str, name: &str) -> Result<bool, String> {
-        if id == INBOX_COLLECTION_ID {
-            return Err("The Inbox collection cannot be renamed".into());
-        }
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 100 {
             return Err("Stash name must contain between 1 and 100 characters".into());
         }
         let c = self.connection.lock().map_err(|e| e.to_string())?;
         c.execute(
-            "UPDATE collections SET name=?2 WHERE id=?1 AND kind='stash' AND is_system=0",
+            "UPDATE collections SET name=?2 WHERE id=?1",
             params![id, name],
         )
         .map(|n| n > 0)

@@ -1,5 +1,5 @@
 use crate::api::models::{Attachment, PawchivePost};
-use crate::api::pawchive::PawchiveClient;
+use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
 use crate::db::content::ContentRepository;
 use crate::db::library::LibraryRepository;
@@ -12,7 +12,7 @@ use tauri::Emitter;
 
 pub struct SubscriptionManager {
     repository: Arc<SubscriptionRepository>,
-    client: Arc<PawchiveClient>,
+    client: Arc<ProviderManager>,
     library: Arc<LibraryRepository>,
     content: Arc<ContentRepository>,
     downloads: Arc<DownloadManager>,
@@ -23,7 +23,7 @@ pub struct SubscriptionManager {
 impl SubscriptionManager {
     pub fn new(
         repository: Arc<SubscriptionRepository>,
-        client: Arc<PawchiveClient>,
+        client: Arc<ProviderManager>,
         library: Arc<LibraryRepository>,
         content: Arc<ContentRepository>,
         downloads: Arc<DownloadManager>,
@@ -122,11 +122,11 @@ impl SubscriptionManager {
         for page in 0..max_pages {
             let posts = self
                 .client
-                .fetch_creator_posts(
+                .fetch_posts(
                     &subscription.service,
                     &subscription.creator_id,
-                    None,
                     page * 50,
+                    None,
                 )
                 .await?;
             if posts.is_empty() {
@@ -144,7 +144,8 @@ impl SubscriptionManager {
                     self.library
                         .save_post(post, Some(&subscription.destination_collection_id))?;
                     if subscription.auto_download {
-                        self.enqueue_media(post, &subscription.download_scope, &settings);
+                        self.enqueue_media(post, &subscription.download_scope, &settings)
+                            .await;
                     }
                 }
             }
@@ -160,7 +161,12 @@ impl SubscriptionManager {
         format!("{}:{}:{}", post.service, post.user, post.id)
     }
 
-    fn enqueue_media(self: &Arc<Self>, post: &PawchivePost, scope: &str, settings: &AppSettings) {
+    async fn enqueue_media(
+        self: &Arc<Self>,
+        post: &PawchivePost,
+        scope: &str,
+        _settings: &AppSettings,
+    ) {
         let mut files: Vec<&Attachment> = Vec::new();
         if let Some(file) = post.file.as_ref().filter(|file| file.path.is_some()) {
             files.push(file);
@@ -178,16 +184,10 @@ impl SubscriptionManager {
             let Some(path) = file.path.as_deref() else {
                 continue;
             };
-            let base = file.server.clone().unwrap_or_else(|| {
-                if settings.file_domain.starts_with("http://")
-                    || settings.file_domain.starts_with("https://")
-                {
-                    settings.file_domain.clone()
-                } else {
-                    format!("https://{}", settings.file_domain)
-                }
-            });
-            let url = format!("{}/data{}", base.trim_end_matches('/'), path);
+            let url = self
+                .client
+                .resolve_media_url(&post.service, path, file.server.as_deref(), None)
+                .await;
             let filename = file
                 .name
                 .clone()

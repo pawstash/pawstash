@@ -127,6 +127,70 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
+    if (host_matches(&host, "cum.st")
+        || host_matches(&host, "coomer.su")
+        || host_matches(&host, "coomer.party")
+        || host_matches(&host, "kemono.su")
+        || host_matches(&host, "kemono.party")
+        || host_matches(&host, "pawchive.pw")
+        || host_matches(&host, "pawchive.st"))
+        && segments.len() >= 5
+        && matches!(segments[1], "user" | "server" | "channel")
+        && segments[3] == "post"
+    {
+        let service = clean_segment(segments[0])?;
+        let creator_id = clean_segment(segments[2])?;
+        let post_id = clean_segment(segments[4])?;
+        return Some(ExternalPostLink {
+            service,
+            post_id,
+            creator_hint: Some(creator_id),
+        });
+    }
+
+    if (host_matches(&host, "discord.com") || host_matches(&host, "discordapp.com"))
+        && segments.len() >= 4
+        && segments[0] == "channels"
+    {
+        let server_id = clean_segment(segments[1]);
+        let post_id = clean_segment(segments[3])?;
+        return Some(ExternalPostLink {
+            service: "discord".into(),
+            post_id,
+            creator_hint: server_id,
+        });
+    }
+
+    if host_matches(&host, "onlyfans.com") {
+        let post_id = segment_after(&segments, "posts")
+            .or_else(|| segments.first().and_then(|s| numeric_suffix(s)))?;
+        return Some(ExternalPostLink {
+            service: "onlyfans".into(),
+            post_id,
+            creator_hint: None,
+        });
+    }
+
+    if host_matches(&host, "fansly.com") {
+        let post_id =
+            segment_after(&segments, "post").or_else(|| segment_after(&segments, "posts"))?;
+        return Some(ExternalPostLink {
+            service: "fansly".into(),
+            post_id,
+            creator_hint: None,
+        });
+    }
+
+    if host_matches(&host, "candfans.jp") {
+        let post_id =
+            segment_after(&segments, "posts").or_else(|| segment_after(&segments, "post"))?;
+        return Some(ExternalPostLink {
+            service: "candfans".into(),
+            post_id,
+            creator_hint: segments.first().and_then(|s| clean_segment(s)),
+        });
+    }
+
     None
 }
 
@@ -139,7 +203,7 @@ pub fn parse_pawchive_post_url(
         .path_segments()?
         .filter(|segment| !segment.is_empty())
         .collect();
-    if segments.len() < 5 || segments[1] != "user" || segments[3] != "post" {
+    if segments.len() < 5 || !matches!(segments[1], "user" | "server" | "channel") || segments[3] != "post" {
         return None;
     }
     let service = clean_segment(segments[0])?;

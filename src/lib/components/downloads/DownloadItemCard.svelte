@@ -5,7 +5,7 @@
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
-  import { tooltip } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { apiOpenDownloadFile, apiShowInFolder } from '$lib/utils/ipc';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
@@ -120,7 +120,7 @@
       <PopoverMenu
         bind:open={playMenuOpen}
         align="left"
-        width="220px"
+        menuClass="download-play-popover"
       >
         {#snippet trigger({ toggle })}
           <button
@@ -140,6 +140,7 @@
               <button
                 type="button"
                 class="download-play-menu-item"
+                use:ripple
                 onclick={(e) => { e.stopPropagation(); close(); onopen?.(true); }}
               >
                 <IconDocument class="download-play-menu-icon" />
@@ -152,6 +153,7 @@
             <button
               type="button"
               class="download-play-menu-item"
+              use:ripple
               onclick={(e) => { e.stopPropagation(); close(); void openFileExternally(); }}
             >
               <IconOpen class="download-play-menu-icon" />
@@ -163,6 +165,7 @@
             <button
               type="button"
               class="download-play-menu-item"
+              use:ripple
               onclick={(e) => { e.stopPropagation(); close(); void showFileInFolder(); }}
             >
               <IconFolder class="download-play-menu-icon" />
@@ -254,52 +257,54 @@
   .download-play-menu {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 4px;
+    gap: var(--floating-gap);
+    padding: 0;
   }
   .download-play-menu-item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--floating-item-gap);
     width: 100%;
-    padding: 8px 10px;
+    padding: 6px var(--floating-item-px);
     border: none;
-    border-radius: var(--radius-sm, 6px);
+    border-radius: var(--floating-item-radius) !important;
     background: transparent;
-    color: var(--text-primary, #ffffff);
+    color: var(--text-primary);
     text-align: left;
     cursor: pointer;
-    transition: background 150ms ease, transform 100ms ease;
+    box-sizing: border-box;
+    transition: background var(--duration-fast) var(--ease-expo);
   }
   .download-play-menu-item:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
   }
   .download-play-menu-item:active {
-    background: rgba(255, 255, 255, 0.14);
-    transform: scale(0.99);
+    background: rgba(255, 255, 255, 0.1);
   }
   :global(.download-play-menu-icon) {
-    width: 18px !important;
-    height: 18px !important;
+    width: var(--floating-item-icon-size) !important;
+    height: var(--floating-item-icon-size) !important;
     flex-shrink: 0;
-    color: var(--accent-primary, #a855f7);
+    color: var(--accent);
   }
   .download-play-menu-text {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
     min-width: 0;
   }
   .download-play-menu-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #ffffff);
-    line-height: 1.25;
+    font-size: var(--floating-card-title-size, 13px);
+    font-weight: var(--floating-card-title-weight, 600);
+    color: var(--text-primary);
+    line-height: var(--floating-card-title-line-height, 1.25);
+    white-space: nowrap;
   }
   .download-play-menu-desc {
-    font-size: 11px;
-    font-weight: 400;
-    color: var(--text-secondary, rgba(255, 255, 255, 0.6));
-    line-height: 1.2;
+    font-size: var(--floating-card-desc-size, 11px);
+    font-weight: var(--floating-card-desc-weight, 400);
+    color: var(--floating-card-desc-color, var(--text-muted));
+    line-height: var(--floating-card-desc-line-height, 1.25);
+    white-space: nowrap;
   }
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, type Snippet } from 'svelte';
   import { OverlayScrollbars } from 'overlayscrollbars';
   import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
   import { portal } from '$lib/actions/portal';
@@ -32,6 +32,9 @@
     closeOnChange?: boolean;
     iconOnly?: boolean;
     ariaLabel?: string;
+    disabled?: boolean;
+    align?: 'left' | 'right';
+    trigger?: Snippet<[{ toggle: () => void; open: boolean; selectedLabel: string }]>;
   }
 
   let {
@@ -49,12 +52,15 @@
     multi = false,
     closeOnChange,
     iconOnly = false,
-    ariaLabel
+    ariaLabel,
+    disabled = false,
+    align = 'left',
+    trigger
   }: Props = $props();
 
   let isOpen = $state(false);
   let containerEl = $state<HTMLDivElement | null>(null);
-  let triggerEl = $state<HTMLButtonElement | null>(null);
+  let triggerEl = $state<HTMLButtonElement | HTMLDivElement | null>(null);
   let dropdownEl = $state<HTMLDivElement | null>(null);
 
   // In-place Creation state
@@ -97,7 +103,7 @@
     dropdownEl.style.maxWidth = `min(${Math.max(targetWidth, 340)}px, calc(100vw - 24px))`;
 
     const { x, y } = await computePosition(triggerEl, dropdownEl, {
-      placement: 'bottom-start',
+      placement: align === 'right' ? 'bottom-end' : 'bottom-start',
       strategy: 'fixed',
       middleware: [
         offset(6),
@@ -181,11 +187,9 @@
       await onCreate(newOptionName.trim());
       newOptionName = '';
       isCreating = false;
-      if (!multi) {
-        isOpen = false;
-      }
-    } catch (err) {
-      console.error(err);
+      isOpen = false;
+    } catch (e) {
+      console.error('Failed to create item in Select:', e);
     } finally {
       creatingPending = false;
     }
@@ -194,6 +198,7 @@
   function startCreating(e: MouseEvent) {
     e.stopPropagation();
     isCreating = true;
+    newOptionName = '';
     tick().then(() => {
       createInputEl?.focus();
       void updatePosition();
@@ -240,42 +245,55 @@
   class="select-root {extraClass}"
   class:is-open={isOpen}
   class:is-active={selectedValues ? selectedValues.length > 0 : Boolean(value)}
+  class:is-disabled={disabled}
 >
-  <button
-    bind:this={triggerEl}
-    type="button"
-    use:ripple
-    onclick={toggle}
-    class="select-trigger variant-{effectiveVariant}"
-    class:is-open={isOpen}
-    class:has-selected={selectedValues ? selectedValues.length > 0 : Boolean(value)}
-    class:icon-only={iconOnly}
-    aria-haspopup="listbox"
-    aria-expanded={isOpen}
-    aria-label={ariaLabel || selectedLabel}
-    title={ariaLabel || selectedLabel}
-    {style}
-  >
-    {#if iconOnly}
-      {#if icon}
-        {@const IconComp = icon}
-        <IconComp class="w-[20px] h-[20px]" />
+  {#if trigger}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div bind:this={triggerEl} class="select-custom-trigger" onclick={(e) => e.stopPropagation()}>
+      {@render trigger({ toggle, open: isOpen, selectedLabel })}
+    </div>
+  {:else}
+    <button
+      bind:this={triggerEl}
+      type="button"
+      use:ripple
+      onclick={toggle}
+      disabled={disabled}
+      class="select-trigger variant-{effectiveVariant}"
+      class:is-open={isOpen}
+      class:is-disabled={disabled}
+      class:has-selected={selectedValues ? selectedValues.length > 0 : Boolean(value)}
+      class:icon-only={iconOnly}
+      aria-haspopup="listbox"
+      aria-expanded={isOpen}
+      aria-label={ariaLabel || selectedLabel}
+      title={ariaLabel || selectedLabel}
+      {style}
+    >
+      {#if iconOnly}
+        {#if icon}
+          {@const IconComp = icon}
+          <IconComp class="w-[20px] h-[20px]" />
+        {:else if !disabled}
+          <IconChevronDown class="w-[20px] h-[20px]" />
+        {/if}
       {:else}
-        <IconChevronDown class="w-[20px] h-[20px]" />
+        {#if icon}
+          {@const IconComp = icon}
+          <span class="trigger-icon">
+            <IconComp class="w-[16px] h-[16px]" />
+          </span>
+        {/if}
+        <span class="trigger-label">{selectedLabel}</span>
+        {#if !disabled}
+          <span class="trigger-chevron" class:flipped={isOpen}>
+            <IconChevronDown />
+          </span>
+        {/if}
       {/if}
-    {:else}
-      {#if icon}
-        {@const IconComp = icon}
-        <span class="trigger-icon">
-          <IconComp class="w-[16px] h-[16px]" />
-        </span>
-      {/if}
-      <span class="trigger-label">{selectedLabel}</span>
-      <span class="trigger-chevron" class:flipped={isOpen}>
-        <IconChevronDown />
-      </span>
-    {/if}
-  </button>
+    </button>
+  {/if}
 
   {#if isOpen}
     <div
@@ -382,6 +400,14 @@
     min-width: 0;
     box-sizing: border-box;
     flex-shrink: 0;
+  }
+
+  .select-custom-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
   }
 
   .select-trigger {
@@ -491,12 +517,12 @@
     left: 0;
     z-index: 99999;
     visibility: hidden;
-    background: var(--bg-dropdown);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-lg, 14px);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    background: var(--floating-bg);
+    border: var(--floating-border);
+    border-radius: var(--floating-radius, 18px);
+    box-shadow: var(--floating-shadow);
+    backdrop-filter: var(--floating-backdrop);
+    -webkit-backdrop-filter: var(--floating-backdrop);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -523,10 +549,10 @@
   .select-options-list {
     display: flex;
     flex-direction: column;
-    padding: 6px;
+    padding: var(--floating-padding, 6px);
     width: 100%;
     box-sizing: border-box;
-    gap: 2px;
+    gap: var(--floating-gap, 2px);
   }
 
   .select-empty-msg {
@@ -540,15 +566,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--floating-item-gap, 10px);
     width: 100%;
-    height: 38px;
-    padding: 0 12px;
+    height: var(--floating-item-height, 36px);
+    padding: 0 var(--floating-item-px, 12px);
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--floating-item-radius, 12px);
     color: var(--text-secondary);
-    font-size: 13.5px;
+    font-size: var(--floating-item-font-size, 13.5px);
     font-family: var(--font-sans);
     cursor: pointer;
     text-align: left;
@@ -560,7 +586,7 @@
   }
 
   .select-option:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
   }
 
@@ -589,8 +615,8 @@
 
   /* Footer Creation */
   .select-footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 6px;
+    border-top: 1px solid var(--floating-divider-color, rgba(255, 255, 255, 0.035));
+    padding: var(--floating-padding, 6px);
     box-sizing: border-box;
     width: 100%;
     flex-shrink: 0;
@@ -600,11 +626,11 @@
   .select-create-inline {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--floating-item-gap, 10px);
     width: 100%;
-    height: 38px;
-    padding: 0 12px;
-    border-radius: 8px;
+    height: var(--floating-item-height, 36px);
+    padding: 0 var(--floating-item-px, 12px);
+    border-radius: var(--floating-item-radius, 12px);
     background: transparent;
     border: none;
     box-sizing: border-box;
@@ -614,7 +640,7 @@
 
   .select-create-trigger {
     color: var(--text-secondary);
-    font-size: 13.5px;
+    font-size: var(--floating-item-font-size, 13.5px);
     font-family: var(--font-sans);
     cursor: pointer;
     text-align: left;
@@ -622,7 +648,7 @@
   }
 
   .select-create-trigger:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
   }
 

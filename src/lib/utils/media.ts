@@ -1,157 +1,410 @@
-import type { PawchivePost } from '$lib/types/pawchive';
+import type { PawchivePost, Attachment } from '$lib/types/pawchive';
 import { configState } from '$lib/state/configState.svelte';
+import { providerState } from '$lib/state/providerState.svelte';
+import { thumbHashToUrl } from './thumbhash';
 
-function siteOrigin(domain: string) {
+function siteOrigin(domain: string): string {
   const value = domain.trim().replace(/\/+$/, '');
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-function creatorAssetUrl(kind: 'icons' | 'banners', service: string, creatorId: string) {
-  const origin = siteOrigin(configState.settings.api_domain || 'pawchive.pw');
-  return `${origin}/${kind}/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
+export function formatProviderName(name?: string): string {
+  if (!name) return '';
+  return name.replace(/Coomer/gi, 'OnlyHaven').replace(/\s*\([^)]*\)/g, '').trim();
 }
 
-export function creatorAvatarUrl(service: string, creatorId: string) {
-  return creatorAssetUrl('icons', service, creatorId);
+export function isOnlyHavenService(service?: string): boolean {
+  if (!service) return false;
+  const s = service.toLowerCase();
+  return s === 'onlyfans' || s === 'fansly' || s === 'candfans';
 }
 
-export function creatorBannerUrl(service: string, creatorId: string) {
-  return creatorAssetUrl('banners', service, creatorId);
+export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'file' = 'api'): string {
+  if (service) {
+    if (isOnlyHavenService(service)) {
+      if (kind === 'image') return 'https://img.cum.st';
+      if (kind === 'file') return 'https://e1.cum.st';
+      return 'https://cum.st';
+    }
+    const providers = providerState.getProvidersForService(service);
+    if (providers.length > 0) {
+      const p = providers[0];
+      if (kind === 'image') {
+        if (p.image_url) return siteOrigin(p.image_url);
+        if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
+        if (p.api_url?.includes('kemono')) return 'https://img.kemono.su';
+        return 'https://img.pawchive.pw';
+      }
+      if (kind === 'file') {
+        if (p.file_url) return siteOrigin(p.file_url);
+        if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
+        if (p.api_url) return siteOrigin(p.api_url);
+        return 'https://pawchive.pw';
+      }
+      if (p.api_url) return siteOrigin(p.api_url);
+    }
+  }
+
+  const enabled = providerState.providers.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
+  if (enabled.length > 0) {
+    const p = enabled[0];
+    if (kind === 'image') {
+      if (p.image_url) return siteOrigin(p.image_url);
+      if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
+      if (p.api_url?.includes('kemono')) return 'https://img.kemono.su';
+      if (p.api_url?.includes('cum.st') || p.api_url?.includes('coomer')) return 'https://img.cum.st';
+      return 'https://img.pawchive.pw';
+    }
+    if (kind === 'file') {
+      if (p.file_url) return siteOrigin(p.file_url);
+      if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
+      if (p.api_url?.includes('cum.st') || p.api_url?.includes('coomer')) return 'https://e1.cum.st';
+      if (p.api_url) return siteOrigin(p.api_url);
+      return 'https://pawchive.pw';
+    }
+    if (p.api_url) return siteOrigin(p.api_url);
+  }
+
+  if (kind === 'image') {
+    return siteOrigin(configState.settings.image_domain || 'img.pawchive.pw');
+  }
+  if (kind === 'file') {
+    return siteOrigin(configState.settings.file_domain || configState.settings.api_domain || 'pawchive.pw');
+  }
+  return siteOrigin(configState.settings.api_domain || 'pawchive.pw');
 }
 
-export function creatorPageUrl(service: string, creatorId: string) {
-  const origin = siteOrigin(configState.settings.api_domain || 'pawchive.pw');
+export function cleanMediaPath(rawPath: string): string {
+  return rawPath.replace(/^\/*data\//, '').replace(/^\/+/, '');
+}
+
+export function creatorAvatarUrl(service: string, creatorId: string, thumbhash?: string | null): string {
+  if (thumbhash) {
+    const dataUrl = thumbHashToUrl(thumbhash);
+    if (dataUrl) return dataUrl;
+  }
+  const s = (service || '').toLowerCase();
+  if (isOnlyHavenService(s)) {
+    return `https://img.cum.st/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/avatar.webp`;
+  }
+  const origin = getProviderOrigin(service, 'api');
+  return `${origin}/icons/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
+}
+
+export function creatorBannerUrl(service: string, creatorId: string, thumbhash?: string | null): string {
+  if (thumbhash) {
+    const dataUrl = thumbHashToUrl(thumbhash);
+    if (dataUrl) return dataUrl;
+  }
+  const s = (service || '').toLowerCase();
+  if (isOnlyHavenService(s)) {
+    return `https://img.cum.st/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/header.webp`;
+  }
+  const origin = getProviderOrigin(service, 'api');
+  return `${origin}/banners/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
+}
+
+export function creatorPageUrl(service: string, creatorId: string): string {
+  const origin = getProviderOrigin(service, 'api');
   return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}`;
 }
 
-export function postMediaUrl(post: PawchivePost) {
-  const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
-  if (!media?.path) return null;
-  const cdn = media.server || `https://${configState.settings.file_domain}`;
-  return `${cdn}/data${media.path}`;
+export function postPageUrl(service: string, creatorId: string, postId: string): string {
+  const origin = getProviderOrigin(service, 'api');
+  return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}/post/${encodeURIComponent(postId)}`;
 }
 
-export function postThumbnailUrl(post: PawchivePost) {
+export function postMediaUrl(post: PawchivePost): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
   if (!media?.path) return null;
-  return `https://${configState.settings.image_domain}/thumbnail/data${media.path}`;
+  return attachmentMediaUrl(media, post.service);
 }
 
-export function postAttachmentCount(post: PawchivePost) {
+export function attachmentMediaUrl(file: Attachment, service: string): string {
+  if (!file?.path) return '';
+  if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
+    return file.path;
+  }
+
+  const key = cleanMediaPath(file.path);
+  const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
+
+  if (isHaven) {
+    let ext = 'jpg';
+    if (file.name && file.name.includes('.')) {
+      ext = file.name.split('.').pop() || 'jpg';
+    } else if ((file.extra as any)?.mime_type) {
+      const mime = (file.extra as any).mime_type;
+      if (mime.includes('video') || mime.includes('mp4')) ext = 'mp4';
+      else if (mime.includes('png')) ext = 'png';
+      else if (mime.includes('webp')) ext = 'webp';
+      else if (mime.includes('gif')) ext = 'gif';
+    } else if ((file.extra as any)?.kind === 'video') {
+      ext = 'mp4';
+    }
+    return `https://e1.cum.st/media/${key}/original.${ext}`;
+  }
+
+  const origin = file.server ? siteOrigin(file.server) : getProviderOrigin(service, 'file');
+  return `${origin}/data/${key}`;
+}
+
+export function postThumbnailUrl(post: PawchivePost): string | null {
+  const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
+  const thumbhash = (media?.extra as any)?.preview_thumbhash || (post.file?.extra as any)?.preview_thumbhash || (post.attachments?.[0]?.extra as any)?.preview_thumbhash;
+
+  if (thumbhash) {
+    const dataUrl = thumbHashToUrl(thumbhash);
+    if (dataUrl) return dataUrl;
+  }
+
+  if (!media?.path) return null;
+
+  const key = cleanMediaPath(media.path);
+  const isHaven = isOnlyHavenService(post.service) || (post.extra as any)?.provider_id === 'coomer' || (post.extra as any)?.provider_id === 'onlyhaven';
+
+  if (isHaven) {
+    return `https://img.cum.st/thumbnail/${key}/preview.webp`;
+  }
+
+  const origin = getProviderOrigin(post.service, 'image');
+  return `${origin}/thumbnail/data/${key}`;
+}
+
+export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: string }, service: string): string {
+  if (!card.hash || card.hash.length < 4) return '';
+  const sub1 = card.hash.slice(0, 2);
+  const sub2 = card.hash.slice(2, 4);
+  let ext = (card.ext || '').replace(/^\.+/, '');
+  if (!ext) {
+    if (card.mime?.includes('png')) ext = 'png';
+    else if (card.mime?.includes('webp')) ext = 'webp';
+    else if (card.mime?.includes('gif')) ext = 'gif';
+    else ext = 'jpg';
+  }
+
+  const isHaven = isOnlyHavenService(service);
+  if (isHaven) {
+    return `https://e1.cum.st/media/${sub1}/${sub2}/${card.hash}/original.${ext}`;
+  }
+
+  const origin = getProviderOrigin(service, 'image');
+  return `${origin}/data/${sub1}/${sub2}/${card.hash}.${ext}`;
+}
+
+export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: string; ihash?: string }, service: string): string {
+  if (card.ihash) {
+    const dataUrl = thumbHashToUrl(card.ihash);
+    if (dataUrl) return dataUrl;
+  }
+  if (!card.hash || card.hash.length < 4) return '';
+  const sub1 = card.hash.slice(0, 2);
+  const sub2 = card.hash.slice(2, 4);
+  let ext = (card.ext || '').replace(/^\.+/, '');
+  if (!ext) {
+    if (card.mime?.includes('png')) ext = 'png';
+    else if (card.mime?.includes('webp')) ext = 'webp';
+    else if (card.mime?.includes('gif')) ext = 'gif';
+    else ext = 'jpg';
+  }
+
+  const isHaven = isOnlyHavenService(service);
+  if (isHaven) {
+    return `https://img.cum.st/thumbnail/${sub1}/${sub2}/${card.hash}/preview.webp`;
+  }
+
+  const origin = getProviderOrigin(service, 'image');
+  return `${origin}/thumbnail/data/${sub1}/${sub2}/${card.hash}.${ext}`;
+}
+
+export function postAttachmentCount(post: PawchivePost): number {
   return post.attachment_count ?? post.attachments?.length ?? 0;
 }
 
-export function isVideoUrl(url: string | null) {
+export function isVideoUrl(url: string | null): boolean {
   if (!url) return false;
-  return /\.(mp4|webm|mkv|mov)(?:$|\?)/i.test(url);
+  return /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|\?)/i.test(url);
 }
 
-export function isImageUrl(url: string | null) {
+export function isImageUrl(url: string | null): boolean {
   if (!url) return false;
   return /\.(avif|bmp|gif|jpe?g|png|webp)(?:$|\?)/i.test(url);
 }
 
-export function getPostDownloadTargets(post: PawchivePost): { mediaId: string; url: string; filename: string }[] {
-  const targets: { mediaId: string; url: string; filename: string }[] = [];
-  const cdn = (server?: string) => server || `https://${configState.settings.file_domain}`;
+export function isAttachmentVideo(file?: Attachment | null, url?: string | null): boolean {
+  if (!file && !url) return false;
+  if (url && isVideoUrl(url)) return true;
+  const name = (file?.name || '').toLowerCase();
+  if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(name)) return true;
+  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
+  if (kind === 'video') return true;
+  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+  if (mime.includes('video') || mime.includes('mp4')) return true;
+  return false;
+}
 
-  if (post.file?.path) {
-    const filename = post.file.name || post.file.path.split('/').pop() || 'file';
+export function isAttachmentImage(file?: Attachment | null, url?: string | null): boolean {
+  if (!file && !url) return false;
+  if (url && isImageUrl(url)) return true;
+  const name = (file?.name || '').toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(name)) return true;
+  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
+  if (kind === 'image' || kind === 'gif') return true;
+  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+  if (mime.includes('image')) return true;
+  return false;
+}
+
+export function isAudioUrl(url: string | null): boolean {
+  if (!url) return false;
+  return /\.(flac|m4a|mp3|ogg|opus|wav)(?:$|\?)/i.test(url);
+}
+
+export function isCompressedUrl(url: string | null): boolean {
+  if (!url) return false;
+  return /\.(7z|gz|rar|tar|tar\.gz|tar\.xz|zip|zipx)(?:$|\?)/i.test(url);
+}
+
+export function isDocumentUrl(url: string | null): boolean {
+  if (!url) return false;
+  return /\.(epub|pdf|txt)(?:$|\?)/i.test(url);
+}
+
+export function getPostFormats(post: PawchivePost): string[] {
+  const formats: string[] = [];
+  const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
+  for (const item of items) {
+    const path = (item.path || '').toLowerCase();
+    const kind = ((item.extra as any)?.kind || '').toLowerCase();
+    if (kind === 'image' || kind === 'gif' || isImageUrl(path)) {
+      if (!formats.includes('image')) formats.push('image');
+    }
+    if (kind === 'video' || isVideoUrl(path)) {
+      if (!formats.includes('video')) formats.push('video');
+    }
+    if (kind === 'audio' || isAudioUrl(path)) {
+      if (!formats.includes('audio')) formats.push('audio');
+    }
+    if (isCompressedUrl(path)) {
+      if (!formats.includes('compressed')) formats.push('compressed');
+    }
+    if (isDocumentUrl(path)) {
+      if (!formats.includes('document')) formats.push('document');
+    }
+  }
+  if (formats.length === 0) formats.push('text');
+  return formats;
+}
+
+export function matchesPostFormat(
+  post: PawchivePost,
+  format: 'all' | 'image' | 'video' | 'audio' | 'compressed' | 'document' | 'other'
+): boolean {
+  if (format === 'all') return true;
+  const targetMedia = post.file?.path ? post.file : post.attachments?.[0];
+  if (!targetMedia?.path) return format === 'other';
+
+  const path = targetMedia.path.toLowerCase();
+  const kind = (targetMedia.extra as any)?.kind?.toLowerCase();
+
+  if (format === 'image') return kind === 'image' || kind === 'gif' || isImageUrl(path);
+  if (format === 'video') return kind === 'video' || isVideoUrl(path);
+  if (format === 'audio') return kind === 'audio' || isAudioUrl(path);
+  if (format === 'compressed') return isCompressedUrl(path);
+  if (format === 'document') return isDocumentUrl(path);
+  return true;
+}
+
+export interface DownloadTarget {
+  mediaId: string;
+  url: string;
+  filename: string;
+}
+
+export function getPostDownloadTargets(post: PawchivePost): DownloadTarget[] {
+  const targets: DownloadTarget[] = [];
+  const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
+  const seenPaths = new Set<string>();
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item.path) continue;
+    const pathKey = item.path.toLowerCase();
+    if (seenPaths.has(pathKey)) continue;
+    seenPaths.add(pathKey);
+
+    const key = cleanMediaPath(item.path);
+    const isHaven = isOnlyHavenService(post.service) || (post.extra as any)?.provider_id === 'coomer' || (post.extra as any)?.provider_id === 'onlyhaven';
+
+    let url: string;
+    let filename = item.name || `media_${i + 1}`;
+
+    if (isHaven) {
+      let ext = 'jpg';
+      if (item.name && item.name.includes('.')) {
+        ext = item.name.split('.').pop() || 'jpg';
+      } else if ((item.extra as any)?.mime_type) {
+        const mime = (item.extra as any).mime_type;
+        if (mime.includes('video') || mime.includes('mp4')) ext = 'mp4';
+        else if (mime.includes('png')) ext = 'png';
+        else if (mime.includes('webp')) ext = 'webp';
+        else if (mime.includes('gif')) ext = 'gif';
+      } else if ((item.extra as any)?.kind === 'video') {
+        ext = 'mp4';
+      }
+      url = `https://e1.cum.st/media/${key}/original.${ext}`;
+      if (!filename.includes('.')) {
+        filename = `${filename}.${ext}`;
+      }
+    } else {
+      const origin = item.server ? siteOrigin(item.server) : getProviderOrigin(post.service, 'file');
+      url = `${origin}/data/${key}`;
+    }
+
     targets.push({
-      mediaId: post.file.path,
-      url: `${cdn(post.file.server)}/data${post.file.path}`,
+      mediaId: item.path,
+      url,
       filename
     });
-  }
-
-  for (const attachment of post.attachments || []) {
-    if (attachment?.path) {
-      const path = attachment.path;
-      const filename = attachment.name || path.split('/').pop() || 'attachment';
-      if (!targets.some((t) => t.url.endsWith(path))) {
-        targets.push({
-          mediaId: path,
-          url: `${cdn(attachment.server)}/data${path}`,
-          filename
-        });
-      }
-    }
   }
 
   return targets;
 }
 
-export function getPostFormats(post: PawchivePost): string[] {
-  const allFiles: string[] = [];
-  if (post.file?.path) allFiles.push(post.file.path.toLowerCase());
-  if (post.file?.name) allFiles.push(post.file.name.toLowerCase());
-  if (post.attachments && Array.isArray(post.attachments)) {
-    for (const att of post.attachments) {
-      if (att?.path) allFiles.push(att.path.toLowerCase());
-      if (att?.name) allFiles.push(att.name.toLowerCase());
-    }
+export function getPlatformProfileUrl(service?: string, creatorId?: string, publicId?: string | number | null): string {
+  if (!service || !creatorId) return '';
+  const s = service.toLowerCase();
+  const id = String(publicId || creatorId).trim();
+
+  switch (s) {
+    case 'patreon':
+      return /^\d+$/.test(id) ? `https://www.patreon.com/user?u=${id}` : `https://www.patreon.com/${id}`;
+    case 'fanbox':
+      return /^\d+$/.test(id) ? `https://www.pixiv.net/fanbox/creator/${id}` : `https://${id}.fanbox.cc`;
+    case 'fantia':
+      return `https://fantia.jp/fanclubs/${id}`;
+    case 'boosty':
+      return `https://boosty.to/${id}`;
+    case 'subscribestar':
+      return `https://subscribestar.adult/${id}`;
+    case 'gumroad':
+      return `https://${id}.gumroad.com`;
+    case 'onlyfans':
+      return `https://onlyfans.com/${id}`;
+    case 'fansly':
+      return `https://fansly.com/${id}`;
+    case 'candfans':
+      return `https://candfans.jp/${id}`;
+    case 'discord':
+      return `https://discord.com/channels/${id}`;
+    case 'afdian':
+      return `https://afdian.com/a/${id}`;
+    case 'cien':
+    case 'ci-en':
+      return `https://ci-en.dlsite.com/creator/${id}`;
+    case 'dlsite':
+      return `https://www.dlsite.com/maniax/circle/profile/=/maker_id/${id}`;
+    default:
+      return `https://${s}.com/${id}`;
   }
-
-  const embedStr = JSON.stringify(post.embed || {}).toLowerCase();
-  const contentStr = (post.content || '').toLowerCase();
-  const titleStr = (post.title || '').toLowerCase();
-  const formats: string[] = [];
-
-  // Image
-  const hasImageFile = allFiles.some((f) => /\.(avif|bmp|gif|jpe?g|png|webp)(?:$|\?)/i.test(f));
-  const hasImageEmbed = /\.(avif|bmp|gif|jpe?g|png|webp)|<img/i.test(embedStr) || /<img/i.test(contentStr);
-  if (hasImageFile || hasImageEmbed || Boolean(post.file?.path || post.file?.name)) {
-    formats.push('image');
-  }
-
-  // Video
-  const hasVideoFile = allFiles.some((f) => /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|\?)/i.test(f));
-  const hasVideoEmbed = /youtube|vimeo|bilibili|streamable|gfycat|coomer|kemono|sproutvideo|vids\.io|\.(mp4|webm|mkv|mov|m4v)/i.test(embedStr) || /<video|\.(mp4|webm|mkv|mov|m4v)/i.test(contentStr);
-  const hasVideoTitle = /\b(video|mp4|webm|movie|animation|anim|clip|mkv|mov|4k|1080p|720p|60fps|short|pv|trailer)\b/i.test(titleStr);
-  if (hasVideoFile || hasVideoEmbed || hasVideoTitle) {
-    formats.push('video');
-  }
-
-  // Audio
-  const hasAudioFile = allFiles.some((f) => /\.(mp3|wav|ogg|m4a|flac|aac|opus|wma)(?:$|\?)/i.test(f));
-  const hasAudioEmbed = /soundcloud|bandcamp|spotify|audio|\.(mp3|wav|ogg|m4a|flac)/i.test(embedStr) || /<audio|\.(mp3|wav|ogg|m4a|flac)/i.test(contentStr);
-  const hasAudioTitle = /\b(audio|mp3|wav|flac|sound|track|voice|podcast|asmr|song|music|ost)\b/i.test(titleStr);
-  if (hasAudioFile || hasAudioEmbed || hasAudioTitle) {
-    formats.push('audio');
-  }
-
-  // Text
-  const hasTextContent = Boolean(post.content && post.content.trim().length > 20);
-  const isTextOnlyPost = (post.attachment_count ?? 0) === 0 && !post.file?.path;
-  if (hasTextContent || isTextOnlyPost) {
-    formats.push('text');
-  }
-
-  // Archive / Files
-  const hasArchiveFile = allFiles.some((f) => /\.(zip|rar|7z|tar|gz|pdf|txt|epub|html|cbz|cbr|psd|clip)(?:$|\?)/i.test(f));
-  const hasArchiveLink = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(contentStr) || /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(embedStr);
-  const hasArchiveTitle = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|file|files|psd|clip|brush|brushes)\b/i.test(titleStr);
-  if (hasArchiveFile || hasArchiveLink || hasArchiveTitle) {
-    formats.push('archive');
-  }
-
-  // WIP (Work in Progress / Sketches / Drafts / Previews)
-  const tagsStr = Array.isArray(post.tags)
-    ? post.tags.join(' ').toLowerCase()
-    : typeof post.tags === 'string'
-      ? post.tags.toLowerCase()
-      : '';
-  const isWipTag = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|progress|in\s+progress)\b/i.test(tagsStr);
-  const isWipTitle = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|in\s+progress)\b|[\[\(]wip[\]\)]|wip\s*#?\d+/i.test(titleStr);
-  const isWipContent = /#(wip|sketch|workinprogress|draft|preview|doodle)\b|\[wip\]|\(wip\)/i.test(contentStr);
-  if (isWipTag || isWipTitle || isWipContent) {
-    formats.push('wip');
-  }
-
-  return formats;
 }
-
-export function matchesPostFormat(post: PawchivePost, fmt: string): boolean {
-  return getPostFormats(post).includes(fmt);
-}
-

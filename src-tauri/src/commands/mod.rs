@@ -3,6 +3,8 @@ pub mod window_effects;
 
 use crate::api::models::*;
 use crate::api::pawchive::PawchiveClient;
+use crate::api::provider::{ProviderConfig, ProviderHealth};
+use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
 use crate::db::content::{CacheStats, ContentRepository};
 use crate::db::downloads::DownloadJob;
@@ -34,6 +36,7 @@ pub struct ResolvedPostLink {
 
 pub struct AppState {
     pub axum_port: Arc<AtomicU16>,
+    pub provider_manager: Arc<ProviderManager>,
     pub pawchive_client: Arc<PawchiveClient>,
     pub content: Arc<ContentRepository>,
     pub library: Arc<LibraryRepository>,
@@ -249,6 +252,10 @@ pub async fn save_settings(
         .pawchive_client
         .update_settings(settings.clone())
         .await?;
+    let _ = state
+        .provider_manager
+        .update_providers(settings.providers.clone())
+        .await;
     if let Err(error) = state.config_manager.save(&settings) {
         let _ = state.pawchive_client.update_settings(previous).await;
         return Err(error);
@@ -256,6 +263,34 @@ pub async fn save_settings(
     let _ = state.content.set_cache_limit_mb(settings.cache_max_mb);
     state.download_manager.notify_scheduler();
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderConfig>, String> {
+    Ok(state.provider_manager.get_provider_configs().await)
+}
+
+#[tauri::command]
+pub async fn save_providers(
+    providers: Vec<ProviderConfig>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = state.config_manager.load()?;
+    settings.providers = providers.clone();
+    state.provider_manager.update_providers(providers).await?;
+    state.config_manager.save(&settings)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn test_provider_connection(
+    provider_id: String,
+    state: State<'_, AppState>,
+) -> Result<ProviderHealth, String> {
+    state
+        .provider_manager
+        .test_provider_health(&provider_id)
+        .await
 }
 
 #[tauri::command]
@@ -268,8 +303,8 @@ pub async fn get_account_session(state: State<'_, AppState>) -> Result<AccountSe
         });
     }
     match state
-        .pawchive_client
-        .fetch_account_favorites(Some("artist"))
+        .provider_manager
+        .fetch_account_favorites(None, Some("artist"))
         .await
     {
         Ok(_) => Ok(AccountSession {
@@ -293,11 +328,18 @@ pub async fn login_account(
     password: String,
     state: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
-    let cookie = state.pawchive_client.login(&username, &password).await?;
+    let cookie = state
+        .provider_manager
+        .login("pawchive", &username, &password)
+        .await?;
     let previous = state.config_manager.load()?;
     let mut settings = previous.clone();
     settings.session_cookie = cookie;
     settings.pawchive_username = username.trim().to_string();
+    let _ = state
+        .provider_manager
+        .update_providers(settings.providers.clone())
+        .await;
     state
         .pawchive_client
         .update_settings(settings.clone())
@@ -314,10 +356,14 @@ pub async fn login_account(
 
 #[tauri::command]
 pub async fn logout_account(state: State<'_, AppState>) -> Result<AccountSession, String> {
-    let _ = state.pawchive_client.logout().await;
+    let _ = state.provider_manager.logout("pawchive").await;
     let mut settings = state.config_manager.load()?;
     settings.session_cookie.clear();
     settings.pawchive_username.clear();
+    let _ = state
+        .provider_manager
+        .update_providers(settings.providers.clone())
+        .await;
     state
         .pawchive_client
         .update_settings(settings.clone())
@@ -332,7 +378,7 @@ pub async fn logout_account(state: State<'_, AppState>) -> Result<AccountSession
 
 #[tauri::command]
 pub async fn fetch_creators(state: State<'_, AppState>) -> Result<Vec<Creator>, String> {
-    match state.pawchive_client.fetch_creators().await {
+    match state.provider_manager.fetch_creators().await {
         Ok(creators) => {
             state.content.save_creators(&creators)?;
             Ok(creators)
@@ -357,8 +403,8 @@ pub async fn fetch_posts(
 ) -> Result<Vec<PawchivePost>, String> {
     let list_key = format!("creator:{service}:{user_id}:");
     match state
-        .pawchive_client
-        .fetch_creator_posts(&service, &user_id, None, offset)
+        .provider_manager
+        .fetch_posts(&service, &user_id, offset, None)
         .await
     {
         Ok(posts) => {
@@ -384,7 +430,7 @@ pub async fn fetch_recent_posts(
 ) -> Result<Vec<PawchivePost>, String> {
     let list_key = format!("recent:{}", query.as_deref().unwrap_or(""));
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_recent_posts(query.as_deref(), offset)
         .await
     {
@@ -415,7 +461,7 @@ pub async fn fetch_popular_posts(
 ) -> Result<Vec<PawchivePost>, String> {
     let list_key = format!("popular:{period}:{}", date.as_deref().unwrap_or(""));
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_popular_posts(&period, date.as_deref(), offset)
         .await
     {
@@ -447,8 +493,8 @@ pub async fn fetch_creator_posts(
         query.as_deref().unwrap_or("")
     );
     let result = state
-        .pawchive_client
-        .fetch_creator_posts(&service, &creator_id, query.as_deref(), offset)
+        .provider_manager
+        .fetch_posts(&service, &creator_id, offset, query.as_deref())
         .await;
     match result {
         Ok(posts) => {
@@ -478,11 +524,23 @@ pub async fn fetch_creator_profile(
     state: State<'_, AppState>,
 ) -> Result<CreatorProfile, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_creator_profile(&service, &creator_id)
         .await
     {
-        Ok(profile) => {
+        Ok(creator) => {
+            let profile = CreatorProfile {
+                id: creator.id.clone(),
+                name: creator.name.clone(),
+                service: creator.service.clone(),
+                public_id: creator.public_id,
+                relation_id: creator.relation_id,
+                indexed: creator.indexed.map(serde_json::Value::from),
+                updated: creator.updated.map(serde_json::Value::from),
+                kemono_favorited: creator.kemono_favorited,
+                ever_imported: creator.ever_imported,
+                extra: creator.extra,
+            };
             state.content.save_creator(&profile)?;
             Ok(profile)
         }
@@ -524,7 +582,7 @@ pub async fn fetch_fancards(
     state: State<'_, AppState>,
 ) -> Result<Vec<Fancard>, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_fancards(&service, &creator_id)
         .await
     {
@@ -548,7 +606,7 @@ pub async fn fetch_creator_links(
     state: State<'_, AppState>,
 ) -> Result<Vec<CreatorProfile>, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_creator_links(&service, &creator_id)
         .await
     {
@@ -566,6 +624,30 @@ pub async fn fetch_creator_links(
 }
 
 #[tauri::command]
+pub async fn fetch_similar_creators(
+    service: String,
+    creator_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CreatorProfile>, String> {
+    match state
+        .provider_manager
+        .fetch_similar_creators(&service, &creator_id)
+        .await
+    {
+        Ok(items) => {
+            state
+                .content
+                .save_document("similar_creators", &service, &creator_id, "", &items)?;
+            Ok(items)
+        }
+        Err(error) => state
+            .content
+            .load_document("similar_creators", &service, &creator_id, "")?
+            .ok_or(error),
+    }
+}
+
+#[tauri::command]
 pub async fn fetch_post(
     service: String,
     creator_id: String,
@@ -573,19 +655,48 @@ pub async fn fetch_post(
     state: State<'_, AppState>,
 ) -> Result<PawchivePost, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_post(&service, &creator_id, &post_id)
         .await
     {
-        Ok(post) => {
-            state.content.save_posts(std::slice::from_ref(&post))?;
-            Ok(post)
+        Ok(Some(reconciled)) => {
+            state
+                .content
+                .save_posts(std::slice::from_ref(&reconciled.post))?;
+            if !reconciled.revisions.is_empty() {
+                let _ = state.content.save_post_revisions(
+                    &service,
+                    &creator_id,
+                    &post_id,
+                    reconciled
+                        .available_providers
+                        .first()
+                        .map(String::as_str)
+                        .unwrap_or("pawchive"),
+                    &reconciled.revisions,
+                );
+            }
+            Ok(reconciled.post)
         }
+        Ok(None) => state
+            .content
+            .get_post(&service, &creator_id, &post_id)?
+            .ok_or_else(|| "Post not found".to_string()),
         Err(error) => state
             .content
             .get_post(&service, &creator_id, &post_id)?
             .ok_or(error),
     }
+}
+
+#[tauri::command]
+pub async fn get_cached_post(
+    service: String,
+    creator_id: String,
+    post_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<PawchivePost>, String> {
+    state.content.get_post(&service, &creator_id, &post_id)
 }
 
 #[tauri::command]
@@ -598,7 +709,7 @@ pub async fn resolve_external_post_link(
     let parsed = if let Some(parsed) = parse_external_post_link(&url) {
         parsed
     } else {
-        let Some(expanded_url) = state.pawchive_client.expand_short_link(&url).await? else {
+        let Some(expanded_url) = state.provider_manager.expand_short_link(&url).await? else {
             return Ok(None);
         };
         let Some(parsed) = parse_external_post_link(&expanded_url) else {
@@ -641,16 +752,18 @@ pub async fn resolve_external_post_link(
     }
 
     for creator_id in candidates {
-        if let Ok(post) = state
-            .pawchive_client
+        if let Ok(Some(reconciled)) = state
+            .provider_manager
             .fetch_post(&parsed.service, &creator_id, &parsed.post_id)
             .await
         {
-            state.content.save_posts(std::slice::from_ref(&post))?;
+            state
+                .content
+                .save_posts(std::slice::from_ref(&reconciled.post))?;
             return Ok(Some(ResolvedPostLink {
-                service: post.service,
-                creator_id: post.user,
-                post_id: post.id,
+                service: reconciled.post.service,
+                creator_id: reconciled.post.user,
+                post_id: reconciled.post.id,
                 platform: parsed.service,
                 source: "remote".into(),
             }));
@@ -658,7 +771,7 @@ pub async fn resolve_external_post_link(
     }
 
     if let Ok(Some((service, creator_id, post_id))) = state
-        .pawchive_client
+        .provider_manager
         .resolve_post_identity(&parsed.service, &parsed.post_id)
         .await
     {
@@ -694,8 +807,8 @@ pub async fn fetch_account_favorites(
 
     if is_authenticated {
         if let Ok(remote_items) = state
-            .pawchive_client
-            .fetch_account_favorites(Some(kind))
+            .provider_manager
+            .fetch_account_favorites(None, Some(kind))
             .await
         {
             // Pin remote favorites locally so they persist offline too
@@ -742,19 +855,19 @@ pub async fn set_post_favorite(
 
     if is_authenticated {
         let _ = state
-            .pawchive_client
+            .provider_manager
             .set_post_favorite(&service, &creator_id, &post_id, favorite)
             .await;
     }
 
     if favorite {
         let post = match state
-            .pawchive_client
+            .provider_manager
             .fetch_post(&service, &creator_id, &post_id)
             .await
         {
-            Ok(post) => post,
-            Err(_) => state
+            Ok(Some(reconciled)) => reconciled.post,
+            _ => state
                 .content
                 .get_post(&service, &creator_id, &post_id)?
                 .ok_or_else(|| "Post is not cached".to_string())?,
@@ -801,23 +914,34 @@ pub async fn set_creator_favorite(
 
     if is_authenticated {
         let _ = state
-            .pawchive_client
+            .provider_manager
             .set_creator_favorite(&service, &creator_id, favorite)
             .await;
     }
 
     if favorite {
         let profile = match state
-            .pawchive_client
+            .provider_manager
             .fetch_creator_profile(&service, &creator_id)
             .await
         {
-            Ok(profile) => profile,
+            Ok(creator) => CreatorProfile {
+                id: creator.id,
+                name: creator.name,
+                service: creator.service,
+                public_id: creator.public_id,
+                relation_id: creator.relation_id,
+                indexed: creator.indexed.map(|v| serde_json::Value::Number(v.into())),
+                updated: creator.updated.map(|v| serde_json::Value::Number(v.into())),
+                kemono_favorited: creator.kemono_favorited,
+                ever_imported: creator.ever_imported,
+                extra: creator.extra,
+            },
             Err(_) => {
-                if let Ok(Some(cached)) = state.content.get_creator(&service, &creator_id) {
+                if let Some(cached) = state.content.get_creator(&service, &creator_id)? {
                     cached
                 } else {
-                    crate::api::models::CreatorProfile {
+                    CreatorProfile {
                         id: creator_id.clone(),
                         name: creator_id.clone(),
                         service: service.clone(),
@@ -884,7 +1008,7 @@ pub async fn fetch_creator_artwork_data_url(
         return Ok(cached);
     }
     let data = state
-        .pawchive_client
+        .provider_manager
         .fetch_creator_artwork_data_url(&service, &creator_id, &artwork_kind)
         .await?;
     state
@@ -901,7 +1025,7 @@ pub async fn search_hash(
     if file_hash.len() != 64 || !file_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("file_hash must be a 64-character SHA-256 hex string".to_string());
     }
-    state.pawchive_client.search_hash(&file_hash).await
+    state.provider_manager.search_hash(&file_hash).await
 }
 
 #[tauri::command]
@@ -912,7 +1036,7 @@ pub async fn flag_post(
     state: State<'_, AppState>,
 ) -> Result<ApiActionResult, String> {
     state
-        .pawchive_client
+        .provider_manager
         .flag_post(&service, &creator_id, &post_id)
         .await
 }
@@ -925,7 +1049,7 @@ pub async fn is_post_flagged(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     state
-        .pawchive_client
+        .provider_manager
         .is_post_flagged(&service, &creator_id, &post_id)
         .await
 }
@@ -938,24 +1062,27 @@ pub async fn fetch_post_revisions(
     state: State<'_, AppState>,
 ) -> Result<Vec<PostRevision>, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_post_revisions(&service, &creator_id, &post_id)
         .await
     {
-        Ok(items) => {
-            state.content.save_document(
-                "post_revisions",
+        Ok(items) if !items.is_empty() => {
+            let _ = state.content.save_post_revisions(
                 &service,
                 &creator_id,
                 &post_id,
+                "pawchive",
                 &items,
-            )?;
+            );
             Ok(items)
         }
-        Err(error) => state
-            .content
-            .load_document("post_revisions", &service, &creator_id, &post_id)?
-            .ok_or(error),
+        _ => {
+            let revisions = state
+                .content
+                .load_post_revisions(&service, &creator_id, &post_id)
+                .unwrap_or_default();
+            Ok(revisions)
+        }
     }
 }
 
@@ -967,7 +1094,7 @@ pub async fn fetch_post_comments(
     state: State<'_, AppState>,
 ) -> Result<Vec<Comment>, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_post_comments(&service, &creator_id, &post_id)
         .await
     {
@@ -990,7 +1117,7 @@ pub async fn fetch_post_comments(
 
 #[tauri::command]
 pub async fn get_pawchive_app_version(state: State<'_, AppState>) -> Result<String, String> {
-    state.pawchive_client.app_version().await
+    state.provider_manager.app_version().await
 }
 
 #[tauri::command]
@@ -2117,4 +2244,152 @@ pub fn update_boss_key(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     update_panic_key(shortcut, enabled, app_handle)
+}
+
+#[tauri::command]
+pub async fn resolve_cloud_link(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<crate::cloud::CloudFolderResult, String> {
+    if let Ok(Some(cached)) = state
+        .content
+        .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
+    {
+        return Ok(cached);
+    }
+
+    let resolver = crate::cloud::CloudResolver::new();
+    match resolver.resolve(&url).await {
+        Ok(result) => {
+            let _ = state
+                .content
+                .save_document("cloud_folder", &url, "", "", &result);
+            Ok(result)
+        }
+        Err(error) => {
+            if let Ok(Some(cached)) = state
+                .content
+                .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
+            {
+                return Ok(cached);
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn log_message(
+    level: String,
+    message: String,
+    context: Option<serde_json::Value>,
+) {
+    let ctx_str = context
+        .map(|c| c.to_string())
+        .unwrap_or_default();
+    match level.to_lowercase().as_str() {
+        "error" => {
+            if ctx_str.is_empty() {
+                tracing::error!(target: "frontend", "{message}");
+            } else {
+                tracing::error!(target: "frontend", context = %ctx_str, "{message}");
+            }
+        }
+        "warn" => {
+            if ctx_str.is_empty() {
+                tracing::warn!(target: "frontend", "{message}");
+            } else {
+                tracing::warn!(target: "frontend", context = %ctx_str, "{message}");
+            }
+        }
+        "debug" => {
+            if ctx_str.is_empty() {
+                tracing::debug!(target: "frontend", "{message}");
+            } else {
+                tracing::debug!(target: "frontend", context = %ctx_str, "{message}");
+            }
+        }
+        _ => {
+            if ctx_str.is_empty() {
+                tracing::info!(target: "frontend", "{message}");
+            } else {
+                tracing::info!(target: "frontend", context = %ctx_str, "{message}");
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_debug_log_path() -> Result<String, String> {
+    Ok(crate::logging::log_file_path().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn read_recent_logs(lines: Option<usize>) -> Result<String, String> {
+    crate::logging::read_recent_logs(lines.unwrap_or(500))
+}
+
+#[tauri::command]
+pub fn open_logs_folder() -> Result<(), String> {
+    let folder = crate::logging::logs_dir();
+    let _ = std::fs::create_dir_all(&folder);
+
+    #[cfg(target_os = "windows")]
+    {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
+        std::process::Command::new("explorer.exe")
+            .arg(&folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
+        std::process::Command::new("open")
+            .arg(&folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
+        std::process::Command::new("xdg-open")
+            .arg(&folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let path_str = folder.to_string_lossy().to_string();
+        with_android_context(|env, context| {
+            let jstr = env
+                .new_string(&path_str)
+                .map_err(|e| format!("New string error: {e}"))?;
+            env.call_method(
+                context,
+                "openFolderInFileManager",
+                "(Ljava/lang/String;)V",
+                &[jni::objects::JValue::Object(&jstr)],
+            )
+            .map_err(|e| format!("Failed to open folder in Android file manager: {e}"))?;
+            Ok(())
+        })
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        Err("Unsupported operating system".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn clear_logs() -> Result<(), String> {
+    crate::logging::clear_log_file()
 }

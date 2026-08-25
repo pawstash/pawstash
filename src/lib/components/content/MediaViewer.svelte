@@ -545,11 +545,17 @@
             class="media-viewer-media image-media"
             class:zoomed={scale > MIN_SCALE}
             class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            src={current.url}
+            src={current.url || current.poster}
             alt={current.name}
             draggable="false"
             style:transform
             onload={handleImageLoad}
+            onerror={(e) => {
+              const target = e.currentTarget as HTMLImageElement;
+              if (current?.poster && target.src !== current.poster) {
+                target.src = current.poster;
+              }
+            }}
           />
         {:else if current.html}
           <div
@@ -649,7 +655,17 @@
         {#each visibleThumbnails as thumbnail (thumbnail.item.id)}
           <button class:active={thumbnail.index === index} type="button" onclick={() => select(thumbnail.index)} aria-label={`${thumbnail.index + 1}: ${thumbnail.item.name}`}>
             {#if thumbnail.item.kind === 'image'}
-              <img src={thumbnail.item.url} alt="" loading="lazy" />
+              <img
+                src={thumbnail.item.poster || thumbnail.item.url}
+                alt=""
+                loading="lazy"
+                onerror={(e) => {
+                  const target = e.currentTarget as HTMLImageElement;
+                  if (thumbnail.item.url && target.src !== thumbnail.item.url) {
+                    target.src = thumbnail.item.url;
+                  }
+                }}
+              />
             {:else if thumbnail.item.kind === 'video'}
               <IconVideo />
             {:else if thumbnail.item.kind === 'audio'}

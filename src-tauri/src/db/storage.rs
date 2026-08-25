@@ -46,6 +46,22 @@ CREATE INDEX IF NOT EXISTS idx_posts_service_post ON posts(service, post_id, cre
 CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published_at DESC, post_id);
 CREATE INDEX IF NOT EXISTS idx_posts_title ON posts(title);
 
+CREATE TABLE IF NOT EXISTS post_revisions (
+    service TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    revision_id INTEGER NOT NULL,
+    provider_id TEXT NOT NULL,
+    imported_at TEXT,
+    edited_at TEXT,
+    snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (service, creator_id, post_id, revision_id, provider_id),
+    FOREIGN KEY (service, creator_id, post_id) REFERENCES posts(service, creator_id, post_id)
+        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions(service, creator_id, post_id, revision_id DESC);
+
 CREATE TABLE IF NOT EXISTS content_pins (
     entity_kind TEXT NOT NULL CHECK (entity_kind IN ('post', 'creator')),
     service TEXT NOT NULL,
@@ -203,7 +219,7 @@ CREATE TABLE IF NOT EXISTS sync_records (
 CREATE INDEX IF NOT EXISTS idx_sync_records_dirty ON sync_records(dirty, kind);
 
 INSERT OR IGNORE INTO collections (id, kind, name, position, is_system)
-VALUES ('00000000-0000-0000-0000-000000000001', 'inbox', 'Inbox', 0, 1);
+VALUES ('00000000-0000-0000-0000-000000000001', 'inbox', 'Main Stash', 0, 1);
 "#;
 
 pub fn data_root() -> PathBuf {

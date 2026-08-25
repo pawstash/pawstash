@@ -1,4 +1,4 @@
-use crate::api::models::{Creator, CreatorProfile, Favorite, PawchivePost};
+use crate::api::models::{Creator, CreatorProfile, Favorite, PawchivePost, PostRevision};
 use crate::db::storage::{content_cache_path, open_database};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -599,6 +599,94 @@ impl ContentRepository {
         snapshot
             .map(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
             .transpose()
+    }
+
+    pub fn save_post_revisions(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+        provider_id: &str,
+        revisions: &[PostRevision],
+    ) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        for rev in revisions {
+            let snapshot = serde_json::to_string(&rev.post).map_err(|e| e.to_string())?;
+            connection
+                .execute(
+                    "INSERT INTO post_revisions(service,creator_id,post_id,revision_id,provider_id,imported_at,edited_at,snapshot_json)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                     ON CONFLICT(service,creator_id,post_id,revision_id,provider_id) DO UPDATE SET
+                       snapshot_json=excluded.snapshot_json,
+                       imported_at=excluded.imported_at,
+                       edited_at=excluded.edited_at",
+                    params![
+                        service,
+                        creator_id,
+                        post_id,
+                        rev.revision_id,
+                        provider_id,
+                        rev.post.added,
+                        rev.post.edited,
+                        snapshot
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn load_post_revisions(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<Vec<PostRevision>, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT revision_id, snapshot_json FROM post_revisions
+                 WHERE service=?1 AND creator_id=?2 AND post_id=?3
+                 ORDER BY revision_id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map(params![service, creator_id, post_id], |row| {
+                let revision_id: i64 = row.get(0)?;
+                let json: String = row.get(1)?;
+                let post: PawchivePost =
+                    serde_json::from_str(&json).unwrap_or_else(|_| PawchivePost {
+                        id: post_id.to_string(),
+                        user: creator_id.to_string(),
+                        service: service.to_string(),
+                        title: String::new(),
+                        content: None,
+                        substring: None,
+                        published: None,
+                        added: None,
+                        edited: None,
+                        embed: None,
+                        shared_file: None,
+                        attachments: None,
+                        file: None,
+                        poll: None,
+                        captions: None,
+                        tags: None,
+                        origin: None,
+                        preview_state: None,
+                        has_full: None,
+                        detail_fetched: None,
+                        next: None,
+                        prev: None,
+                        favorite_count: None,
+                        attachment_count: None,
+                        extra: Default::default(),
+                    });
+                Ok(PostRevision { revision_id, post })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn save_creator(&self, creator: &CreatorProfile) -> Result<(), String> {

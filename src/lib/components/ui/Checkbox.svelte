@@ -60,17 +60,15 @@
     width: 20px;
     height: 20px;
     border-radius: 6px;
-    border: var(--border-width, 1px) solid var(--border-color, rgba(255, 255, 255, 0.15));
-    background: rgba(255, 255, 255, 0.04);
+    border: none;
+    background: rgba(255, 255, 255, 0.03);
     color: #ffffff;
     transition: background 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-                border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
                 transform 0.1s ease;
   }
 
   .checkbox-root:hover:not(.disabled) .checkbox-box {
     background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.3);
   }
 
   .checkbox-root:active:not(.disabled) .checkbox-box {
@@ -78,19 +76,18 @@
   }
 
   .checkbox-root.checked .checkbox-box {
-    background: var(--accent-primary, #6366f1);
-    border-color: var(--accent-primary, #6366f1);
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
   }
 
   .checkbox-root.checked:hover:not(.disabled) .checkbox-box {
-    background: var(--accent-hover, #4f46e5);
-    border-color: var(--accent-hover, #4f46e5);
+    background: rgba(255, 255, 255, 0.12);
   }
 
   :global(.checkbox-icon) {
-    width: 14px !important;
-    height: 14px !important;
-    color: #ffffff;
+    width: 17px !important;
+    height: 17px !important;
+    color: #ffffff !important;
     animation: checkIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 

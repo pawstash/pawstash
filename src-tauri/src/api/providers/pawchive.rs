@@ -1,8 +1,10 @@
+use super::traits::{ProviderConfig, ProviderHealth, SourceProvider};
 use crate::api::models::*;
 use crate::config::settings::{AppSettings, ProxyMode};
 use crate::smart_links::{
     is_known_shortener_url, parse_external_post_link, parse_pawchive_post_url,
 };
+use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::header::{
     HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE, USER_AGENT,
@@ -11,13 +13,13 @@ use reqwest::{Client, Method, Response, StatusCode, Url};
 use scraper::{Html, Selector};
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock as AsyncRwLock;
 
 pub struct PawchiveClient {
-    client: Arc<RwLock<Client>>,
-    settings: Arc<RwLock<AppSettings>>,
+    client: Arc<AsyncRwLock<Client>>,
+    settings: Arc<AsyncRwLock<AppSettings>>,
 }
 
 impl PawchiveClient {
@@ -96,8 +98,8 @@ impl PawchiveClient {
     pub fn new(settings: AppSettings) -> Result<Self, String> {
         let client = Self::build_client(&settings)?;
         Ok(Self {
-            client: Arc::new(RwLock::new(client)),
-            settings: Arc::new(RwLock::new(settings)),
+            client: Arc::new(AsyncRwLock::new(client)),
+            settings: Arc::new(AsyncRwLock::new(settings)),
         })
     }
 
@@ -512,7 +514,6 @@ impl PawchiveClient {
         if !status.is_success() {
             return Err(format!("Pawchive HTTP {status}"));
         }
-        // If Pawchive 302-redirected unaligned dates and stripped the `o` offset parameter, re-fetch with offset attached to the normalized URL
         if offset > 0 && !response.url().query_pairs().any(|(k, _)| k == "o") {
             let mut final_url = response.url().clone();
             final_url
@@ -677,6 +678,67 @@ impl PawchiveClient {
             Self::segment(creator_id)
         );
         self.json(Method::GET, &path, &[]).await
+    }
+
+    pub async fn fetch_similar_creators(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<CreatorProfile>, String> {
+        let settings = self.settings.read().await.clone();
+        let page_url = Url::parse(&format!(
+            "{}/{}/user/{}/recommended",
+            Self::site_url(&settings.api_domain),
+            Self::segment(service),
+            Self::segment(creator_id)
+        ))
+        .map_err(|e| e.to_string())?;
+
+        let response = match self.get_site_page(page_url, &settings).await {
+            Ok(res) if res.status().is_success() => res,
+            _ => return Ok(Vec::new()),
+        };
+
+        let html_content = response.text().await.map_err(|e| e.to_string())?;
+        let document = Html::parse_document(&html_content);
+        let card_selector = match Selector::parse(".card-list__items a.user-card, a.user-card") {
+            Ok(s) => s,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let name_selector = match Selector::parse(".user-card__name") {
+            Ok(s) => s,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut results = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        seen.insert((service.to_string(), creator_id.to_string()));
+
+        for card in document.select(&card_selector) {
+            let id = card.value().attr("data-id").unwrap_or_default().trim().to_string();
+            let srv = card.value().attr("data-service").unwrap_or(service).trim().to_string();
+            let name = card
+                .select(&name_selector)
+                .next()
+                .map(|n| n.text().collect::<Vec<_>>().join("").trim().to_string())
+                .unwrap_or_else(|| id.clone());
+
+            if !id.is_empty() && seen.insert((srv.clone(), id.clone())) {
+                results.push(CreatorProfile {
+                    id,
+                    name,
+                    service: srv,
+                    public_id: None,
+                    relation_id: None,
+                    updated: None,
+                    indexed: None,
+                    kemono_favorited: None,
+                    ever_imported: None,
+                    extra: Default::default(),
+                });
+            }
+        }
+        Ok(results)
     }
 
     pub async fn fetch_post(
@@ -844,6 +906,359 @@ impl PawchiveClient {
             return Err(format!("Pawchive API HTTP {status}"));
         }
         response.text().await.map_err(|e| e.to_string())
+    }
+}
+
+pub struct PawchiveProvider {
+    config: Arc<RwLock<ProviderConfig>>,
+    client: Arc<PawchiveClient>,
+}
+
+impl PawchiveProvider {
+    pub fn new(config: ProviderConfig) -> Result<Self, String> {
+        let app_settings = AppSettings {
+            api_domain: config.api_url.clone(),
+            file_domain: config.file_url.clone().unwrap_or_default(),
+            image_domain: config.image_url.clone().unwrap_or_default(),
+            session_cookie: config.session_cookie.clone(),
+            ..AppSettings::default()
+        };
+
+        let client = Arc::new(PawchiveClient::new(app_settings)?);
+        Ok(Self {
+            config: Arc::new(RwLock::new(config)),
+            client,
+        })
+    }
+}
+
+#[async_trait]
+impl SourceProvider for PawchiveProvider {
+    fn id(&self) -> &str {
+        "pawchive"
+    }
+
+    fn name(&self) -> &str {
+        "Pawchive"
+    }
+
+    fn config(&self) -> ProviderConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    fn supports_service(&self, service: &str) -> bool {
+        matches!(
+            service.to_lowercase().as_str(),
+            "patreon"
+                | "fanbox"
+                | "fantia"
+                | "boosty"
+                | "subscribestar"
+                | "gumroad"
+                | "dlsite"
+                | "discord"
+                | "afdian"
+        )
+    }
+
+    fn get_active_endpoint(&self) -> String {
+        self.config.read().unwrap().api_url.clone()
+    }
+
+    async fn test_connection(&self) -> Result<ProviderHealth, String> {
+        let start = Instant::now();
+        let endpoint = self.get_active_endpoint();
+        let now_str = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+
+        match self.client.fetch_creators().await {
+            Ok(_) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                Ok(ProviderHealth {
+                    provider_id: self.id().to_string(),
+                    active_endpoint: endpoint,
+                    is_healthy: true,
+                    latency_ms,
+                    error: None,
+                    last_checked_at: now_str,
+                })
+            }
+            Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                Ok(ProviderHealth {
+                    provider_id: self.id().to_string(),
+                    active_endpoint: endpoint,
+                    is_healthy: false,
+                    latency_ms,
+                    error: Some(e),
+                    last_checked_at: now_str,
+                })
+            }
+        }
+    }
+
+    async fn update_config(&self, config: ProviderConfig) -> Result<(), String> {
+        let app_settings = AppSettings {
+            api_domain: config.api_url.clone(),
+            file_domain: config.file_url.clone().unwrap_or_default(),
+            image_domain: config.image_url.clone().unwrap_or_default(),
+            session_cookie: config.session_cookie.clone(),
+            ..AppSettings::default()
+        };
+        self.client.update_settings(app_settings).await?;
+        *self.config.write().unwrap() = config;
+        Ok(())
+    }
+
+    async fn fetch_creators(&self) -> Result<Vec<Creator>, String> {
+        self.client.fetch_creators().await
+    }
+
+    async fn fetch_creator_profile(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Creator, String> {
+        let prof = self
+            .client
+            .fetch_creator_profile(service, creator_id)
+            .await?;
+        Ok(Creator {
+            id: prof.id,
+            name: prof.name,
+            service: prof.service,
+            public_id: prof.public_id,
+            relation_id: prof.relation_id,
+            indexed: None,
+            updated: None,
+            favorited: prof.kemono_favorited,
+            kemono_favorited: prof.kemono_favorited,
+            ever_imported: prof.ever_imported,
+            extra: prof.extra,
+        })
+    }
+
+    async fn fetch_creator_links(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<CreatorProfile>, String> {
+        self.client.fetch_creator_links(service, creator_id).await
+    }
+
+    async fn fetch_similar_creators(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<CreatorProfile>, String> {
+        self.client.fetch_similar_creators(service, creator_id).await
+    }
+
+    async fn fetch_posts(
+        &self,
+        service: &str,
+        creator_id: &str,
+        offset: u32,
+        query: Option<&str>,
+    ) -> Result<Vec<PawchivePost>, String> {
+        self.client
+            .fetch_creator_posts(service, creator_id, query, offset)
+            .await
+    }
+
+    async fn fetch_post(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<Option<PawchivePost>, String> {
+        match self.client.fetch_post(service, creator_id, post_id).await {
+            Ok(post) => Ok(Some(post)),
+            Err(e) if e.contains("404") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn fetch_post_revisions(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<Vec<PostRevision>, String> {
+        self.client
+            .fetch_post_revisions(service, creator_id, post_id)
+            .await
+    }
+
+    async fn fetch_recent_posts(
+        &self,
+        query: Option<&str>,
+        offset: u32,
+    ) -> Result<Vec<PawchivePost>, String> {
+        self.client.fetch_recent_posts(query, offset).await
+    }
+
+    async fn fetch_popular_posts(
+        &self,
+        period: &str,
+        date: Option<&str>,
+        offset: u32,
+    ) -> Result<Vec<PawchivePost>, String> {
+        self.client.fetch_popular_posts(period, date, offset).await
+    }
+
+    async fn fetch_post_comments(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<Vec<Comment>, String> {
+        self.client
+            .fetch_post_comments(service, creator_id, post_id)
+            .await
+    }
+
+    async fn fetch_account_favorites(
+        &self,
+        favorite_type: Option<&str>,
+    ) -> Result<Vec<Favorite>, String> {
+        self.client.fetch_account_favorites(favorite_type).await
+    }
+
+    async fn set_creator_favorite(
+        &self,
+        service: &str,
+        creator_id: &str,
+        favorite: bool,
+    ) -> Result<ApiActionResult, String> {
+        self.client
+            .set_creator_favorite(service, creator_id, favorite)
+            .await
+    }
+
+    async fn set_post_favorite(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+        favorite: bool,
+    ) -> Result<ApiActionResult, String> {
+        self.client
+            .set_post_favorite(service, creator_id, post_id, favorite)
+            .await
+    }
+
+    fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String {
+        let conf = self.config.read().unwrap();
+        let domain = server
+            .or(conf.file_url.as_deref())
+            .unwrap_or(conf.api_url.as_str());
+        let clean = file_path
+            .trim_start_matches('/')
+            .trim_start_matches("data/")
+            .trim_start_matches('/');
+        let base = if domain.starts_with("http://") || domain.starts_with("https://") {
+            domain.trim_end_matches('/').to_string()
+        } else {
+            format!("https://{}", domain.trim_end_matches('/'))
+        };
+        format!("{base}/data/{clean}")
+    }
+
+    fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
+        let conf = self.config.read().unwrap();
+        let domain = conf.image_url.as_deref().unwrap_or("img.pawchive.pw");
+        let clean = thumb_path
+            .trim_start_matches('/')
+            .trim_start_matches("data/")
+            .trim_start_matches('/');
+        let base = if domain.starts_with("http://") || domain.starts_with("https://") {
+            domain.trim_end_matches('/').to_string()
+        } else {
+            format!("https://{}", domain.trim_end_matches('/'))
+        };
+        format!("{base}/thumbnail/data/{clean}")
+    }
+
+    async fn fetch_creator_artwork_data_url(
+        &self,
+        service: &str,
+        creator_id: &str,
+        artwork_type: &str,
+    ) -> Result<String, String> {
+        self.client
+            .fetch_creator_artwork_data_url(service, creator_id, artwork_type)
+            .await
+    }
+
+    async fn search_hash(&self, file_hash: &str) -> Result<FileSearchResult, String> {
+        self.client.search_hash(file_hash).await
+    }
+
+    async fn fetch_fancards(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<Fancard>, String> {
+        self.client.fetch_fancards(service, creator_id).await
+    }
+
+    async fn flag_post(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<ApiActionResult, String> {
+        self.client.flag_post(service, creator_id, post_id).await
+    }
+
+    async fn is_post_flagged(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+    ) -> Result<bool, String> {
+        self.client
+            .is_post_flagged(service, creator_id, post_id)
+            .await
+    }
+
+    async fn login(&self, username: &str, password: &str) -> Result<String, String> {
+        self.client.login(username, password).await
+    }
+
+    async fn logout(&self) -> Result<(), String> {
+        self.client.logout().await
+    }
+
+    async fn get_account_session(&self) -> Result<AccountSession, String> {
+        let conf = self.config.read().unwrap();
+        Ok(AccountSession {
+            authenticated: !conf.session_cookie.trim().is_empty(),
+            username: if conf.username.trim().is_empty() {
+                None
+            } else {
+                Some(conf.username.clone())
+            },
+        })
+    }
+
+    async fn app_version(&self) -> Result<String, String> {
+        self.client.app_version().await
+    }
+
+    async fn resolve_post_identity(
+        &self,
+        service: &str,
+        post_id: &str,
+    ) -> Result<Option<(String, String, String)>, String> {
+        self.client.resolve_post_identity(service, post_id).await
+    }
+
+    async fn expand_short_link(&self, raw_url: &str) -> Result<Option<String>, String> {
+        self.client.expand_short_link(raw_url).await
     }
 }
 

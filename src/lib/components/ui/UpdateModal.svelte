@@ -106,7 +106,8 @@
   .update-modal-layout {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
+    padding: 0 4px 4px 4px;
   }
 
   .update-version-row {
@@ -114,6 +115,7 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
+    padding: 0 6px;
   }
 
   .update-version-tag {

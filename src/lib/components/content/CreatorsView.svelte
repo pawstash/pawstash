@@ -6,11 +6,12 @@
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
+  import type { Creator } from '$lib/types/pawchive';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import ServiceIcon from '$lib/components/pawchive/ServiceIcon.svelte';
+  import ServiceIcon from './ServiceIcon.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -18,11 +19,13 @@
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
-  import { creatorAvatarUrl } from '$lib/utils/media';
+  import { creatorAvatarUrl, formatProviderName } from '$lib/utils/media';
+  import { thumbHashToUrl } from '$lib/utils/thumbhash';
   import { notify } from '$lib/utils/toast';
   import { tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { providerState } from '$lib/state/providerState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
 
   import IconRefresh from '~icons/fluent/arrow-sync-24-regular';
@@ -130,8 +133,18 @@
     return () => observer?.disconnect();
   });
 
-  function getAvatarUrl(service: string, creatorId: string) {
-    return creatorAvatarUrl(service, creatorId);
+  function getAvatarUrl(creator: Creator) {
+    const headerThumb = (creator.extra as any)?.header_thumbhash;
+    const avatarThumb = (creator.extra as any)?.avatar_thumbhash;
+    if (headerThumb) {
+      const url = thumbHashToUrl(headerThumb);
+      if (url) return url;
+    }
+    if (avatarThumb) {
+      const url = thumbHashToUrl(avatarThumb);
+      if (url) return url;
+    }
+    return creatorAvatarUrl(creator.service, creator.id);
   }
 
   function formatTimestamp(ts?: number) {
@@ -327,9 +340,39 @@
       notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
     }
   }
+
+  function toggleProvider(providerId: string) {
+    creatorsState.providerFilters = toggleFilterKey(creatorsState.providerFilters, providerId);
+  }
+
+  let enabledProviders = $derived(providerState.providers.filter((p) => p.enabled));
 </script>
 
 {#snippet filterInnerContent()}
+  {#if enabledProviders.length > 1}
+    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <div class="service-options">
+      {#each enabledProviders as provider}
+        {@const state = creatorsState.providerFilters[provider.id] ?? 'neutral'}
+        {@const cleanName = formatProviderName(provider.name)}
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={() => toggleProvider(provider.id)}
+          class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+        >
+          <span>{cleanName}</span>
+          {#if state === 'include'}
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          {:else if state === 'exclude'}
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          {/if}
+        </Button>
+      {/each}
+    </div>
+    <div class="floating-divider"></div>
+  {/if}
+
   <span class="filter-label">{i18n.t('feed.platform')}</span>
   <div class="service-options">
     <Button
@@ -338,7 +381,7 @@
       onclick={() => creatorsState.serviceFilters = {}}
       class="filter-chip chip-all {Object.keys(creatorsState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
-      <IconGlobe class="w-[14px] h-[14px]" />
+      <IconGlobe class="w-5 h-5" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each creatorsState.services as service}
@@ -349,8 +392,13 @@
         onclick={() => toggleService(service)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <ServiceIcon service={service} class="w-[14px] h-[14px]" />
+        <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
@@ -550,7 +598,7 @@
 
           <img
             class="grid-tile-media"
-            src={getAvatarUrl(creator.service, creator.id)}
+            src={getAvatarUrl(creator)}
             alt=""
             loading="lazy"
             decoding="async"

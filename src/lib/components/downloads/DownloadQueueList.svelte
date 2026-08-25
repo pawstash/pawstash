@@ -18,6 +18,7 @@
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
+  import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -376,19 +377,22 @@
 {/snippet}
 
 {#snippet downloadFilterInnerContent()}
-  <span class="filter-label">{i18n.t('downloads.view_mode') || 'View'}</span>
-  <button class="view-option" class:active={!groupByPosts} onclick={() => groupByPosts = false}>
-    <span class="option-icon"><IconGrid class="w-[20px] h-[20px]" /></span>
-    <span><strong>{i18n.t('downloads.media_view')}</strong><small>{i18n.t('downloads.media_view_desc')}</small></span>
-  </button>
-  <div class="view-option" class:active={groupByPosts}>
+  <button
+    type="button"
+    class="view-option"
+    class:active={groupByPosts}
+    use:ripple
+    onclick={() => groupByPosts = !groupByPosts}
+  >
     <Checkbox checked={groupByPosts} onchange={(checked) => groupByPosts = checked} />
-    <button onclick={() => groupByPosts = !groupByPosts}>
+    <span>
       <strong>{i18n.t('downloads.group_by_posts')}</strong>
       <small>{i18n.t('downloads.group_by_posts_desc')}</small>
-    </button>
+    </span>
     <IconStack class="view-option-icon w-[20px] h-[20px]" />
-  </div>
+  </button>
+
+  <div class="floating-divider"></div>
 
   <span class="filter-label section-label">{i18n.t('feed.format')}</span>
   <div class="service-options">
@@ -401,8 +405,13 @@
         onclick={() => toggleFormat(fmt.id)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <IconComponent class="w-[14px] h-[14px]" />
+        <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
@@ -496,7 +505,7 @@
             {item}
             previewUrl={previewUrl(item)}
             postTitle={item.post_title}
-            onopen={identity ? (openViewer) => openPost(identity, item.url || item.filename || item.media_id, openViewer) : undefined}
+            onopen={identity ? (openViewer) => openPost(identity, item.media_id || item.filename || item.url, openViewer) : undefined}
             orderedKeys={downloadKeys}
             itemsMap={downloadsMap}
           />
@@ -566,17 +575,6 @@
 <style>
   .downloads-tabs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .downloads-tabs::-webkit-scrollbar { display: none; }
-  .filter-label { display: block; padding: 5px 7px 9px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .view-option { width: 100%; min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 11px; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; text-align: left; transition: background var(--duration-fast), color var(--duration-fast); }
-  button.view-option { font-family: inherit; cursor: pointer; }
-  .view-option:hover, .view-option.active { color: var(--text-primary); background: rgba(255,255,255,.055); }
-  .option-icon { width: 20px; height: 20px; display: grid; place-items: center; flex: none; }
-  .view-option > span:not(.option-icon) { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 3px; }
-  .view-option > button { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 3px; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
-  .view-option strong { font-size: 12.5px; font-weight: 650; }
-  .view-option small { color: var(--text-muted); font-size: 10.5px; line-height: 1.35; }
-  :global(.view-option-icon) { flex: none; opacity: .5; }
-  .section-label { margin-top: 7px; padding-top: 12px; border-top: var(--border-width) solid var(--border-color); }
 
   :global(.select-root.downloads-sort-select) { height: 44px !important; width: auto !important; min-width: 170px !important; max-width: none !important; flex: none !important; }
   :global(.select-root.downloads-sort-select .select-trigger.variant-ghost) { height: 44px !important; width: 100% !important; padding: 0 14px !important; border-radius: var(--radius-full) !important; font-size: 13px !important; }

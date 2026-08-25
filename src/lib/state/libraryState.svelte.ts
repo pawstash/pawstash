@@ -1,5 +1,6 @@
 import type { PawchivePost } from '$lib/types/pawchive';
 import type { LibraryCollection } from '$lib/types/library';
+import { i18n } from '$lib/i18n';
 import {
   apiClearLibraryStash,
   apiCreateLibraryStash,
@@ -42,6 +43,20 @@ export class LibraryState {
     return this.collections.find((collection) => collection.kind === 'inbox');
   }
 
+  get allStashes(): LibraryCollection[] {
+    return this.collections.filter((collection) => collection.kind === 'stash' || collection.kind === 'inbox');
+  }
+
+  getStashDisplayName(collection: LibraryCollection): string {
+    if (collection.kind === 'inbox') {
+      if (!collection.name || collection.name === 'Inbox' || collection.name === 'Main Stash') {
+        return i18n.t('library.inbox') || 'Main Stash';
+      }
+      return collection.name;
+    }
+    return collection.name;
+  }
+
   get selectedCollection() {
     return this.selectedCollectionId
       ? this.collections.find((collection) => collection.id === this.selectedCollectionId) ?? null
@@ -73,8 +88,8 @@ export class LibraryState {
   }
 
   getPostStashNames(post: Pick<PawchivePost, 'service' | 'user' | 'id'>): string[] {
-    const stashIds = this.getCustomPostStashes(post);
-    const stashMap = new Map(this.collections.map((c) => [c.id, c.name]));
+    const stashIds = this.getPostStashes(post);
+    const stashMap = new Map(this.collections.map((c) => [c.id, this.getStashDisplayName(c)]));
     return stashIds.map((id) => stashMap.get(id)).filter((name): name is string => Boolean(name));
   }
 

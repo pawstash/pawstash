@@ -12,22 +12,24 @@
   import { syncState } from '$lib/state/syncState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
+  import { providerState } from '$lib/state/providerState.svelte';
   import { apiGetSettings, apiGetPendingDeepLink } from '$lib/utils/ipc';
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
   import DesktopTitlebar from '$lib/components/layout/DesktopTitlebar.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
   import MobileBottomNav from '$lib/components/layout/MobileBottomNav.svelte';
   import SettingsModal from '$lib/components/settings/SettingsModal.svelte';
-  import FeedView from '$lib/components/pawchive/FeedView.svelte';
-  import PostPage from '$lib/components/pawchive/PostPage.svelte';
-  import CreatorPage from '$lib/components/pawchive/CreatorPage.svelte';
+  import FeedView from '$lib/components/content/FeedView.svelte';
+  import PostPage from '$lib/components/content/PostPage.svelte';
+  import CreatorPage from '$lib/components/content/CreatorPage.svelte';
   import LibraryView from '$lib/components/library/LibraryView.svelte';
   import DownloadQueueList from '$lib/components/downloads/DownloadQueueList.svelte';
-  import CreatorsView from '$lib/components/pawchive/CreatorsView.svelte';
-  import FavoritesView from '$lib/components/pawchive/FavoritesView.svelte';
+  import CreatorsView from '$lib/components/content/CreatorsView.svelte';
+  import FavoritesView from '$lib/components/content/FavoritesView.svelte';
   import ProfilePage from '$lib/components/profile/ProfilePage.svelte';
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
+  import { initFrontendLogging } from '$lib/utils/logger';
   import { Toaster } from 'svelte-sonner';
 
   navigationState.init();
@@ -41,6 +43,7 @@
   });
 
   onMount(() => {
+    initFrontendLogging();
     themeState.init();
     i18n.init();
 
@@ -91,6 +94,7 @@
     void subscriptionState.init().catch((error) => console.warn('Failed to initialize subscriptions', error));
     void accountState.refresh().catch((error) => console.warn('Failed to check Pawchive session', error));
     void syncState.init().catch((error) => console.warn('Failed to initialize encrypted sync', error));
+    void providerState.loadProviders().catch((error) => console.warn('Failed to load providers', error));
     void creatorsState.load().catch((error) => console.warn('Failed to preload creators list', error));
 
     requestAnimationFrame(() => void emit('frontend-ready'));

@@ -488,17 +488,17 @@
     position: fixed;
     z-index: 10000;
     width: min(320px, calc(100vw - 32px));
-    background: var(--bg-surface-raised, #16161a);
-    backdrop-filter: blur(28px);
-    -webkit-backdrop-filter: blur(28px);
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius-lg, 12px);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    background: var(--floating-bg);
+    backdrop-filter: var(--floating-backdrop);
+    -webkit-backdrop-filter: var(--floating-backdrop);
+    border: var(--floating-border);
+    border-radius: var(--floating-radius, 18px);
+    box-shadow: var(--floating-shadow);
     overflow: hidden;
     display: flex;
     flex-direction: column;
     visibility: hidden;
-    padding: 4px;
+    padding: var(--floating-padding, 6px);
     animation: dropdownFadeIn 140ms var(--ease-expo);
   }
 
@@ -516,10 +516,11 @@
   .dropdown-list {
     display: flex;
     flex-direction: column;
-    padding: 2px;
+    padding: 0;
     max-height: 240px;
     width: 100%;
     box-sizing: border-box;
+    gap: var(--floating-gap, 2px);
   }
 
   .dropdown-list :global(.os-viewport) {
@@ -532,16 +533,18 @@
     flex-direction: column !important;
     width: 100% !important;
     box-sizing: border-box !important;
+    gap: var(--floating-gap, 2px) !important;
   }
 
   .tag-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--floating-item-gap, 10px);
     width: 100%;
-    padding: 8px 12px;
-    border-radius: var(--radius-md, 8px);
+    height: var(--floating-item-height, 36px);
+    padding: 0 var(--floating-item-px, 12px);
+    border-radius: var(--floating-item-radius, 12px);
     border: none;
     background: transparent;
     cursor: pointer;
@@ -553,11 +556,11 @@
 
   .tag-item:hover,
   .tag-item.is-selected {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .tag-item.is-selected {
-    box-shadow: inset 2px 0 0 var(--accent);
+    color: var(--accent);
   }
 
   .tag-label {

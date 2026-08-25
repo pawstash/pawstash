@@ -3,6 +3,7 @@ import type { FilterMap } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
 import { apiFetchPopularPosts, apiFetchRecentPosts } from '$lib/utils/ipc';
 import { getPostFormats } from '$lib/utils/media';
+import { logger } from '$lib/utils/logger';
 import { accountState } from './accountState.svelte';
 
 const PAGE_SIZE = 50;
@@ -60,6 +61,7 @@ export class FeedState {
     return this.popularBuckets[key];
   }
 
+  providerFilters = $state<FilterMap>({});
   serviceFilters = $state<FilterMap>({});
   formatFilters = $state<FilterMap>({});
   onlyWithAttachments = $state(false);
@@ -80,6 +82,12 @@ export class FeedState {
 
   filteredPosts = $derived(
     this.posts.filter((post) => {
+      if (Object.keys(this.providerFilters).length > 0) {
+        const postProvider = (post.extra as any)?.provider_id || (['onlyfans', 'fansly', 'candfans'].includes(post.service.toLowerCase()) ? 'coomer' : 'pawchive');
+        const matchesProvider = matchesTriStateFilter([postProvider], this.providerFilters);
+        if (!matchesProvider) return false;
+      }
+
       const matchesService = matchesTriStateFilter([post.service], this.serviceFilters);
 
       const hasAttachments = (post.attachment_count ?? post.attachments?.length ?? 0) > 0 || Boolean(post.file?.path);
@@ -196,16 +204,25 @@ export class FeedState {
       bucket.offset = offset + PAGE_SIZE;
       bucket.hasMore = posts.length === PAGE_SIZE;
       bucket.loaded = true;
+      logger.info(`[Feed] Fetched ${posts.length} posts (mode: ${mode}, offset: ${offset})`);
     } catch (error) {
       if (requestId === bucket.requestId) {
         bucket.error = error instanceof Error ? error.message : String(error);
+        logger.error(`[Feed] Failed to load feed (mode: ${mode}, offset: ${offset})`, error);
       }
     } finally {
       if (requestId === bucket.requestId) bucket.loading = false;
     }
   }
 
+  clearAll() {
+    this.recent = emptyBucket();
+    this.popularBuckets = {};
+    this.searchBucket = emptyBucket();
+  }
+
   refresh() {
+    this.clearAll();
     if (this.isSearchActive) {
       return this.executeSearch(true);
     }

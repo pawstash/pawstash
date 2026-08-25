@@ -1,4 +1,5 @@
 import { apiFetchCreators } from '$lib/utils/ipc';
+import { logger } from '$lib/utils/logger';
 import type { Creator } from '$lib/types/pawchive';
 import type { FilterMap } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
@@ -10,6 +11,7 @@ export class CreatorsState {
   loaded = $state(false);
 
   searchQuery = $state('');
+  providerFilters = $state<FilterMap>({});
   serviceFilters = $state<FilterMap>({});
   sortBy = $state<'name' | 'updated' | 'indexed' | 'favorited'>('favorited');
   sortOrder = $state<'asc' | 'desc'>('desc');
@@ -30,6 +32,13 @@ export class CreatorsState {
 
   filteredCreators = $derived.by(() => {
     let result = this.creators;
+
+    if (Object.keys(this.providerFilters).length > 0) {
+      result = result.filter((c) => {
+        const cProvider = (c.extra as any)?.provider_id || (['onlyfans', 'fansly', 'candfans'].includes(c.service.toLowerCase()) ? 'coomer' : 'pawchive');
+        return matchesTriStateFilter([cProvider], this.providerFilters);
+      });
+    }
 
     if (Object.keys(this.serviceFilters).length > 0) {
       result = result.filter((c) => matchesTriStateFilter([c.service], this.serviceFilters));
@@ -77,8 +86,10 @@ export class CreatorsState {
     try {
       this.creators = await apiFetchCreators();
       this.loaded = true;
+      logger.info(`[Creators] Loaded ${this.creators.length} creators`);
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
+      logger.error('[Creators] Failed to load creators', e);
     } finally {
       this.loading = false;
     }

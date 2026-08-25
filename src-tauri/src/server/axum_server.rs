@@ -1,11 +1,17 @@
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use cipher::StreamCipher;
+use ctr::cipher::KeyIvInit;
+use serde::Deserialize;
+use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -29,6 +35,7 @@ impl MediaServer {
 
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
+            .route("/cloud_stream/mega", get(serve_mega_stream_handler))
             .route("/health", get(|| async { "OK" }))
             .with_state(Arc::new(allowed_roots))
             .layer(cors);
@@ -116,7 +123,6 @@ async fn serve_media_handler(
         }
     }
 
-    // Serve full file if no range header or range parsing failed
     let file = File::open(&canonical)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -132,6 +138,199 @@ async fn serve_media_handler(
         header::CONTENT_LENGTH,
         file_size.to_string().parse().unwrap(),
     );
+
+    Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+struct MegaStreamQuery {
+    folder_id: Option<String>,
+    file_id: Option<String>,
+    node_id: Option<String>,
+    key: String,
+    name: Option<String>,
+}
+
+fn mega_decode_key_param(raw: &str) -> Result<Vec<u8>, String> {
+    let mut clean = raw.trim().replace('-', "+").replace('_', "/");
+    while !clean.len().is_multiple_of(4) {
+        clean.push('=');
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(&clean)
+        .or_else(|_| URL_SAFE_NO_PAD.decode(raw))
+        .map_err(|e| format!("Base64 decode failed: {e}"))
+}
+
+async fn serve_mega_stream_handler(
+    Query(params): Query<MegaStreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    let key_bytes = mega_decode_key_param(&params.key).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    let (cipher_key, nonce) = if key_bytes.len() >= 32 {
+        let mut k = [0u8; 16];
+        for i in 0..16 {
+            k[i] = key_bytes[i] ^ key_bytes[i + 16];
+        }
+        let mut iv_nonce = [0u8; 8];
+        iv_nonce.copy_from_slice(&key_bytes[16..24]);
+        (k, iv_nonce)
+    } else if key_bytes.len() >= 24 {
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&key_bytes[..16]);
+        let mut iv_nonce = [0u8; 8];
+        iv_nonce.copy_from_slice(&key_bytes[16..24]);
+        (k, iv_nonce)
+    } else if key_bytes.len() >= 16 {
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&key_bytes[..16]);
+        (k, [0u8; 8])
+    } else {
+        return Err((StatusCode::BAD_REQUEST, "Invalid key length".to_string()));
+    };
+
+    let client = reqwest::Client::new();
+    let payload = if let Some(ref nid) = params.node_id {
+        json!([{"a": "g", "g": 1, "n": nid}])
+    } else if let Some(ref fid) = params.file_id {
+        json!([{"a": "g", "g": 1, "p": fid}])
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Missing node_id or file_id".to_string(),
+        ));
+    };
+
+    let api_url = if let Some(ref fid) = params.folder_id {
+        format!("https://g.api.mega.co.nz/cs?n={fid}")
+    } else {
+        "https://g.api.mega.co.nz/cs".to_string()
+    };
+
+    let api_resp = client
+        .post(&api_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let api_vals: Vec<serde_json::Value> = api_resp
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let first = api_vals
+        .into_iter()
+        .next()
+        .ok_or_else(|| (StatusCode::BAD_GATEWAY, "Empty MEGA response".to_string()))?;
+    let g_url = first.get("g").and_then(|v| v.as_str()).ok_or_else(|| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "Missing stream URL from MEGA".to_string(),
+        )
+    })?;
+    let total_size = first.get("s").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let filename = params.name.unwrap_or_else(|| "file.mp4".to_string());
+    let mime = mime_guess::from_path(&filename)
+        .first_or_octet_stream()
+        .to_string();
+
+    let (range_start, range_end) = if let Some(range_header) = headers.get(header::RANGE) {
+        if let Ok(range_str) = range_header.to_str() {
+            if let Some(r) = parse_range(range_str, total_size) {
+                r
+            } else {
+                (0, total_size.saturating_sub(1))
+            }
+        } else {
+            (0, total_size.saturating_sub(1))
+        }
+    } else {
+        (0, total_size.saturating_sub(1))
+    };
+
+    let chunk_size = if total_size > 0 {
+        range_end - range_start + 1
+    } else {
+        0
+    };
+
+    let block_index = range_start / 16;
+    let block_aligned_start = block_index * 16;
+    let skip_bytes = (range_start % 16) as usize;
+
+    let mut mega_req = client.get(g_url);
+    if total_size > 0 {
+        mega_req = mega_req.header(
+            header::RANGE,
+            format!("bytes={block_aligned_start}-{range_end}"),
+        );
+    }
+
+    let mega_resp = mega_req
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let mut iv = [0u8; 16];
+    iv[0..8].copy_from_slice(&nonce);
+    iv[8..16].copy_from_slice(&block_index.to_be_bytes());
+
+    let byte_stream = mega_resp.bytes_stream();
+    let decrypted_stream = async_stream::stream! {
+        let mut cipher = ctr::Ctr64BE::<aes::Aes128>::new((&cipher_key).into(), (&iv).into());
+        let mut pending_skip = skip_bytes;
+
+        for await chunk_res in byte_stream {
+            match chunk_res {
+                Ok(bytes) => {
+                    let mut data = bytes.to_vec();
+                    cipher.apply_keystream(&mut data);
+                    if pending_skip > 0 {
+                        if data.len() <= pending_skip {
+                            pending_skip -= data.len();
+                            continue;
+                        } else {
+                            let yield_data = data[pending_skip..].to_vec();
+                            pending_skip = 0;
+                            yield Ok::<_, std::io::Error>(bytes::Bytes::from(yield_data));
+                        }
+                    } else {
+                        yield Ok::<_, std::io::Error>(bytes::Bytes::from(data));
+                    }
+                }
+                Err(e) => {
+                    yield Err(std::io::Error::other(e.to_string()));
+                }
+            }
+        }
+    };
+
+    let body = Body::from_stream(decrypted_stream);
+    let mut response = if headers.contains_key(header::RANGE) && total_size > 0 {
+        let mut resp = (StatusCode::PARTIAL_CONTENT, body).into_response();
+        resp.headers_mut().insert(
+            header::CONTENT_RANGE,
+            format!("bytes {range_start}-{range_end}/{total_size}")
+                .parse()
+                .unwrap(),
+        );
+        resp
+    } else {
+        (StatusCode::OK, body).into_response()
+    };
+
+    let res_headers = response.headers_mut();
+    res_headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
+    res_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    if chunk_size > 0 {
+        res_headers.insert(
+            header::CONTENT_LENGTH,
+            chunk_size.to_string().parse().unwrap(),
+        );
+    }
 
     Ok(response)
 }

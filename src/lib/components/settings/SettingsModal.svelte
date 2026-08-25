@@ -57,13 +57,13 @@
   import { invoke } from '@tauri-apps/api/core';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/ui/Modal.svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
   import SyncSettings from './SyncSettings.svelte';
+  import ProviderSettings from './ProviderSettings.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
   import { syncState } from '$lib/state/syncState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import IconUser from '~icons/fluent/person-24-regular';
-  import pawchiveLogo from '$lib/components/pawchive/pawchive-favicon.png';
+  import pawchiveLogo from '$lib/components/content/pawchive-favicon.png';
   import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import IconArrowReset from '~icons/fluent/arrow-reset-24-regular';
@@ -83,6 +83,8 @@
   import IconReddit from '~icons/simple-icons/reddit';
   import IconGithub from '~icons/simple-icons/github';
   import IconHeart from '~icons/fluent/heart-24-filled';
+  import { readRecentLogs, openLogsFolder, clearLogs, logger } from '$lib/utils/logger';
+  import { providerState } from '$lib/state/providerState.svelte';
 
   let settings = $state({ ...configState.settings });
   let resetPending = $state(false);
@@ -93,6 +95,8 @@
   let availableBackgroundTypes = $state<BackgroundType[]>(supportedBackgroundTypes());
   let cacheStats = $state<CacheStats | null>(null);
   let cacheBusy = $state<'images' | 'all' | null>(null);
+  let copyingLogs = $state(false);
+  let clearingLogs = $state(false);
 
   let profileName = $derived(
     syncState.status.account_id || i18n.t('profile.local')
@@ -142,7 +146,7 @@
     { id: 'grid', labelKey: 'settings.grid_section' },
     { id: 'proxy', labelKey: 'settings.proxy_section' },
     { id: 'background', labelKey: 'settings.background_section' },
-    { id: 'network', labelKey: 'settings.network_section' },
+    { id: 'providers', labelKey: 'settings.providers_section' },
     { id: 'downloads', labelKey: 'settings.download_section' },
     { id: 'cache', labelKey: 'settings.cache_section' },
     { id: 'sync', labelKey: 'sync.title' },
@@ -356,6 +360,47 @@
 
   let showResetConfirm = $state(false);
   let showWipeConfirm = $state(false);
+  let showClearAllCacheConfirm = $state(false);
+  let showClearBgMediaConfirm = $state(false);
+  let sectionToReset = $state<string | null>(null);
+
+  async function handleCopyLogs() {
+    if (copyingLogs) return;
+    copyingLogs = true;
+    try {
+      const rawLogs = await readRecentLogs(500);
+      await navigator.clipboard.writeText(rawLogs.trim());
+      notify.success(i18n.t('settings.logs_copied'));
+    } catch (e) {
+      notify.error(i18n.t('settings.logs_copy_failed'));
+      logger.error('Failed to copy debug logs', e);
+    } finally {
+      copyingLogs = false;
+    }
+  }
+
+  async function handleOpenLogsFolder() {
+    try {
+      await openLogsFolder();
+    } catch (e) {
+      notify.error('Failed to open logs folder');
+      logger.error('Failed to open logs folder', e);
+    }
+  }
+
+  async function handleClearLogs() {
+    if (clearingLogs) return;
+    clearingLogs = true;
+    try {
+      await clearLogs();
+      notify.success(i18n.t('settings.logs_cleared'));
+    } catch (e) {
+      notify.error('Failed to clear logs');
+      logger.error('Failed to clear logs', e);
+    } finally {
+      clearingLogs = false;
+    }
+  }
 
   async function executeResetAllSettings() {
     if (resetPending) return;
@@ -434,17 +479,6 @@
           next.download_group_by_post = defaults.download_group_by_post;
           next.download_post_folder_template = defaults.download_post_folder_template;
           next.download_filename_template = defaults.download_filename_template;
-          break;
-
-        case 'network':
-          next.proxy_mode = defaults.proxy_mode;
-          next.proxy_url = defaults.proxy_url;
-          next.proxy_username = defaults.proxy_username;
-          next.proxy_password = defaults.proxy_password;
-          next.proxy_bypass_local = defaults.proxy_bypass_local;
-          next.api_domain = defaults.api_domain;
-          next.file_domain = defaults.file_domain;
-          next.image_domain = defaults.image_domain;
           break;
 
         case 'cache':
@@ -678,6 +712,7 @@
       <button
         type="button"
         class="settings-menu-option"
+        use:ripple
         disabled={resetPending}
         onclick={() => {
           stickySettingsMenuOpen = false;
@@ -693,11 +728,10 @@
         </span>
       </button>
 
-      <div class="my-1 border-t border-white/[0.06]"></div>
-
       <button
         type="button"
         class="settings-menu-option text-red-400 hover:text-red-300 hover:bg-red-500/10"
+        use:ripple
         disabled={wipePending}
         onclick={() => {
           stickySettingsMenuOpen = false;
@@ -723,6 +757,7 @@
       <button
         type="button"
         class="settings-menu-option"
+        use:ripple
         disabled={resetPending}
         onclick={() => {
           settingsMenuOpen = false;
@@ -738,11 +773,10 @@
         </span>
       </button>
 
-      <div class="my-1 border-t border-white/[0.06]"></div>
-
       <button
         type="button"
         class="settings-menu-option text-red-400 hover:text-red-300 hover:bg-red-500/10"
+        use:ripple
         disabled={wipePending}
         onclick={() => {
           settingsMenuOpen = false;
@@ -956,7 +990,7 @@
     {/if}
 
     <div id="settings-appearance" class="settings-section">
-      <SectionTitle icon={IconTranslate} title={i18n.t('settings.appearance_section')} onreset={() => resetSection('appearance')} />
+      <SectionTitle icon={IconTranslate} title={i18n.t('settings.appearance_section')} onreset={() => (sectionToReset = 'appearance')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1158,7 +1192,7 @@
     </div>
 
     <div id="settings-grid" class="settings-section">
-      <SectionTitle icon={IconGrid} title={i18n.t('settings.grid_section')} onreset={() => resetSection('grid')} />
+      <SectionTitle icon={IconGrid} title={i18n.t('settings.grid_section')} onreset={() => (sectionToReset = 'grid')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1199,7 +1233,7 @@
     </div>
 
     <div id="settings-proxy" class="settings-section">
-      <SectionTitle icon={IconGlobe} title={i18n.t('settings.proxy_section')} onreset={() => resetSection('proxy')} />
+      <SectionTitle icon={IconGlobe} title={i18n.t('settings.proxy_section')} onreset={() => (sectionToReset = 'proxy')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1274,7 +1308,7 @@
     </div>
 
     <div id="settings-background" class="settings-section">
-      <SectionTitle icon={IconPaint} title={i18n.t('settings.background_section')} onreset={() => resetSection('background')} />
+      <SectionTitle icon={IconPaint} title={i18n.t('settings.background_section')} onreset={() => (sectionToReset = 'background')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1351,7 +1385,7 @@
 
           {#if (backgroundState.settings.customKind === 'image' && backgroundState.settings.imageUrl) || (backgroundState.settings.customKind === 'video' && backgroundState.settings.videoUrl)}
             <SettingItem title={i18n.t('settings.background_media')} description={i18n.t('settings.background_media_desc')} icon={IconDelete}>
-              <Button variant="ghost" onclick={() => backgroundState.clearCustomMedia(backgroundState.settings.customKind as 'image' | 'video')}>
+              <Button variant="ghost" onclick={() => (showClearBgMediaConfirm = true)}>
                 <IconDelete />
                 {i18n.t('settings.background_media_clear')}
               </Button>
@@ -1362,51 +1396,13 @@
       </div>
     </div>
 
-    <div id="settings-network" class="settings-section">
-      <SectionTitle icon={IconGlobe} title={i18n.t('settings.network_section')} onreset={() => resetSection('network')} />
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
-        <SettingItem
-          title={i18n.t('settings.api_domain')}
-          description={i18n.t('settings.api_domain_desc')}
-          icon={IconGlobe}
-        >
-          <div class="w-full">
-            <Input
-              clearable={true}
-              placeholder="api.example.com"
-              bind:value={settings.api_domain}
-              onblur={() => updateAndSaveSetting('api_domain', settings.api_domain)}
-            />
-          </div>
-        </SettingItem>
-
-        <SettingItem title={i18n.t('settings.file_domain')} description={i18n.t('settings.file_domain_desc')} icon={IconGlobe}>
-          <div class="w-full">
-            <Input
-              clearable={true}
-              placeholder="files.example.com"
-              bind:value={settings.file_domain}
-              onblur={() => updateAndSaveSetting('file_domain', settings.file_domain)}
-            />
-          </div>
-        </SettingItem>
-
-        <SettingItem title={i18n.t('settings.image_domain')} description={i18n.t('settings.image_domain_desc')} icon={IconGlobe}>
-          <div class="w-full">
-            <Input
-              clearable={true}
-              placeholder="images.example.com"
-              bind:value={settings.image_domain}
-              onblur={() => updateAndSaveSetting('image_domain', settings.image_domain)}
-            />
-          </div>
-        </SettingItem>
-      </div>
+    <div id="settings-providers" class="settings-section">
+      <SectionTitle icon={IconGlobe} title={i18n.t('settings.providers_section')} />
+      <ProviderSettings />
     </div>
 
     <div id="settings-downloads" class="settings-section">
-      <SectionTitle icon={IconDownload} title={i18n.t('settings.download_section')} onreset={() => resetSection('downloads')} />
+      <SectionTitle icon={IconDownload} title={i18n.t('settings.download_section')} onreset={() => (sectionToReset = 'downloads')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1622,7 +1618,7 @@
     </div>
 
     <div id="settings-cache" class="settings-section">
-      <SectionTitle icon={IconDatabase} title={i18n.t('settings.cache_section')} onreset={() => resetSection('cache')} />
+      <SectionTitle icon={IconDatabase} title={i18n.t('settings.cache_section')} onreset={() => (sectionToReset = 'cache')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem title={i18n.t('settings.cache_usage')} description={i18n.t('settings.cache_usage_desc')} icon={IconDatabase}>
@@ -1666,11 +1662,43 @@
           <Button
             variant="danger"
             disabled={!!cacheBusy || !cacheStats || cacheStats.total_bytes + cacheStats.metadata_bytes === 0}
-            onclick={() => void clearCache('all')}
+            onclick={() => (showClearAllCacheConfirm = true)}
           >
             {#if cacheBusy === 'all'}<IconLoading />{:else}<IconDelete />{/if}
             {i18n.t('settings.cache_clear_all_action')}
           </Button>
+        </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.diagnostics_logs')}
+          description={i18n.t('settings.diagnostics_logs_desc')}
+          icon={IconDocument}
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              disabled={copyingLogs}
+              onclick={() => void handleCopyLogs()}
+            >
+              {#if copyingLogs}<IconLoading class="mr-1.5" />{:else}<IconCopy class="mr-1.5" />{/if}
+              {i18n.t('settings.copy_logs')}
+            </Button>
+            <Button
+              variant="ghost"
+              onclick={() => void handleOpenLogsFolder()}
+            >
+              <IconFolder class="mr-1.5" />
+              {i18n.t('settings.open_logs_folder')}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={clearingLogs}
+              onclick={() => void handleClearLogs()}
+            >
+              {#if clearingLogs}<IconLoading class="mr-1.5" />{:else}<IconDelete class="mr-1.5" />{/if}
+              {i18n.t('settings.clear_logs')}
+            </Button>
+          </div>
         </SettingItem>
 
         <SettingItem
@@ -1696,7 +1724,7 @@
     </div>
 
     <div id="settings-updates" class="settings-section">
-      <SectionTitle icon={IconSparkle} title={i18n.t('settings.updates_section')} onreset={() => resetSection('updates')} />
+      <SectionTitle icon={IconSparkle} title={i18n.t('settings.updates_section')} onreset={() => (sectionToReset = 'updates')} />
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
         <SettingItem
@@ -1784,19 +1812,19 @@
 <Modal
   isOpen={showResetConfirm}
   title={i18n.t('settings.reset_all')}
-  size="md"
+  size="sm"
   onclose={() => (showResetConfirm = false)}
 >
-  <div class="flex flex-col gap-5 pt-1">
-    <p class="text-sm text-white/70 leading-relaxed m-0">
-      {i18n.t('settings.reset_all_desc')}
+  <div class="modal-confirm-layout">
+    <p class="modal-confirm-desc">
+      {i18n.t('settings.reset_all_confirm')}
     </p>
 
-    <div class="flex flex-col-reverse sm:grid sm:grid-cols-2 gap-2.5 sm:gap-3 w-full pt-3 border-t border-white/6">
+    <div class="modal-confirm-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-4 border border-white/8 hover:border-white/16"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
         disabled={resetPending}
         onclick={() => (showResetConfirm = false)}
       >
@@ -1806,16 +1834,136 @@
       <Button
         variant="accent"
         size="md"
-        class="w-full justify-center px-4"
+        class="w-full justify-center px-3"
         disabled={resetPending}
         onclick={() => void executeResetAllSettings()}
       >
         {#if resetPending}
-          <IconLoading class="mr-2 shrink-0" />
+          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
         {:else}
-          <IconArrowReset class="mr-2 shrink-0" />
+          <IconArrowReset class="w-5 h-5 mr-1.5 shrink-0" />
         {/if}
-        <span class="truncate">{i18n.t('settings.reset_all')}</span>
+        <span class="truncate">{i18n.t('common.reset')}</span>
+      </Button>
+    </div>
+  </div>
+</Modal>
+
+<Modal
+  isOpen={Boolean(sectionToReset)}
+  title={i18n.t('settings.reset_section_title')}
+  size="sm"
+  onclose={() => (sectionToReset = null)}
+>
+  <div class="modal-confirm-layout">
+    <p class="modal-confirm-desc">
+      {i18n.t('settings.reset_section_confirm')}
+    </p>
+
+    <div class="modal-confirm-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        onclick={() => (sectionToReset = null)}
+      >
+        <span class="truncate">{i18n.t('common.cancel')}</span>
+      </Button>
+
+      <Button
+        variant="accent"
+        size="md"
+        class="w-full justify-center px-3"
+        onclick={() => {
+          if (sectionToReset) {
+            const sec = sectionToReset;
+            sectionToReset = null;
+            void resetSection(sec);
+          }
+        }}
+      >
+        <IconArrowReset class="w-5 h-5 mr-1.5 shrink-0" />
+        <span class="truncate">{i18n.t('common.reset')}</span>
+      </Button>
+    </div>
+  </div>
+</Modal>
+
+<Modal
+  isOpen={showClearAllCacheConfirm}
+  title={i18n.t('settings.cache_clear_all')}
+  size="sm"
+  onclose={() => (showClearAllCacheConfirm = false)}
+>
+  <div class="modal-confirm-layout">
+    <p class="modal-confirm-desc">
+      {i18n.t('settings.cache_clear_all_confirm')}
+    </p>
+
+    <div class="modal-confirm-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        disabled={cacheBusy === 'all'}
+        onclick={() => (showClearAllCacheConfirm = false)}
+      >
+        <span class="truncate">{i18n.t('common.cancel')}</span>
+      </Button>
+
+      <Button
+        variant="danger"
+        size="md"
+        class="w-full justify-center px-3"
+        disabled={cacheBusy === 'all'}
+        onclick={() => {
+          showClearAllCacheConfirm = false;
+          void clearCache('all');
+        }}
+      >
+        {#if cacheBusy === 'all'}
+          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
+        {:else}
+          <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
+        {/if}
+        <span class="truncate">{i18n.t('common.delete')}</span>
+      </Button>
+    </div>
+  </div>
+</Modal>
+
+<Modal
+  isOpen={showClearBgMediaConfirm}
+  title={i18n.t('settings.background_media_clear')}
+  size="sm"
+  onclose={() => (showClearBgMediaConfirm = false)}
+>
+  <div class="modal-confirm-layout">
+    <p class="modal-confirm-desc">
+      {i18n.t('settings.background_media_clear_confirm')}
+    </p>
+
+    <div class="modal-confirm-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        onclick={() => (showClearBgMediaConfirm = false)}
+      >
+        <span class="truncate">{i18n.t('common.cancel')}</span>
+      </Button>
+
+      <Button
+        variant="danger"
+        size="md"
+        class="w-full justify-center px-3"
+        onclick={() => {
+          showClearBgMediaConfirm = false;
+          backgroundState.clearCustomMedia(backgroundState.settings.customKind as 'image' | 'video');
+        }}
+      >
+        <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
+        <span class="truncate">{i18n.t('common.delete')}</span>
       </Button>
     </div>
   </div>
@@ -1824,19 +1972,19 @@
 <Modal
   isOpen={showWipeConfirm}
   title={i18n.t('settings.wipe_all_data')}
-  size="md"
+  size="sm"
   onclose={() => (showWipeConfirm = false)}
 >
-  <div class="flex flex-col gap-5 pt-1">
-    <p class="text-sm text-white/70 leading-relaxed m-0">
+  <div class="modal-confirm-layout">
+    <p class="modal-confirm-desc">
       {i18n.t('settings.wipe_all_data_confirm')}
     </p>
 
-    <div class="flex flex-col-reverse sm:grid sm:grid-cols-2 gap-2.5 sm:gap-3 w-full pt-3 border-t border-white/6">
+    <div class="modal-confirm-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-4 border border-white/8 hover:border-white/16"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
         disabled={wipePending}
         onclick={() => (showWipeConfirm = false)}
       >
@@ -1846,16 +1994,16 @@
       <Button
         variant="danger"
         size="md"
-        class="w-full justify-center px-4"
+        class="w-full justify-center px-3"
         disabled={wipePending}
         onclick={() => void executeWipeAllData()}
       >
         {#if wipePending}
-          <IconLoading class="mr-2 shrink-0" />
+          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
         {:else}
-          <IconDelete class="mr-2 shrink-0" />
+          <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
         {/if}
-        <span class="truncate">{i18n.t('settings.wipe_all_data')}</span>
+        <span class="truncate">{i18n.t('common.delete')}</span>
       </Button>
     </div>
   </div>

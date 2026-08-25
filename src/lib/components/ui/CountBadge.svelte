@@ -1,7 +1,7 @@
 <script lang="ts">
   interface Props {
     count?: number | string | null;
-    variant?: 'tab' | 'header' | 'muted';
+    variant?: 'tab' | 'header' | 'muted' | 'pill';
     showZero?: boolean;
     max?: number;
     class?: string;
@@ -60,20 +60,29 @@
     letter-spacing: -0.01em;
     user-select: none;
     pointer-events: none;
-    transition: opacity var(--duration-fast) var(--ease-expo), color var(--duration-fast) var(--ease-expo);
+    box-sizing: border-box;
+    transition: opacity var(--duration-fast) var(--ease-expo), background var(--duration-fast) var(--ease-expo), color var(--duration-fast) var(--ease-expo);
   }
 
-  .variant-tab {
-    font-size: 12px;
-    font-weight: 500;
-    opacity: 0.55;
+  .variant-tab,
+  .variant-pill {
+    padding: 1.5px 6.5px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(255, 255, 255, 0.12);
+    color: inherit;
+    font-size: 11px;
+    font-weight: 600;
   }
 
-  /* When inside an active accent button, boost opacity for crisp contrast */
+  /* When inside an active accent button, boost background contrast */
   :global(.btn-accent) .variant-tab,
+  :global(.btn-accent) .variant-pill,
   :global(.btn.btn-accent) .variant-tab,
-  :global(.btn.variant-accent) .variant-tab {
-    opacity: 0.78;
+  :global(.btn.btn-accent) .variant-pill,
+  :global(.btn.variant-accent) .variant-tab,
+  :global(.btn.variant-accent) .variant-pill {
+    background: rgba(255, 255, 255, 0.22);
+    color: inherit;
   }
 
   .variant-header {

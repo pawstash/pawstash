@@ -35,7 +35,7 @@ export class ThemeState {
       if (saved) {
         try {
           Object.assign(this.tokens, JSON.parse(saved));
-        } catch (e) {}
+        } catch (e) { }
       }
     }
     if (typeof window !== 'undefined') {
@@ -225,7 +225,7 @@ function darkenColor(hex: string, percent: number): string {
 
 export function getContrastColor(color: string): string {
   let r = 255, g = 255, b = 255;
-  
+
   if (color.startsWith('#')) {
     const cleanHex = color.replace('#', '');
     if (cleanHex.length === 3) {
@@ -245,7 +245,7 @@ export function getContrastColor(color: string): string {
       b = parseInt(matches[2], 10);
     }
   }
-  
+
   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
   return yiq >= 128 ? '#111111' : '#ffffff';
 }

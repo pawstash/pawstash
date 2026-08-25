@@ -24,11 +24,22 @@
       if ((host === 'boosty.to' || host.endsWith('.boosty.to')) && /\/posts\/[^/]+/i.test(path)) return 'boosty';
       if ((host === 'afdian.com' || host.endsWith('.afdian.com') || host === 'afdian.net' || host.endsWith('.afdian.net')) && /\/p\/[^/]+/i.test(path)) return 'afdian';
       if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
+      if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
+      if (host.includes('pixeldrain.com')) return 'pixeldrain';
+      if (host.includes('dropbox.com')) return 'dropbox';
+      if (host.includes('drive.google.com')) return 'googledrive';
       if (['bit.ly', 'buff.ly', 'cutt.ly', 'goo.gl', 'is.gd', 'lnkd.in', 'ow.ly', 'rb.gy', 'rebrand.ly', 'shorturl.at', 't.co', 'tiny.one', 'tinyurl.com', 'v.gd', 'x.gd'].includes(host)) return 'shortlink';
       return null;
     } catch {
       return null;
     }
+  }
+
+  export function extractCloudLinks(raw: string): string[] {
+    if (!raw) return [];
+    const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
+    const matches = raw.match(regex) || [];
+    return [...new Set(matches)];
   }
 
   function safeHttpUrl(raw: string): string | null {
@@ -40,9 +51,43 @@
     }
   }
 
+  export function preprocessRichContent(content: string): string {
+    if (!content) return '';
+    let res = content;
+
+    // Unescape encoded HTML tags like &lt;strong&gt;, &lt;em&gt;, &lt;p&gt;, &lt;br&gt;, &lt;a href=...&gt;
+    if (res.includes('&lt;') && res.includes('&gt;')) {
+      res = res.replace(/&lt;(\/?(?:strong|b|em|i|u|s|del|p|br|div|span|h[1-6]|ul|ol|li|blockquote|a|code|pre)(?:\s+[^&>]*)?)&gt;/gi, '<$1>');
+    }
+
+    // Convert markdown links: [text](https://...) -> <a href="https://...">text</a>
+    res = res.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+
+    // Convert markdown bold: **bold** or __bold__ -> <strong>bold</strong>
+    res = res.replace(/(\*{2}|_{2})(.*?)\1/g, '<strong>$2</strong>');
+
+    // Convert markdown italic: *italic* or _italic_ -> <em>italic</em>
+    res = res.replace(/(^|[^\w*])\*([^\*\n]+)\*([^\w*]|$)/g, '$1<em>$2</em>$3');
+    res = res.replace(/(^|[^\w_])_([^\_\n]+)_([^\w_]|$)/g, '$1<em>$2</em>$3');
+
+    // Convert markdown strikethrough: ~~strike~~ -> <del>strike</del>
+    res = res.replace(/~~(.*?)~~/g, '<del>$1</del>');
+
+    // Convert markdown code: `code` -> <code>code</code>
+    res = res.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // If there are no HTML paragraph/break tags, preserve newlines as <br>
+    if (!/<(p|br|div|h[1-6]|ul|ol|li|blockquote)[^>]*>/i.test(res)) {
+      res = res.replace(/\n/g, '<br>');
+    }
+
+    return res;
+  }
+
   export function sanitizeRichHtml(html: string): string {
     if (typeof DOMParser === 'undefined' || !html) return '';
-    const document = new DOMParser().parseFromString(html, 'text/html');
+    const preprocessed = preprocessRichContent(html);
+    const document = new DOMParser().parseFromString(preprocessed, 'text/html');
     for (const element of [...document.body.querySelectorAll('*')]) {
       const tag = element.tagName.toLocaleLowerCase();
       if (DROP_TAGS.has(tag)) {
@@ -115,17 +160,33 @@
   import { i18n } from '$lib/i18n';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { apiOpenInBrowser } from '$lib/utils/ipc';
+  import { toast } from 'svelte-sonner';
+  import { ripple } from '$lib/motion';
+  import IconFolder from '~icons/fluent/folder-open-24-regular';
+  import IconOpen from '~icons/fluent/open-24-regular';
+  import IconCopy from '~icons/fluent/copy-24-regular';
 
   interface Props {
     html: string;
     currentService?: string;
     currentCreatorId?: string;
+    onopencloud?: (url: string) => void;
   }
 
-  let { html, currentService, currentCreatorId }: Props = $props();
+  interface LinkPopoverState {
+    url: string;
+    x: number;
+    y: number;
+    canOpenInApp: boolean;
+    isCloud?: boolean;
+    resolvedPost?: ResolvedPostLink;
+  }
+
+  let { html, currentService, currentCreatorId, onopencloud }: Props = $props();
   let root = $state<HTMLDivElement>();
   let generation = 0;
   let safeHtml = $derived(sanitizeRichHtml(html));
+  let linkPopover = $state<LinkPopoverState | null>(null);
 
   function markResolved(anchor: HTMLAnchorElement, resolved: ResolvedPostLink | null) {
     if (!root?.contains(anchor)) return;
@@ -144,7 +205,7 @@
       const platform = smartLinkPlatform(anchor.href);
       anchor.dataset.linkPlatform = platform || 'external';
       anchor.title ||= i18n.t('post.link_open_external');
-      if (platform && platform !== 'gumroad') {
+      if (platform && platform !== 'gumroad' && platform !== 'mega' && platform !== 'dropbox' && platform !== 'pixeldrain' && platform !== 'googledrive') {
         anchor.dataset.smartState = 'checking';
         smartAnchors.push(anchor);
       }
@@ -168,17 +229,44 @@
     if (!anchor || !root?.contains(anchor)) return;
     event.preventDefault();
     event.stopPropagation();
-    const platform = smartLinkPlatform(anchor.href);
-    if (platform && platform !== 'gumroad') {
-      anchor.dataset.smartState = 'checking';
-      const resolved = await resolveSmartLink(anchor.href, currentService, currentCreatorId);
-      markResolved(anchor, resolved);
-      if (resolved) {
-        navigationState.openPost(resolved.service, resolved.creator_id, resolved.post_id);
-        return;
-      }
+
+    const url = anchor.href;
+    const platform = smartLinkPlatform(url);
+
+    // 1. Cloud folder links (MEGA, Dropbox, Pixeldrain, Google Drive)
+    if (platform === 'mega' || platform === 'dropbox' || platform === 'pixeldrain' || platform === 'googledrive') {
+      linkPopover = {
+        url,
+        x: event.clientX,
+        y: event.clientY,
+        canOpenInApp: Boolean(onopencloud),
+        isCloud: true
+      };
+      return;
     }
-    void apiOpenInBrowser(anchor.href);
+
+    // 2. Smart links (Patreon, Fanbox, Fantia, Boosty, Afdian, Subscribestar)
+    if (platform && platform !== 'gumroad' && platform !== 'shortlink') {
+      anchor.dataset.smartState = 'checking';
+      const resolved = await resolveSmartLink(url, currentService, currentCreatorId);
+      markResolved(anchor, resolved);
+      linkPopover = {
+        url,
+        x: event.clientX,
+        y: event.clientY,
+        canOpenInApp: Boolean(resolved),
+        resolvedPost: resolved || undefined
+      };
+      return;
+    }
+
+    // 3. Regular external links (can only open in browser or copy)
+    linkPopover = {
+      url,
+      x: event.clientX,
+      y: event.clientY,
+      canOpenInApp: false
+    };
   }
 
   $effect(() => {
@@ -192,6 +280,76 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div bind:this={root} class="rich-content-root" onclick={handleClick}>{@html safeHtml}</div>
+
+{#if linkPopover}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-50 bg-transparent"
+    onclick={() => (linkPopover = null)}
+  >
+    <div
+      class="link-popover floating-surface absolute z-50 min-w-[200px] flex flex-col gap-[var(--floating-gap)] text-xs"
+      style="left: {Math.max(12, Math.min(linkPopover.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 220))}px; top: {Math.max(12, Math.min(linkPopover.y + 10, (typeof window !== 'undefined' ? window.innerHeight : 600) - 150))}px;"
+      onclick={(e) => e.stopPropagation()}
+    >
+      {#if linkPopover.canOpenInApp}
+        <button
+          type="button"
+          class="floating-item font-medium"
+          use:ripple
+          onclick={() => {
+            const state = linkPopover!;
+            linkPopover = null;
+            if (state.isCloud && onopencloud) {
+              onopencloud(state.url);
+            } else if (state.resolvedPost) {
+              navigationState.openPost(
+                state.resolvedPost.service,
+                state.resolvedPost.creator_id,
+                state.resolvedPost.post_id
+              );
+            } else {
+              void apiOpenInBrowser(state.url);
+            }
+          }}
+        >
+          <IconFolder class="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
+          <span class="text-[var(--text-primary)]">{i18n.t('post.open_in_app') || 'Open in App'}</span>
+        </button>
+      {/if}
+
+      <button
+        type="button"
+        class="floating-item"
+        use:ripple
+        onclick={() => {
+          const u = linkPopover!.url;
+          linkPopover = null;
+          void apiOpenInBrowser(u);
+        }}
+      >
+        <IconOpen class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
+        <span>{i18n.t('post.open_in_browser') || 'Open in Browser'}</span>
+      </button>
+
+      <button
+        type="button"
+        class="floating-item"
+        use:ripple
+        onclick={() => {
+          const u = linkPopover!.url;
+          linkPopover = null;
+          navigator.clipboard.writeText(u);
+          toast.success(i18n.t('post.link_copied') || 'Link copied');
+        }}
+      >
+        <IconCopy class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
+        <span>{i18n.t('post.copy_link') || 'Copy Link'}</span>
+      </button>
+    </div>
+  </div>
+{/if}
 
 <style>
   .rich-content-root { display: contents; }
@@ -233,6 +391,10 @@
   .rich-content-root :global(a[data-link-platform='afdian']) { --smart-link-color: #9b7cff; }
   .rich-content-root :global(a[data-link-platform='gumroad']) { --smart-link-color: #ff90e8; }
   .rich-content-root :global(a[data-link-platform='shortlink']) { --smart-link-color: #a78bfa; }
+  .rich-content-root :global(a[data-link-platform='mega']) { --smart-link-color: #ef4444; }
+  .rich-content-root :global(a[data-link-platform='dropbox']) { --smart-link-color: #3b82f6; }
+  .rich-content-root :global(a[data-link-platform='pixeldrain']) { --smart-link-color: #a855f7; }
+  .rich-content-root :global(a[data-link-platform='googledrive']) { --smart-link-color: #10b981; }
 
   .rich-content-root :global(a[data-link-platform]:not([data-link-platform='external'])) {
     color: var(--smart-link-color);

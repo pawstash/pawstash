@@ -7,10 +7,11 @@
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import type { PawchivePost } from '$lib/types/pawchive';
+  import { parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import PostGrid from '$lib/components/pawchive/PostGrid.svelte';
+  import PostGrid from '$lib/components/content/PostGrid.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -18,7 +19,7 @@
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
-  import ServiceIcon from '$lib/components/pawchive/ServiceIcon.svelte';
+  import ServiceIcon from '$lib/components/content/ServiceIcon.svelte';
   import { ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -72,14 +73,14 @@
   let input = $state<HTMLInputElement>();
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
-  let stashes = $derived(libraryState.collections.filter((c) => c.kind === 'stash'));
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: s.name })));
+  let stashes = $derived(libraryState.allStashes);
+  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
   let batchSelectedStashes = $derived.by(() => {
     if (selectedPosts.length === 0) return [];
     const stashCounts = new Map<string, number>();
     for (const post of selectedPosts) {
-      const ids = libraryState.getCustomPostStashes(post);
+      const ids = libraryState.getPostStashes(post);
       for (const id of ids) {
         stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
       }
@@ -128,10 +129,9 @@
     }
   }
 
-  let isCustomStash = $derived(
+  let isStashSelected = $derived(
     libraryState.selectedCollectionId !== null &&
-    libraryState.selectedCollection &&
-    libraryState.selectedCollection.kind === 'stash'
+    libraryState.selectedCollection !== null
   );
 
   function handleSelectAllPosts() {
@@ -277,7 +277,7 @@
 
   $effect(() => {
     if (manageOpen || stickyManageOpen) {
-      editStashName = libraryState.selectedCollection?.name ?? '';
+      editStashName = libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : '';
     }
   });
 
@@ -419,9 +419,9 @@
       if (sortBy === 'title') {
         comparison = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
       } else if (sortBy === 'published') {
-        const valA = a.published || '';
-        const valB = b.published || '';
-        comparison = valA.localeCompare(valB);
+        const valA = parseDateTimestamp(a.published);
+        const valB = parseDateTimestamp(b.published);
+        comparison = valA - valB;
       } else {
         const valA = a.library_added_at || '';
         const valB = b.library_added_at || '';
@@ -459,7 +459,7 @@
           type="submit"
           class="icon-btn"
           use:ripple
-          disabled={!editStashName.trim() || editStashName.trim() === libraryState.selectedCollection?.name || renamingPending}
+          disabled={!editStashName.trim() || editStashName.trim() === (libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : '') || renamingPending}
           title={i18n.t('library.rename_stash')}
           aria-label="Rename stash"
         >
@@ -487,21 +487,23 @@
       <span>{i18n.t('library.clear_stash')}</span>
     </Button>
 
-    <Button
-      variant="danger"
-      size="sm"
-      disabled={clearingPending}
-      onclick={handleDeleteStash}
-      class="manage-stash-btn"
-    >
-      <IconDelete class="w-[16px] h-[16px]" />
-      <span>{i18n.t('library.delete_stash')}</span>
-    </Button>
+    {#if !libraryState.selectedCollection?.is_system && libraryState.selectedCollection?.kind !== 'inbox'}
+      <Button
+        variant="danger"
+        size="sm"
+        disabled={clearingPending}
+        onclick={handleDeleteStash}
+        class="manage-stash-btn"
+      >
+        <IconDelete class="w-[16px] h-[16px]" />
+        <span>{i18n.t('library.delete_stash')}</span>
+      </Button>
+    {/if}
   </div>
 {/snippet}
 
 {#snippet manageStashTrigger(sticky = false)}
-  {#if isCustomStash}
+  {#if isStashSelected}
     {#if sticky}
       <PopoverMenu
         bind:open={stickyManageOpen}
@@ -533,7 +535,7 @@
       onclick={() => serviceFilters = {}}
       class="filter-chip chip-all {Object.keys(serviceFilters).length === 0 ? 'state-include' : ''}"
     >
-      <IconGlobe class="w-[14px] h-[14px]" />
+      <IconGlobe class="w-5 h-5" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each services as service}
@@ -544,11 +546,18 @@
         onclick={() => toggleService(service)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <ServiceIcon service={service} class="w-[14px] h-[14px]" />
+        <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
+
+  <div class="floating-divider"></div>
 
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
@@ -561,36 +570,55 @@
         onclick={() => toggleFormat(fmt.id)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <IconComponent class="w-[14px] h-[14px]" />
+        <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
 
+  <div class="floating-divider"></div>
+
   <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-  <div class="view-option" class:active={onlyWithAttachments}>
+  <button
+    type="button"
+    class="view-option"
+    class:active={onlyWithAttachments}
+    use:ripple
+    onclick={() => onlyWithAttachments = !onlyWithAttachments}
+  >
     <Checkbox
       checked={onlyWithAttachments}
       onchange={(v) => onlyWithAttachments = v}
     />
-    <button type="button" onclick={() => onlyWithAttachments = !onlyWithAttachments}>
+    <span>
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
-    </button>
+    </span>
     <IconDocument class="view-option-icon w-[20px] h-[20px]" />
-  </div>
+  </button>
 
-  <div class="view-option" class:active={onlyDownloaded}>
+  <button
+    type="button"
+    class="view-option"
+    class:active={onlyDownloaded}
+    use:ripple
+    onclick={() => onlyDownloaded = !onlyDownloaded}
+  >
     <Checkbox
       checked={onlyDownloaded}
       onchange={(v) => onlyDownloaded = v}
     />
-    <button type="button" onclick={() => onlyDownloaded = !onlyDownloaded}>
+    <span>
       <strong>{i18n.t('library.only_downloaded')}</strong>
       <small>{i18n.t('library.only_downloaded_desc')}</small>
-    </button>
+    </span>
     <IconArrowDownload class="view-option-icon w-[20px] h-[20px]" />
-  </div>
+  </button>
 {/snippet}
 
 {#snippet collectionTabs()}
@@ -610,7 +638,7 @@
           variant={libraryState.selectedCollectionId !== null ? 'accent' : 'ghost'}
           options={libraryState.collections.map((c) => ({
             value: c.id,
-            label: `${c.kind === 'inbox' ? (i18n.t('library.inbox') || 'Inbox') : c.name} (${c.item_count})`
+            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`
           }))}
           value={libraryState.selectedCollectionId ?? undefined}
           placeholder={i18n.t('library.stashes') || 'Stashes'}
@@ -635,7 +663,7 @@
           { value: 'all', label: `${i18n.t('library.all') || 'All'} (${libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)})` },
           ...libraryState.collections.map((c) => ({
             value: c.id,
-            label: `${c.kind === 'inbox' ? (i18n.t('library.inbox') || 'Inbox') : c.name} (${c.item_count})`
+            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`
           }))
         ]}
         value={libraryState.selectedCollectionId ?? 'all'}
@@ -706,7 +734,7 @@
   {#snippet overlay()}
     <StickyHeader
       threshold={120}
-      title={libraryState.selectedCollection ? libraryState.selectedCollection.name : (i18n.t('library.title') || 'Library')}
+      title={libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : (i18n.t('library.title') || 'Library')}
     >
       {#snippet center()}
         <div class="flex items-center gap-2">
@@ -790,7 +818,7 @@
     class="selection-stash-select"
   />
 
-  {#if isCustomStash}
+  {#if isStashSelected}
     <Button
       variant="ghost"
       size="sm"

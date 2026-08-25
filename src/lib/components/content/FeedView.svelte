@@ -20,7 +20,8 @@
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
-  import { getPostDownloadTargets } from '$lib/utils/media';
+  import { providerState } from '$lib/state/providerState.svelte';
+  import { getPostDownloadTargets, formatProviderName } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { notify } from '$lib/utils/toast';
@@ -49,14 +50,14 @@
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
-  let stashes = $derived(libraryState.collections.filter((c) => c.kind === 'stash'));
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: s.name })));
+  let stashes = $derived(libraryState.allStashes);
+  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
   let batchSelectedStashes = $derived.by(() => {
     if (selectedPosts.length === 0) return [];
     const stashCounts = new Map<string, number>();
     for (const post of selectedPosts) {
-      const ids = libraryState.getCustomPostStashes(post);
+      const ids = libraryState.getPostStashes(post);
       for (const id of ids) {
         stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
       }
@@ -378,12 +379,42 @@
     { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
   ];
 
+  function toggleProvider(providerId: string) {
+    feedState.providerFilters = toggleFilterKey(feedState.providerFilters, providerId);
+  }
+
+  let enabledProviders = $derived(providerState.providers.filter((p) => p.enabled));
+
   onMount(() => {
     if (!feedState.current.loaded) void feedState.refresh();
   });
 </script>
 
 {#snippet filterInnerContent()}
+  {#if enabledProviders.length > 1}
+    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <div class="service-options">
+      {#each enabledProviders as provider}
+        {@const state = feedState.providerFilters[provider.id] ?? 'neutral'}
+        {@const cleanName = formatProviderName(provider.name)}
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={() => toggleProvider(provider.id)}
+          class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+        >
+          <span>{cleanName}</span>
+          {#if state === 'include'}
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          {:else if state === 'exclude'}
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          {/if}
+        </Button>
+      {/each}
+    </div>
+    <div class="floating-divider"></div>
+  {/if}
+
   <span class="filter-label">{i18n.t('feed.platform')}</span>
   <div class="service-options">
     <Button
@@ -392,7 +423,7 @@
       onclick={() => feedState.serviceFilters = {}}
       class="filter-chip chip-all {Object.keys(feedState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
-      <IconGlobe class="w-[14px] h-[14px]" />
+      <IconGlobe class="w-5 h-5" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
     {#each services as service}
@@ -403,11 +434,18 @@
         onclick={() => toggleService(service)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <ServiceIcon service={service} class="w-[14px] h-[14px]" />
+        <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
+
+  <div class="floating-divider"></div>
 
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
@@ -420,36 +458,55 @@
         onclick={() => toggleFormat(fmt.id)}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
-        <IconComponent class="w-[14px] h-[14px]" />
+        <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
       </Button>
     {/each}
   </div>
 
+  <div class="floating-divider"></div>
+
   <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-  <div class="view-option" class:active={feedState.onlyWithAttachments}>
+  <button
+    type="button"
+    class="view-option"
+    class:active={feedState.onlyWithAttachments}
+    use:ripple
+    onclick={() => feedState.onlyWithAttachments = !feedState.onlyWithAttachments}
+  >
     <Checkbox
       checked={feedState.onlyWithAttachments}
       onchange={(v) => feedState.onlyWithAttachments = v}
     />
-    <button type="button" onclick={() => feedState.onlyWithAttachments = !feedState.onlyWithAttachments}>
+    <span>
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
-    </button>
-    <IconDocument class="view-option-icon w-[20px] h-[20px]" />
-  </div>
+    </span>
+    <IconDocument class="view-option-icon w-5 h-5" />
+  </button>
 
-  <div class="view-option" class:active={feedState.favoritesOnly}>
+  <button
+    type="button"
+    class="view-option"
+    class:active={feedState.favoritesOnly}
+    use:ripple
+    onclick={toggleFavoritesFilter}
+  >
     <Checkbox
       checked={feedState.favoritesOnly}
       onchange={toggleFavoritesFilter}
     />
-    <button type="button" onclick={toggleFavoritesFilter}>
+    <span>
       <strong>{i18n.t('feed.favorite_creators_only')}</strong>
       <small>{i18n.t('feed.favorite_creators_desc')}</small>
-    </button>
-    <IconStar class="view-option-icon w-[20px] h-[20px] text-amber-500" />
-  </div>
+    </span>
+    <IconStar class="view-option-icon w-5 h-5 text-amber-500" />
+  </button>
 {/snippet}
 
 {#snippet feedFilter(sticky = false)}
