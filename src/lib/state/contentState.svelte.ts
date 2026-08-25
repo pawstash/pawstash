@@ -77,7 +77,7 @@ export class ContentState {
 
     if (!force && entry.loaded && entry.post?.detail_fetched) return;
 
-    entry.loading = !entry.post;
+    entry.loading = true;
     entry.error = null;
 
     try {

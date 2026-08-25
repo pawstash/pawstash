@@ -1,6 +1,7 @@
 <script module lang="ts">
   const globalCloudFolderCache = new Map<string, import('$lib/types/cloud').CloudFolderResult>();
   const globalPostCloudNodes = new Map<string, import('$lib/types/pawchive').Attachment[]>();
+  const globalProbedSizes = new Map<string, number>();
 </script>
 
 <script lang="ts">
@@ -558,7 +559,11 @@
     if (typeof (file as any).file_size === 'number' && (file as any).file_size > 0) return (file as any).file_size;
     if (typeof (file as any).bytes === 'number' && (file as any).bytes > 0) return (file as any).bytes;
     if (typeof file.size === 'string' && Number(file.size) > 0) return Number(file.size);
-    if (file.path && probedMediaSizes[file.path] && probedMediaSizes[file.path] > 0) return probedMediaSizes[file.path];
+    if (file.path) {
+      if (probedMediaSizes[file.path] && probedMediaSizes[file.path] > 0) return probedMediaSizes[file.path];
+      const cached = globalProbedSizes.get(file.path);
+      if (cached && cached > 0) return cached;
+    }
     const job = attachmentDownload(file);
     if (job && (job.total_bytes > 0 || job.downloaded_bytes > 0)) {
       return Math.max(job.total_bytes, job.downloaded_bytes);
@@ -1010,22 +1015,42 @@
       `Some files exceed the archive size limit and weren't saved: ${details}. Please note these limits are in place to keep this site running long term, without costing a fortune. You can favorite the creator though, certain milestones increase the limit.`;
   });
 
+  let lastLoadedPostKey = '';
   $effect(() => {
-    if (service && creatorId && postId) {
-      void contentState.loadPost(service, creatorId, postId).then(() => {
-        void checkFavoriteStatus();
+    const currentService = service;
+    const currentCreatorId = creatorId;
+    const currentPostId = postId;
+    const currentKey = `${currentService}:${currentCreatorId}:${currentPostId}`;
+    if (currentService && currentCreatorId && currentPostId) {
+      if (lastLoadedPostKey !== currentKey) {
+        lastLoadedPostKey = currentKey;
+        probingMediaPaths.clear();
+        probeQueue = [];
+      }
+      untrack(() => {
+        void contentState.loadPost(currentService, currentCreatorId, currentPostId).then(() => {
+          void checkFavoriteStatus();
+        });
+        void providerState.loadPostRevisions(currentService, currentCreatorId, currentPostId);
       });
-      void providerState.loadPostRevisions(service, creatorId, postId);
     }
   });
 
   $effect(() => {
-    if (service && creatorId && post) {
-      if (post.prev) {
-        void contentState.loadPost(service, creatorId, post.prev);
+    const currentService = service;
+    const currentCreatorId = creatorId;
+    const prevId = post?.prev;
+    const nextId = post?.next;
+    if (currentService && currentCreatorId) {
+      if (prevId) {
+        untrack(() => {
+          void contentState.loadPost(currentService, currentCreatorId, prevId);
+        });
       }
-      if (post.next) {
-        void contentState.loadPost(service, creatorId, post.next);
+      if (nextId) {
+        untrack(() => {
+          void contentState.loadPost(currentService, currentCreatorId, nextId);
+        });
       }
     }
   });
@@ -1186,32 +1211,71 @@
     return remoteFileUrl(file as Attachment);
   }
 
+  let probeQueue: string[] = [];
+  let activeProbes = 0;
+  const MAX_CONCURRENT_PROBES = 3;
+
+  function processProbeQueue() {
+    while (activeProbes < MAX_CONCURRENT_PROBES && probeQueue.length > 0) {
+      const path = probeQueue.shift()!;
+      activeProbes++;
+      const file = media.find((m) => m.path === path) || (post?.file?.path === path ? post.file : undefined);
+      const url = path.startsWith('http://') || path.startsWith('https://')
+        ? path
+        : file ? remoteFileUrl(file) : '';
+
+      if (!url || !url.startsWith('http')) {
+        activeProbes--;
+        probingMediaPaths.delete(path);
+        continue;
+      }
+
+      apiProbeDownloadSize(url)
+        .then((size) => {
+          if (size && size > 0) {
+            globalProbedSizes.set(path, size);
+            globalProbedSizes.set(url, size);
+            probedMediaSizes = { ...probedMediaSizes, [path]: size };
+          } else {
+            probingMediaPaths.delete(path);
+          }
+        })
+        .catch(() => {
+          probingMediaPaths.delete(path);
+        })
+        .finally(() => {
+          activeProbes--;
+          processProbeQueue();
+        });
+    }
+  }
+
   function probeAttachmentSize(file?: Attachment) {
     const path = file?.path;
     if (!path) return;
     const currentSize = getEffectiveFileSize(file);
-    if (currentSize > 0 || probedMediaSizes[path] || probingMediaPaths.has(path)) return;
+    if (currentSize > 0 || probedMediaSizes[path] || globalProbedSizes.has(path) || probingMediaPaths.has(path)) {
+      if (!probedMediaSizes[path] && globalProbedSizes.has(path)) {
+        probedMediaSizes = { ...probedMediaSizes, [path]: globalProbedSizes.get(path)! };
+      }
+      return;
+    }
 
-    const url = path.startsWith('http://') || path.startsWith('https://')
-      ? path
-      : remoteFileUrl(file);
-
-    if (!url || !url.startsWith('http')) return;
     probingMediaPaths.add(path);
-
-    void apiProbeDownloadSize(url)
-      .then((size) => {
-        if (size && size > 0) probedMediaSizes = { ...probedMediaSizes, [path]: size };
-      })
-      .catch(() => undefined);
+    probeQueue.push(path);
+    processProbeQueue();
   }
 
   $effect(() => {
+    const currentMedia = media;
+    const currentFile = post?.file;
     if (!post) return;
-    if (post.file) probeAttachmentSize(post.file);
-    for (const file of media) {
-      probeAttachmentSize(file);
-    }
+    untrack(() => {
+      if (currentFile) probeAttachmentSize(currentFile);
+      for (const file of currentMedia) {
+        probeAttachmentSize(file);
+      }
+    });
   });
 
 
