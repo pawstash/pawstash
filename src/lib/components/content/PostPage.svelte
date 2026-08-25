@@ -451,8 +451,17 @@
     return /\b(h265|hevc|x265)\b|\.(h265|hevc)$/i.test(name);
   }
 
-  function handleVideoError(index: number) {
-    videoFailures[index] = true;
+  function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
+    if (typeof index === 'number' && file) {
+      const video = e.currentTarget as HTMLVideoElement;
+      const remote = remoteFileUrl(file);
+      if (remote && video.src !== remote) {
+        console.warn('Local video playback failed, falling back to remote stream:', file.name);
+        video.src = remote;
+        return;
+      }
+      videoFailures[index] = true;
+    }
   }
 
   function isHtmlContentEmpty(html?: string) {
@@ -1888,7 +1897,7 @@
                       {#if isVid && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
                         <div class="video-placeholder">
                           <IconVideoOff class="placeholder-icon" />
-                          <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
+                          <p class="placeholder-text">{isH265Video(file?.name) && !hevcSupported ? i18n.t('post.unsupported_codec_desc') : (i18n.t('post.video_load_failed') || 'Failed to play video')}</p>
                         </div>
                       {:else}
                         {#if isVid}
@@ -1901,7 +1910,7 @@
                             preload={index === 0 ? 'metadata' : 'none'}
                             use:panicCapture
                             onkeydown={handleGlobalPanicKey}
-                            onerror={() => handleVideoError(index)}
+                            onerror={(e) => handleVideoError(e, file, index)}
                             onplay={handleVideoPlay}
                           ></video>
                           <button

@@ -98,10 +98,22 @@ pub fn run() {
             let server_port = axum_port.clone();
             let media_download_dir = settings.download_dir.clone();
             tauri::async_runtime::spawn(async move {
-                let roots = vec![
-                    std::path::PathBuf::from(media_download_dir),
+                let mut roots = vec![
+                    std::path::PathBuf::from(&media_download_dir),
                     db::storage::content_cache_path(),
                 ];
+                if let Ok(ensured) = crate::downloader::manager::DownloadManager::ensure_download_root(&media_download_dir) {
+                    if !roots.contains(&ensured) {
+                        roots.push(ensured);
+                    }
+                }
+                #[cfg(target_os = "android")]
+                {
+                    roots.push(std::path::PathBuf::from("/storage/emulated/0/Download/Pawstash"));
+                    roots.push(std::path::PathBuf::from("/storage/emulated/0/Android/data/app.pawstash.client/files/Download"));
+                    roots.push(std::path::PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"));
+                    roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
+                }
                 if let Ok(server) = MediaServer::start(roots).await {
                     server_port.store(server.port, Ordering::Release);
                 }

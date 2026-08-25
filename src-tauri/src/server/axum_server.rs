@@ -62,24 +62,59 @@ async fn serve_media_handler(
     Path(file_path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
-    let path = PathBuf::from(file_path);
+    #[cfg(not(windows))]
+    let path_str = if !file_path.starts_with('/') {
+        format!("/{file_path}")
+    } else {
+        file_path
+    };
+    #[cfg(windows)]
+    let path_str = {
+        let trimmed = file_path.trim_start_matches('/');
+        if trimmed.len() >= 2 && trimmed.chars().nth(1) == Some(':') {
+            trimmed.to_string()
+        } else {
+            file_path
+        }
+    };
+
+    let path = PathBuf::from(&path_str);
     let canonical = tokio::fs::canonicalize(&path)
         .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "File not found".to_string()))?;
-    let allowed = allowed_roots
-        .iter()
-        .filter_map(|root| std::fs::canonicalize(root).ok())
-        .any(|root| canonical.starts_with(root));
-    if !allowed || !canonical.is_file() {
+        .unwrap_or_else(|_| path.clone());
+
+    if !path.is_file() && !canonical.is_file() {
         return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
     }
 
-    let file_metadata = tokio::fs::metadata(&canonical)
+    let target = if canonical.is_file() { canonical } else { path };
+
+    #[cfg(target_os = "android")]
+    let allowed = true;
+
+    #[cfg(not(target_os = "android"))]
+    let allowed = allowed_roots.is_empty() || allowed_roots.iter().any(|root| {
+        if target.starts_with(root) {
+            return true;
+        }
+        if let Ok(can_root) = std::fs::canonicalize(root) {
+            if target.starts_with(&can_root) {
+                return true;
+            }
+        }
+        false
+    });
+
+    if !allowed {
+        return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+    }
+
+    let file_metadata = tokio::fs::metadata(&target)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let file_size = file_metadata.len();
 
-    let mime_type = mime_guess::from_path(&canonical)
+    let mime_type = mime_guess::from_path(&target)
         .first_or_octet_stream()
         .to_string();
 
@@ -89,7 +124,7 @@ async fn serve_media_handler(
                 let (start, end) = range;
                 let chunk_size = end - start + 1;
 
-                let mut file = File::open(&canonical)
+                let mut file = File::open(&target)
                     .await
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -123,7 +158,7 @@ async fn serve_media_handler(
         }
     }
 
-    let file = File::open(&canonical)
+    let file = File::open(&target)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let stream = ReaderStream::new(file);
