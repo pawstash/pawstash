@@ -38,7 +38,8 @@ export interface PawchivePost {
 export interface ResolvedPostLink {
   service: string;
   creator_id: string;
-  post_id: string;
+  post_id?: string;
+  link_type?: 'post' | 'creator';
   platform: string;
   source: 'cache' | 'remote';
 }

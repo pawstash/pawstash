@@ -55,21 +55,27 @@ export class ContentState {
     return this.posts[key];
   }
 
-  async loadPost(service: string, creatorId: string, postId: string) {
+  async loadPost(service: string, creatorId: string, postId: string, force = false) {
     const entry = this.getPost(service, creatorId, postId);
-    if (entry.loaded || entry.loading) return;
+    if (!force && entry.loaded && entry.post?.detail_fetched) return;
+    if (entry.loading) return;
 
     if (!entry.post) {
       try {
         const cached = await apiGetCachedPost(service, creatorId, postId);
         if (cached) {
           entry.post = cached;
+          if (cached.detail_fetched) {
+            entry.loaded = true;
+          }
           logger.debug(`[Content] Hydrated post ${service}:${creatorId}:${postId} from local cache`);
         }
       } catch {
         // ignore fast-path probe failure
       }
     }
+
+    if (!force && entry.loaded && entry.post?.detail_fetched) return;
 
     entry.loading = !entry.post;
     entry.error = null;

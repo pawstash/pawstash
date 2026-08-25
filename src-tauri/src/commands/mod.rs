@@ -16,7 +16,7 @@ use crate::downloader::aria2c::Aria2cManager;
 use crate::downloader::manager::DownloadManager;
 use crate::downloader::native::NativeDownloader;
 use crate::downloader::{DownloadRunError, DownloadTask};
-use crate::smart_links::parse_external_post_link;
+use crate::smart_links::{parse_external_creator_link, parse_external_post_link};
 use crate::subscriptions::SubscriptionManager;
 use crate::sync::client::SyncDevice;
 use crate::sync::manager::{SyncManager, SyncStatus};
@@ -29,7 +29,10 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 pub struct ResolvedPostLink {
     pub service: String,
     pub creator_id: String,
-    pub post_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_id: Option<String>,
+    #[serde(default)]
+    pub link_type: String,
     pub platform: String,
     pub source: String,
 }
@@ -706,82 +709,131 @@ pub async fn resolve_external_post_link(
     current_creator_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<ResolvedPostLink>, String> {
-    let parsed = if let Some(parsed) = parse_external_post_link(&url) {
-        parsed
+    let mut expanded_opt: Option<String> = None;
+
+    let post_parsed = if let Some(parsed) = parse_external_post_link(&url) {
+        Some(parsed)
     } else {
-        let Some(expanded_url) = state.provider_manager.expand_short_link(&url).await? else {
-            return Ok(None);
-        };
-        let Some(parsed) = parse_external_post_link(&expanded_url) else {
-            return Ok(None);
-        };
-        parsed
+        if let Ok(Some(expanded_url)) = state.provider_manager.expand_short_link(&url).await {
+            let res = parse_external_post_link(&expanded_url);
+            expanded_opt = Some(expanded_url);
+            res
+        } else {
+            None
+        }
     };
-    let preferred_creator = current_service
-        .as_deref()
-        .filter(|service| service.eq_ignore_ascii_case(&parsed.service))
-        .and(current_creator_id.as_deref());
 
-    if let Some((service, creator_id, post_id)) =
-        state
-            .content
-            .find_post_identity(&parsed.service, &parsed.post_id, preferred_creator)?
-    {
-        return Ok(Some(ResolvedPostLink {
-            platform: parsed.service,
-            service,
-            creator_id,
-            post_id,
-            source: "cache".into(),
-        }));
-    }
+    if let Some(parsed) = post_parsed {
+        let preferred_creator = current_service
+            .as_deref()
+            .filter(|service| service.eq_ignore_ascii_case(&parsed.service))
+            .and(current_creator_id.as_deref());
 
-    let mut candidates = Vec::new();
-    if let Some(creator_id) = preferred_creator {
-        candidates.push(creator_id.to_string());
-    }
-    if let Some(hint) = parsed.creator_hint.as_deref() {
-        if let Some(creator_id) = state.content.find_creator_by_alias(&parsed.service, hint)? {
-            if !candidates.contains(&creator_id) {
-                candidates.push(creator_id);
-            }
-        }
-        if !candidates.iter().any(|candidate| candidate == hint) {
-            candidates.push(hint.to_string());
-        }
-    }
-
-    for creator_id in candidates {
-        if let Ok(Some(reconciled)) = state
-            .provider_manager
-            .fetch_post(&parsed.service, &creator_id, &parsed.post_id)
-            .await
-        {
+        if let Some((service, creator_id, post_id)) =
             state
                 .content
-                .save_posts(std::slice::from_ref(&reconciled.post))?;
+                .find_post_identity(&parsed.service, &parsed.post_id, preferred_creator)?
+        {
             return Ok(Some(ResolvedPostLink {
-                service: reconciled.post.service,
-                creator_id: reconciled.post.user,
-                post_id: reconciled.post.id,
                 platform: parsed.service,
+                service,
+                creator_id,
+                post_id: Some(post_id),
+                link_type: "post".into(),
+                source: "cache".into(),
+            }));
+        }
+
+        let mut candidates = Vec::new();
+        if let Some(creator_id) = preferred_creator {
+            candidates.push(creator_id.to_string());
+        }
+        if let Some(hint) = parsed.creator_hint.as_deref() {
+            if let Some(creator_id) = state.content.find_creator_by_alias(&parsed.service, hint)? {
+                if !candidates.contains(&creator_id) {
+                    candidates.push(creator_id);
+                }
+            }
+            if !candidates.iter().any(|candidate| candidate == hint) {
+                candidates.push(hint.to_string());
+            }
+        }
+
+        for creator_id in candidates {
+            if let Ok(Some(reconciled)) = state
+                .provider_manager
+                .fetch_post(&parsed.service, &creator_id, &parsed.post_id)
+                .await
+            {
+                state
+                    .content
+                    .save_posts(std::slice::from_ref(&reconciled.post))?;
+                return Ok(Some(ResolvedPostLink {
+                    service: reconciled.post.service,
+                    creator_id: reconciled.post.user,
+                    post_id: Some(reconciled.post.id),
+                    link_type: "post".into(),
+                    platform: parsed.service,
+                    source: "remote".into(),
+                }));
+            }
+        }
+
+        if let Ok(Some((service, creator_id, post_id))) = state
+            .provider_manager
+            .resolve_post_identity(&parsed.service, &parsed.post_id)
+            .await
+        {
+            return Ok(Some(ResolvedPostLink {
+                platform: parsed.service,
+                service,
+                creator_id,
+                post_id: Some(post_id),
+                link_type: "post".into(),
                 source: "remote".into(),
             }));
         }
     }
 
-    if let Ok(Some((service, creator_id, post_id))) = state
-        .provider_manager
-        .resolve_post_identity(&parsed.service, &parsed.post_id)
-        .await
-    {
-        return Ok(Some(ResolvedPostLink {
-            platform: parsed.service,
-            service,
-            creator_id,
-            post_id,
-            source: "remote".into(),
-        }));
+    // Check for creator profile links
+    let target_url = expanded_opt.as_deref().unwrap_or(&url);
+    if let Some(creator_link) = parse_external_creator_link(target_url) {
+        if let Some(creator_id) = state.content.find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)? {
+            return Ok(Some(ResolvedPostLink {
+                service: creator_link.service.clone(),
+                creator_id,
+                post_id: None,
+                link_type: "creator".into(),
+                platform: creator_link.service,
+                source: "cache".into(),
+            }));
+        }
+
+        if let Ok(profile) = state.provider_manager.fetch_creator_profile(&creator_link.service, &creator_link.creator_hint).await {
+            let _ = state.content.save_creators(std::slice::from_ref(&profile));
+            return Ok(Some(ResolvedPostLink {
+                service: profile.service,
+                creator_id: profile.id,
+                post_id: None,
+                link_type: "creator".into(),
+                platform: creator_link.service,
+                source: "remote".into(),
+            }));
+        }
+
+        if let Ok(creators) = state.provider_manager.fetch_creators().await {
+            let _ = state.content.save_creators(&creators);
+            if let Some(creator_id) = state.content.find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)? {
+                return Ok(Some(ResolvedPostLink {
+                    service: creator_link.service.clone(),
+                    creator_id,
+                    post_id: None,
+                    link_type: "creator".into(),
+                    platform: creator_link.service,
+                    source: "remote".into(),
+                }));
+            }
+        }
     }
 
     Ok(None)
@@ -1815,7 +1867,50 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    {
+        with_android_context(|env, activity| {
+            use jni::objects::JValue;
+            let url_jstr = env.new_string(safe_url).map_err(|e| e.to_string())?;
+
+            let uri_class = env.find_class("android/net/Uri").map_err(|e| e.to_string())?;
+            let uri_obj = env
+                .call_static_method(
+                    uri_class,
+                    "parse",
+                    "(Ljava/lang/String;)Landroid/net/Uri;",
+                    &[JValue::Object(&url_jstr)],
+                )
+                .map_err(|e| e.to_string())?
+                .l()
+                .map_err(|e| e.to_string())?;
+
+            let intent_class = env
+                .find_class("android/content/Intent")
+                .map_err(|e| e.to_string())?;
+            let action_view = env
+                .new_string("android.intent.action.VIEW")
+                .map_err(|e| e.to_string())?;
+            let intent_obj = env
+                .new_object(
+                    intent_class,
+                    "(Ljava/lang/String;Landroid/net/Uri;)V",
+                    &[JValue::Object(&action_view), JValue::Object(&uri_obj)],
+                )
+                .map_err(|e| e.to_string())?;
+
+            env.call_method(
+                activity,
+                "startActivity",
+                "(Landroid/content/Intent;)V",
+                &[JValue::Object(&intent_obj)],
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(())
+        })
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = safe_url;
         Err("Unsupported operating system".to_string())

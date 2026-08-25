@@ -16,13 +16,16 @@
       const url = new URL(raw);
       if (!['http:', 'https:'].includes(url.protocol)) return null;
       const host = url.hostname.replace(/^www\./, '').toLocaleLowerCase();
-      const path = url.pathname;
-      if ((host === 'patreon.com' || host.endsWith('.patreon.com')) && /\/posts\/[^/]+/i.test(path)) return 'patreon';
-      if ((host === 'fanbox.cc' || host.endsWith('.fanbox.cc')) && /\/posts\/[^/]+/i.test(path)) return 'fanbox';
-      if ((host === 'fantia.jp' || host.endsWith('.fantia.jp')) && /\/posts\/[^/]+/i.test(path)) return 'fantia';
-      if ((host === 'subscribestar.com' || host.endsWith('.subscribestar.com') || host === 'subscribestar.adult' || host.endsWith('.subscribestar.adult')) && /\/posts\/[^/]+/i.test(path)) return 'subscribestar';
-      if ((host === 'boosty.to' || host.endsWith('.boosty.to')) && /\/posts\/[^/]+/i.test(path)) return 'boosty';
-      if ((host === 'afdian.com' || host.endsWith('.afdian.com') || host === 'afdian.net' || host.endsWith('.afdian.net')) && /\/p\/[^/]+/i.test(path)) return 'afdian';
+      if (host === 'patreon.com' || host.endsWith('.patreon.com')) return 'patreon';
+      if (host === 'fanbox.cc' || host.endsWith('.fanbox.cc')) return 'fanbox';
+      if (host === 'fantia.jp' || host.endsWith('.fantia.jp')) return 'fantia';
+      if (host === 'subscribestar.com' || host.endsWith('.subscribestar.com') || host === 'subscribestar.adult' || host.endsWith('.subscribestar.adult')) return 'subscribestar';
+      if (host === 'boosty.to' || host.endsWith('.boosty.to')) return 'boosty';
+      if (host === 'afdian.com' || host.endsWith('.afdian.com') || host === 'afdian.net' || host.endsWith('.afdian.net')) return 'afdian';
+      if (host === 'onlyfans.com' || host.endsWith('.onlyfans.com')) return 'onlyfans';
+      if (host === 'fansly.com' || host.endsWith('.fansly.com')) return 'fansly';
+      if (host === 'candfans.jp' || host.endsWith('.candfans.jp')) return 'candfans';
+      if (['kemono.su', 'kemono.party', 'pawchive.pw', 'pawchive.st', 'coomer.su', 'coomer.party', 'cum.st'].includes(host)) return 'pawchive';
       if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
       if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
       if (host.includes('pixeldrain.com')) return 'pixeldrain';
@@ -304,18 +307,26 @@
             if (state.isCloud && onopencloud) {
               onopencloud(state.url);
             } else if (state.resolvedPost) {
-              navigationState.openPost(
-                state.resolvedPost.service,
-                state.resolvedPost.creator_id,
-                state.resolvedPost.post_id
-              );
+              if (state.resolvedPost.link_type === 'creator' || !state.resolvedPost.post_id) {
+                navigationState.openCreator(state.resolvedPost.service, state.resolvedPost.creator_id);
+              } else {
+                navigationState.openPost(
+                  state.resolvedPost.service,
+                  state.resolvedPost.creator_id,
+                  state.resolvedPost.post_id
+                );
+              }
             } else {
               void apiOpenInBrowser(state.url);
             }
           }}
         >
           <IconFolder class="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
-          <span class="text-[var(--text-primary)]">{i18n.t('post.open_in_app') || 'Open in App'}</span>
+          <span class="text-[var(--text-primary)]">
+            {linkPopover.resolvedPost?.link_type === 'creator'
+              ? (i18n.t('post.open_creator_in_app') || i18n.t('post.open_in_app') || 'Open in App')
+              : (i18n.t('post.open_in_app') || 'Open in App')}
+          </span>
         </button>
       {/if}
 

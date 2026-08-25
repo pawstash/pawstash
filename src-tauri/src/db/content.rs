@@ -430,6 +430,8 @@ impl ContentRepository {
                 "SELECT creator_id FROM creators
                  WHERE service=?1 AND (
                    creator_id=?2 OR
+                   name=?2 COLLATE NOCASE OR
+                   CAST(json_extract(snapshot_json,'$.name') AS TEXT)=?2 COLLATE NOCASE OR
                    CAST(json_extract(snapshot_json,'$.public_id') AS TEXT)=?2 OR
                    CAST(json_extract(snapshot_json,'$.relation_id') AS TEXT)=?2
                  ) LIMIT 1",

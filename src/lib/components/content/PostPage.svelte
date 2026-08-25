@@ -135,14 +135,14 @@
       ? (post.embed as PostEmbed)
       : null
   );
-  let previousPost = $derived.by(() => post?.prev
+  let newerPost = $derived.by(() => post?.prev
     ? contentState.posts[postCacheKey(service, creatorId, post.prev)]?.post ?? null
     : null);
-  let nextPost = $derived.by(() => post?.next
+  let olderPost = $derived.by(() => post?.next
     ? contentState.posts[postCacheKey(service, creatorId, post.next)]?.post ?? null
     : null);
-  let previousPostTitle = $derived(previousPost?.title?.trim() || i18n.t('post.previous'));
-  let nextPostTitle = $derived(nextPost?.title?.trim() || i18n.t('post.next'));
+  let leftPostTitle = $derived(newerPost?.title?.trim() || i18n.t('post.next'));
+  let rightPostTitle = $derived(olderPost?.title?.trim() || i18n.t('post.previous'));
   
   let richContent = $derived(post?.content || post?.substring || '');
   let postTags = $derived(parseTags(post?.tags));
@@ -2080,10 +2080,10 @@
               disabled={!post.prev}
               onclick={() => post?.prev && navigationState.openPost(service, creatorId, post.prev)}
               class="footer-nav-btn"
-              title={previousPostTitle}
+              title={leftPostTitle}
             >
               <IconChevronLeft class="w-[18px] h-[18px]" />
-              <span>{previousPostTitle}</span>
+              <span>{leftPostTitle}</span>
             </Button>
           </div>
 
@@ -2093,9 +2093,9 @@
               disabled={!post.next}
               onclick={() => post?.next && navigationState.openPost(service, creatorId, post.next)}
               class="footer-nav-btn"
-              title={nextPostTitle}
+              title={rightPostTitle}
             >
-              <span>{nextPostTitle}</span>
+              <span>{rightPostTitle}</span>
               <IconChevronRight class="w-[18px] h-[18px]" />
             </Button>
           </div>
