@@ -1,10 +1,12 @@
 import type { PawchivePost, Creator } from '$lib/types/pawchive';
-import type { FilterMap } from '$lib/types/filter';
+import type { FilterMap, TriStateFilter } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
-import { apiFetchPopularPosts, apiFetchRecentPosts } from '$lib/utils/ipc';
+import { apiFetchPopularPosts, apiFetchRecentPosts, apiSearchHash, apiFetchPost } from '$lib/utils/ipc';
 import { getPostFormats } from '$lib/utils/media';
+import { parseTags } from '$lib/utils/formatters';
 import { logger } from '$lib/utils/logger';
 import { accountState } from './accountState.svelte';
+import { configState } from './configState.svelte';
 
 const PAGE_SIZE = 50;
 export type FeedMode = 'recent' | 'popular';
@@ -64,6 +66,7 @@ export class FeedState {
   providerFilters = $state<FilterMap>({});
   serviceFilters = $state<FilterMap>({});
   formatFilters = $state<FilterMap>({});
+  aiFilter = $state<TriStateFilter>('neutral');
   onlyWithAttachments = $state(false);
   favoritesOnly = $state(false);
 
@@ -96,6 +99,22 @@ export class FeedState {
       const postFormats = getPostFormats(post);
       const matchesFormat = matchesTriStateFilter(postFormats, this.formatFilters);
 
+      const postTags = parseTags(post.tags);
+      const isPostAi = Boolean(
+        postTags.some((t) => {
+          const l = t.toLowerCase();
+          return l === 'ai' || l.includes('ai generated') || l.includes('artificial intelligence');
+        }) ||
+        post.title?.toLowerCase().includes('[ai]') ||
+        post.title?.toLowerCase().includes('(ai)')
+      );
+
+      if (configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude') {
+        if (isPostAi) return false;
+      } else if (this.aiFilter === 'include') {
+        if (this.mode === 'popular' && !isPostAi) return false;
+      }
+
       const isFavCreator = accountState.favoriteCreators?.some(
         (c: any) => c.id.toLowerCase() === post.user.toLowerCase() && c.service.toLowerCase() === post.service.toLowerCase()
       ) ?? false;
@@ -118,6 +137,18 @@ export class FeedState {
     })
   );
 
+  setAiFilter(filter: TriStateFilter) {
+    if (this.aiFilter === filter) return;
+    this.aiFilter = filter;
+    this.recent = emptyBucket();
+    this.searchBucket = emptyBucket();
+    if (this.isSearchActive) {
+      void this.executeSearch(true);
+    } else if (this.mode === 'recent') {
+      void this.load(true);
+    }
+  }
+
   private scheduleSearch() {
     if (this.searchTimer) {
       clearTimeout(this.searchTimer);
@@ -137,7 +168,7 @@ export class FeedState {
     }, 250);
   }
 
-  private async executeSearch(reset = false) {
+  async executeSearch(reset = false) {
     const query = this._searchQuery.trim();
     if (query.length < 2) {
       this.searchBucket = emptyBucket();
@@ -149,8 +180,55 @@ export class FeedState {
     const requestId = ++bucket.requestId;
     bucket.loading = true;
     bucket.error = null;
+
     try {
-      const posts = await apiFetchRecentPosts(query, offset);
+      // 1. Direct Hash Search Detection (SHA256/SHA1/MD5)
+      const isCryptoHash = /^[a-fA-F0-9]{32,64}$/.test(query);
+      if (isCryptoHash && reset) {
+        try {
+          const hashResult = await apiSearchHash(query);
+          const allTargets = [
+            ...(hashResult?.posts || []),
+            ...(hashResult?.discord_posts || [])
+          ];
+          if (allTargets.length > 0) {
+            const matchedPosts: PawchivePost[] = [];
+            for (const target of allTargets) {
+              const svc = target.service;
+              const usr = target.user;
+              const pid = target.id;
+              if (!svc || !usr || !pid) continue;
+              try {
+                const post = await apiFetchPost(svc, usr, pid);
+                if (post) {
+                  post.extra = typeof post.extra === 'object' && post.extra !== null
+                    ? { ...post.extra, hash_matched: true, matched_hash: query }
+                    : { hash_matched: true, matched_hash: query };
+                  matchedPosts.push(post);
+                }
+              } catch {}
+            }
+            if (matchedPosts.length > 0) {
+              if (requestId !== bucket.requestId || query !== this._searchQuery.trim()) return;
+              bucket.posts = matchedPosts;
+              bucket.offset = 0;
+              bucket.hasMore = false;
+              bucket.loaded = true;
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Keyword Search with optional AI filter directive
+      let effectiveQuery = query;
+      if (this.aiFilter === 'exclude') {
+        effectiveQuery = `${query} hide=ai`;
+      } else if (this.aiFilter === 'include') {
+        effectiveQuery = `${query} only=ai`;
+      }
+
+      const posts = await apiFetchRecentPosts(effectiveQuery, offset);
       if (requestId !== bucket.requestId || query !== this._searchQuery.trim()) return;
       const nextPosts = reset ? posts : [...bucket.posts, ...posts];
       bucket.posts = [...new Map(nextPosts.map((post) => [`${post.service}:${post.user}:${post.id}`, post])).values()];
@@ -195,8 +273,15 @@ export class FeedState {
     bucket.loading = true;
     bucket.error = null;
     try {
+      let queryParam: string | undefined = undefined;
+      if (this.aiFilter === 'exclude') {
+        queryParam = 'hide=ai';
+      } else if (this.aiFilter === 'include') {
+        queryParam = 'only=ai';
+      }
+
       const posts = mode === 'recent'
-        ? await apiFetchRecentPosts(undefined, offset)
+        ? await apiFetchRecentPosts(queryParam, offset)
         : await apiFetchPopularPosts(period, date || undefined, offset);
       if (requestId !== bucket.requestId) return;
       const nextPosts = reset ? posts : [...bucket.posts, ...posts];

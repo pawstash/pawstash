@@ -40,6 +40,7 @@
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
+  import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
@@ -402,6 +403,31 @@
       </Button>
     {/each}
   </div>
+
+  {#if !configState.settings.pawchive_hide_ai}
+    {@const state = creatorsState.aiFilter}
+    <div class="floating-divider"></div>
+    <span class="filter-label">{i18n.t('feed.format') || 'Filters'}</span>
+    <div class="service-options">
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => {
+          const cur = creatorsState.aiFilter;
+          creatorsState.aiFilter = cur === 'neutral' ? 'include' : cur === 'include' ? 'exclude' : 'neutral';
+        }}
+        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+      >
+        <IconSparkle class="w-5 h-5" />
+        <span>{i18n.t('feed.format_ai') || 'AI Generated'}</span>
+        {#if state === 'include'}
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+        {:else if state === 'exclude'}
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+        {/if}
+      </Button>
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet creatorTabs()}

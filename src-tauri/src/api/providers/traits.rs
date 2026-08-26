@@ -87,6 +87,13 @@ pub trait SourceProvider: Send + Sync {
     ) -> Result<Vec<CreatorProfile>, String> {
         Ok(Vec::new())
     }
+    async fn fetch_creator_tags(
+        &self,
+        _service: &str,
+        _creator_id: &str,
+    ) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
     async fn fetch_posts(
         &self,
         service: &str,

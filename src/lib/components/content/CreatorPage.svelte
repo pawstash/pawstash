@@ -14,6 +14,7 @@
     apiFetchCreatorPosts,
     apiFetchCreatorLinks,
     apiFetchSimilarCreators,
+    apiFetchCreatorTags,
     apiFetchAnnouncements,
     apiFetchFancards,
     apiOpenInBrowser,
@@ -148,6 +149,7 @@
   let creatorLinks = $state<CreatorProfile[]>([]);
   let announcements = $state<Announcement[]>([]);
   let fancards = $state<Fancard[]>([]);
+  let apiCreatorTags = $state<string[]>([]);
 
   let postSearchOpen = $state(savedState?.postSearchOpen ?? Boolean(savedState?.postSearchQuery));
   let postSearchQuery = $state(savedState?.postSearchQuery ?? '');
@@ -168,6 +170,16 @@
   function toggleFormat(fmt: string) {
     formatFilters = toggleFilterKey(formatFilters, fmt);
   }
+
+  let formatList = $derived([
+    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft },
+    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai') || 'AI Generated', icon: IconSparkle }] : [])
+  ]);
 
   function clearAllFilters() {
     formatFilters = {};
@@ -236,24 +248,42 @@
 
   let creatorTags = $derived.by(() => {
     const direct = parseTags(entry.profile?.tags || (entry.profile?.extra as any)?.tags || (entry.profile?.extra as any)?.categories);
-    if (direct.length > 0) return direct;
+    const combined = new Set<string>([...direct, ...apiCreatorTags]);
 
     const tagCounts = new Map<string, number>();
     for (const post of entry.posts) {
       const pTags = parseTags(post.tags);
       for (const t of pTags) {
         tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+        combined.add(t);
       }
     }
-    return Array.from(tagCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([t]) => t)
-      .slice(0, 16);
+    if (combined.size > 0) {
+      return Array.from(combined)
+        .sort((a, b) => (tagCounts.get(b) || 0) - (tagCounts.get(a) || 0))
+        .slice(0, 32);
+    }
+    return [];
   });
 
   let normalizedPostSearch = $derived(postSearchQuery.trim().toLocaleLowerCase());
   let visibleCreatorPosts = $derived.by(() => {
     let posts = entry.posts;
+
+    if (configState.settings.pawchive_hide_ai) {
+      posts = posts.filter((post) => {
+        const postTags = parseTags(post.tags);
+        const isAi = Boolean(
+          postTags.some((t) => {
+            const l = t.toLowerCase();
+            return l === 'ai' || l.includes('ai generated') || l.includes('artificial intelligence');
+          }) ||
+          post.title?.toLowerCase().includes('[ai]') ||
+          post.title?.toLowerCase().includes('(ai)')
+        );
+        return !isAi;
+      });
+    }
 
     if (normalizedPostSearch) {
       const localMatches = entry.posts.filter((post) =>
@@ -414,6 +444,12 @@
 
     apiFetchFancards(service, creatorId).then((res) => {
       fancards = res || [];
+    }).catch(() => {});
+
+    apiFetchCreatorTags(service, creatorId).then((res) => {
+      if (res && res.length > 0) {
+        apiCreatorTags = res;
+      }
     }).catch(() => {});
   }
 
@@ -642,15 +678,6 @@
       console.error(e);
     }
   }
-
-  const formatList = [
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
-  ];
 
   // Media Viewer state for fancards
   let isViewerOpen = $state(false);

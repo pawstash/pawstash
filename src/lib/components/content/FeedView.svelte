@@ -46,6 +46,8 @@
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
+  import { configState } from '$lib/state/configState.svelte';
+  import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
@@ -184,10 +186,6 @@
 
   function toggleService(service: string) {
     feedState.serviceFilters = toggleFilterKey(feedState.serviceFilters, service);
-  }
-
-  function toggleFormat(fmt: string) {
-    feedState.formatFilters = toggleFilterKey(feedState.formatFilters, fmt);
   }
 
   function toggleFavoritesFilter() {
@@ -368,16 +366,28 @@
     feedState.formatFilters = {};
     feedState.onlyWithAttachments = false;
     feedState.favoritesOnly = false;
+    feedState.setAiFilter('neutral');
   }
 
-  const formatList = [
+  function toggleFormat(fmtId: string) {
+    if (fmtId === 'ai') {
+      const cur = feedState.aiFilter;
+      const next = cur === 'neutral' ? 'include' : cur === 'include' ? 'exclude' : 'neutral';
+      feedState.setAiFilter(next);
+      return;
+    }
+    feedState.formatFilters = toggleFilterKey(feedState.formatFilters, fmtId);
+  }
+
+  let formatList = $derived([
     { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
     { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
     { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
     { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
     { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
-  ];
+    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft },
+    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai') || 'AI Generated', icon: IconSparkle, isAi: true }] : [])
+  ]);
 
   function toggleProvider(providerId: string) {
     feedState.providerFilters = toggleFilterKey(feedState.providerFilters, providerId);
@@ -450,7 +460,7 @@
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
     {#each formatList as fmt}
-      {@const state = feedState.formatFilters[fmt.id] ?? 'neutral'}
+      {@const state = (fmt as any).isAi ? feedState.aiFilter : (feedState.formatFilters[fmt.id] ?? 'neutral')}
       {@const IconComponent = fmt.icon}
       <Button
         variant="ghost"

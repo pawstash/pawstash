@@ -240,17 +240,59 @@ impl PawchiveClient {
         ))
     }
 
-    fn list_params(query: Option<&str>, offset: u32) -> Result<Vec<(&str, String)>, String> {
-        if !offset.is_multiple_of(50) {
-            return Err("Pawchive offset must be a multiple of 50".to_string());
-        }
+    async fn list_params(
+        &self,
+        query: Option<&str>,
+        offset: u32,
+    ) -> Result<Vec<(&'static str, String)>, String> {
         let mut params = vec![("o", offset.to_string())];
-        if let Some(query) = query.map(str::trim).filter(|q| !q.is_empty()) {
-            if query.chars().count() < 2 {
-                return Err("Pawchive search query must contain at least 2 characters".to_string());
+        let mut hide_ai_directive = false;
+        let mut show_ai_directive = false;
+        let mut clean_query = String::new();
+
+        if let Some(raw_q) = query.map(str::trim).filter(|q| !q.is_empty()) {
+            if raw_q.contains("hide=ai") || raw_q.contains("hide=(ai)") || raw_q.contains("?hide=ai") || raw_q.contains("?hide=(ai)") || raw_q.contains("ai:hide") {
+                hide_ai_directive = true;
+            } else if raw_q.contains("only=ai") || raw_q.contains("only=(ai)") || raw_q.contains("show=ai") || raw_q.contains("show=(ai)") || raw_q.contains("?only=ai") || raw_q.contains("?only=(ai)") || raw_q.contains("?show=ai") || raw_q.contains("?show=(ai)") || raw_q.contains("ai:only") || raw_q.contains("ai:show") {
+                show_ai_directive = true;
             }
-            params.push(("q", query.to_string()));
+            let cleaned = raw_q
+                .replace("?hide=(ai)", "")
+                .replace("hide=(ai)", "")
+                .replace("?hide=ai", "")
+                .replace("hide=ai", "")
+                .replace("?only=(ai)", "")
+                .replace("only=(ai)", "")
+                .replace("?only=ai", "")
+                .replace("only=ai", "")
+                .replace("?show=(ai)", "")
+                .replace("show=(ai)", "")
+                .replace("?show=ai", "")
+                .replace("show=ai", "")
+                .replace("ai:hide", "")
+                .replace("ai:only", "")
+                .replace("ai:show", "")
+                .trim()
+                .to_string();
+            if !cleaned.is_empty() {
+                if cleaned.chars().count() < 2 {
+                    return Err("Pawchive search query must contain at least 2 characters".to_string());
+                }
+                clean_query = cleaned;
+            }
         }
+
+        if !clean_query.is_empty() {
+            params.push(("q", clean_query));
+        }
+
+        let settings = self.settings.read().await;
+        if settings.pawchive_hide_ai || hide_ai_directive {
+            params.push(("hide", "ai".to_string()));
+        } else if show_ai_directive {
+            params.push(("only", "ai".to_string()));
+        }
+
         Ok(params)
     }
 
@@ -472,7 +514,13 @@ impl PawchiveClient {
     }
 
     pub async fn fetch_creators(&self) -> Result<Vec<Creator>, String> {
-        self.json(Method::GET, "/creators", &[]).await
+        let settings = self.settings.read().await;
+        let mut params = Vec::new();
+        if settings.pawchive_hide_ai {
+            params.push(("hide", "ai".to_string()));
+        }
+        drop(settings);
+        self.json(Method::GET, "/creators", &params).await
     }
 
     pub async fn fetch_recent_posts(
@@ -480,7 +528,7 @@ impl PawchiveClient {
         query: Option<&str>,
         offset: u32,
     ) -> Result<Vec<PawchivePost>, String> {
-        let params = Self::list_params(query, offset)?;
+        let params = self.list_params(query, offset).await?;
         self.json(Method::GET, "/posts", &params).await
     }
 
@@ -637,8 +685,45 @@ impl PawchiveClient {
             Self::segment(service),
             Self::segment(creator_id)
         );
-        let params = Self::list_params(query, offset)?;
+        let params = self.list_params(query, offset).await?;
         self.json(Method::GET, &path, &params).await
+    }
+
+    pub async fn fetch_creator_tags(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<String>, String> {
+        let path = format!(
+            "/{}/user/{}/tags",
+            Self::segment(service),
+            Self::segment(creator_id)
+        );
+        let response = match self.send(Method::GET, &path, &[]).await {
+            Ok(res) if res.status().is_success() => res,
+            _ => return Ok(Vec::new()),
+        };
+        let body = response.text().await.unwrap_or_default();
+        if let Ok(tags) = serde_json::from_str::<Vec<String>>(&body) {
+            return Ok(tags.into_iter().filter(|t| !t.trim().is_empty()).collect());
+        }
+        #[derive(serde::Deserialize)]
+        struct TagObj {
+            #[serde(default)]
+            tag: Option<String>,
+            #[serde(default)]
+            name: Option<String>,
+            #[serde(default)]
+            val: Option<String>,
+        }
+        if let Ok(objs) = serde_json::from_str::<Vec<TagObj>>(&body) {
+            return Ok(objs
+                .into_iter()
+                .filter_map(|o| o.tag.or(o.name).or(o.val))
+                .filter(|s| !s.trim().is_empty())
+                .collect());
+        }
+        Ok(Vec::new())
     }
 
     pub async fn fetch_announcements(
@@ -1093,6 +1178,14 @@ impl SourceProvider for PawchiveProvider {
         creator_id: &str,
     ) -> Result<Vec<CreatorProfile>, String> {
         self.client.fetch_similar_creators(service, creator_id).await
+    }
+
+    async fn fetch_creator_tags(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<String>, String> {
+        self.client.fetch_creator_tags(service, creator_id).await
     }
 
     async fn fetch_posts(

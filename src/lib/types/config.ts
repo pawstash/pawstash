@@ -44,4 +44,5 @@ export interface AppSettings {
   boss_key_shortcut?: string;
   providers?: import('./provider').ProviderConfig[];
   smart_merge_attachments?: boolean;
+  pawchive_hide_ai?: boolean;
 }

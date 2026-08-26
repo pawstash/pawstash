@@ -1,4 +1,5 @@
 export type TriState = 'neutral' | 'include' | 'exclude';
+export type TriStateFilter = TriState;
 export type TriStateBool = 'all' | 'include' | 'exclude';
 export type FilterMap = Record<string, TriState>;
 

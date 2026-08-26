@@ -71,7 +71,7 @@ impl MediaServer {
 }
 
 async fn serve_media_handler(
-    State(state): State<Arc<MediaServerState>>,
+    State(_state): State<Arc<MediaServerState>>,
     Path(file_path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
@@ -106,7 +106,7 @@ async fn serve_media_handler(
     let allowed = true;
 
     #[cfg(not(target_os = "android"))]
-    let allowed = state.allowed_roots.is_empty() || state.allowed_roots.iter().any(|root| {
+    let allowed = _state.allowed_roots.is_empty() || _state.allowed_roots.iter().any(|root| {
         if target.starts_with(root) {
             return true;
         }

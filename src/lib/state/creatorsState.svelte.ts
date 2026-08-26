@@ -1,8 +1,9 @@
 import { apiFetchCreators } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 import type { Creator } from '$lib/types/pawchive';
-import type { FilterMap } from '$lib/types/filter';
+import type { FilterMap, TriStateFilter } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
+import { configState } from './configState.svelte';
 
 export class CreatorsState {
   creators = $state<Creator[]>([]);
@@ -13,6 +14,7 @@ export class CreatorsState {
   searchQuery = $state('');
   providerFilters = $state<FilterMap>({});
   serviceFilters = $state<FilterMap>({});
+  aiFilter = $state<TriStateFilter>('neutral');
   sortBy = $state<'name' | 'updated' | 'indexed' | 'favorited'>('favorited');
   sortOrder = $state<'asc' | 'desc'>('desc');
   activeTab = $state<'all' | 'subscribed'>('all');
@@ -42,6 +44,22 @@ export class CreatorsState {
 
     if (Object.keys(this.serviceFilters).length > 0) {
       result = result.filter((c) => matchesTriStateFilter([c.service], this.serviceFilters));
+    }
+
+    if (configState.settings.pawchive_hide_ai || this.aiFilter !== 'neutral') {
+      result = result.filter((c) => {
+        const isAi = Boolean(
+          (c.extra as any)?.tags?.some((t: string) => t.toLowerCase() === 'ai' || t.toLowerCase().includes('ai generated')) ||
+          c.name.toLowerCase().includes('[ai]') ||
+          c.name.toLowerCase().includes('(ai)')
+        );
+        if (configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude') {
+          return !isAi;
+        } else if (this.aiFilter === 'include') {
+          return isAi;
+        }
+        return true;
+      });
     }
 
     const query = this.searchQuery.trim().toLowerCase();

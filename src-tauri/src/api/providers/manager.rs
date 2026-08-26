@@ -248,6 +248,22 @@ impl ProviderManager {
         Ok(Vec::new())
     }
 
+    pub async fn fetch_creator_tags(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<String>, String> {
+        let candidates = self.get_providers_for_service(service).await;
+        for provider in candidates {
+            if let Ok(tags) = provider.fetch_creator_tags(service, creator_id).await {
+                if !tags.is_empty() {
+                    return Ok(tags);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
     pub async fn fetch_posts(
         &self,
         service: &str,

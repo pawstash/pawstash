@@ -91,8 +91,11 @@ pub fn run() {
             app.listen("frontend-ready", move |_| {
                 if let Some(window) = wh.get_webview_window("main") {
                     let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
+                    #[cfg(desktop)]
+                    {
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
                 }
             });
 
@@ -207,6 +210,7 @@ pub fn run() {
             fetch_fancards,
             fetch_creator_links,
             fetch_similar_creators,
+            fetch_creator_tags,
             fetch_post,
             get_cached_post,
             resolve_external_post_link,

@@ -56,6 +56,7 @@
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import { getPostFormats } from '$lib/utils/media';
+  import { parseTags } from '$lib/utils/formatters';
 
   type FavoritesTab = 'posts' | 'creators';
 
@@ -179,6 +180,20 @@
     let filtered = normalizedQuery
       ? posts.filter((post) => `${post.title} ${post.user} ${post.service} ${post.id}`.toLowerCase().includes(normalizedQuery))
       : posts;
+    if (configState.settings.pawchive_hide_ai) {
+      filtered = filtered.filter((post) => {
+        const postTags = parseTags(post.tags);
+        const isAi = Boolean(
+          postTags.some((t) => {
+            const l = t.toLowerCase();
+            return l === 'ai' || l.includes('ai generated') || l.includes('artificial intelligence');
+          }) ||
+          post.title?.toLowerCase().includes('[ai]') ||
+          post.title?.toLowerCase().includes('(ai)')
+        );
+        return !isAi;
+      });
+    }
     if (Object.keys(postServiceFilters).length > 0) {
       filtered = filtered.filter((post) => matchesTriStateFilter([post.service], postServiceFilters));
     }
@@ -194,6 +209,16 @@
     let filtered = normalizedQuery
       ? creators.filter((creator) => `${creator.name} ${creator.service} ${creator.id}`.toLowerCase().includes(normalizedQuery))
       : creators;
+    if (configState.settings.pawchive_hide_ai) {
+      filtered = filtered.filter((creator) => {
+        const isAi = Boolean(
+          (creator.extra as any)?.tags?.some((t: string) => t.toLowerCase() === 'ai' || t.toLowerCase().includes('ai generated')) ||
+          creator.name.toLowerCase().includes('[ai]') ||
+          creator.name.toLowerCase().includes('(ai)')
+        );
+        return !isAi;
+      });
+    }
     if (Object.keys(creatorServiceFilters).length > 0) {
       filtered = filtered.filter((creator) => matchesTriStateFilter([creator.service], creatorServiceFilters));
     }

@@ -139,6 +139,9 @@ export const apiFetchCreatorArtworkDataUrl = (
   artworkKind: 'banner' | 'avatar'
 ) => invoke<string>('fetch_creator_artwork_data_url', { service, creatorId, artworkKind });
 
+export const apiFetchCreatorTags = (service: string, creatorId: string) =>
+  invoke<string[]>('fetch_creator_tags', { service, creatorId });
+
 export const apiSearchHash = (fileHash: string) =>
   invoke<FileSearchResult>('search_hash', { fileHash });
 

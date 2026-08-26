@@ -7,6 +7,7 @@
   import { contentState } from '$lib/state/contentState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatProviderName } from '$lib/utils/media';
+  import { apiSaveSettings } from '$lib/utils/ipc';
   import type { ProviderConfig } from '$lib/types/provider';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
@@ -55,7 +56,32 @@
       ]}
       value={configState.settings.smart_merge_attachments ?? true}
       onchange={(val) => {
-        configState.updateSettings({ ...configState.settings, smart_merge_attachments: Boolean(val) });
+        const next = { ...configState.settings, smart_merge_attachments: Boolean(val) };
+        configState.updateSettings(next);
+        void apiSaveSettings(next);
+      }}
+    />
+  </SettingItem>
+
+  <SettingItem
+    title={i18n.t('settings.pawchive_hide_ai')}
+    description={i18n.t('settings.pawchive_hide_ai_desc')}
+    icon={IconSparkle}
+    align="right"
+  >
+    <SegmentedControl
+      options={[
+        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+      ]}
+      value={configState.settings.pawchive_hide_ai ?? false}
+      onchange={(val) => {
+        const next = { ...configState.settings, pawchive_hide_ai: Boolean(val) };
+        configState.updateSettings(next);
+        void apiSaveSettings(next);
+        contentState.posts = {};
+        void feedState.refresh();
+        void creatorsState.refresh();
       }}
     />
   </SettingItem>

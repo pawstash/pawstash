@@ -658,6 +658,32 @@ pub async fn fetch_similar_creators(
 }
 
 #[tauri::command]
+pub async fn fetch_creator_tags(
+    service: String,
+    creator_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    match state
+        .provider_manager
+        .fetch_creator_tags(&service, &creator_id)
+        .await
+    {
+        Ok(items) => {
+            if !items.is_empty() {
+                let _ = state
+                    .content
+                    .save_document("creator_tags", &service, &creator_id, "", &items);
+            }
+            Ok(items)
+        }
+        Err(error) => state
+            .content
+            .load_document("creator_tags", &service, &creator_id, "")?
+            .ok_or(error),
+    }
+}
+
+#[tauri::command]
 pub async fn fetch_post(
     service: String,
     creator_id: String,
