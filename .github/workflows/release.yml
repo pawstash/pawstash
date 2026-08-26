@@ -74,8 +74,31 @@ jobs:
             find src-tauri/target -name "*.exe" | grep -i "setup" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-Setup.exe || true
             find src-tauri/target -name "*.msi" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.msi || true
           elif [ "${{ matrix.platform }}" = "linux-x64" ]; then
-            find src-tauri/target -name "*.AppImage" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.AppImage || true
+            RAW_APPIMAGE=$(find src-tauri/target -name "*.AppImage" | head -n 1)
+            if [ -n "$RAW_APPIMAGE" ]; then
+              chmod +x "$RAW_APPIMAGE"
+              if "$RAW_APPIMAGE" --appimage-extract >/dev/null 2>&1; then
+                rm -f squashfs-root/usr/lib/libwayland-*.so*
+                rm -f squashfs-root/usr/lib/libEGL*.so*
+                rm -f squashfs-root/usr/lib/libGL*.so*
+                rm -f squashfs-root/usr/lib/libgbm*.so*
+                rm -f squashfs-root/usr/lib/libdrm*.so*
+
+                wget -q https://github.com/AppImage/appimagekit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool || true
+                if [ -f appimagetool ]; then
+                  chmod +x appimagetool
+                  ARCH=x86_64 ./appimagetool --appimage-extract-and-run squashfs-root dist-binaries/Pawstash.AppImage || cp "$RAW_APPIMAGE" dist-binaries/Pawstash.AppImage
+                  rm -f appimagetool
+                else
+                  cp "$RAW_APPIMAGE" dist-binaries/Pawstash.AppImage
+                fi
+                rm -rf squashfs-root
+              else
+                cp "$RAW_APPIMAGE" dist-binaries/Pawstash.AppImage
+              fi
+            fi
             find src-tauri/target -name "*.deb" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.deb || true
+            find src-tauri/target/release -maxdepth 1 -name "pawstash" -type f | head -n 1 | xargs -I {} tar -czf dist-binaries/Pawstash-linux-x64.tar.gz -C src-tauri/target/release pawstash || true
           elif [ "${{ matrix.platform }}" = "macos-universal" ]; then
             find src-tauri/target -name "*.dmg" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.dmg || true
             find src-tauri/target -name "*.app.tar.gz" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.app.tar.gz || true
@@ -142,11 +165,11 @@ jobs:
           pnpm tauri android build --apk --target aarch64 --target armv7 --target x86_64
           pnpm tauri android build --apk --split-per-abi --target aarch64 --target armv7 --target x86_64
 
-      - name: Build Android AAB (Google Play Bundle)
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
-        run: |
-          pnpm tauri android build --aab --target aarch64 --target armv7 --target x86_64
+      # - name: Build Android AAB (Google Play Bundle)
+      #   env:
+      #     NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+      #   run: |
+      #     pnpm tauri android build --aab --target aarch64 --target armv7 --target x86_64
 
       - name: Sign Android APKs
         shell: bash
@@ -186,7 +209,7 @@ jobs:
           find src-tauri/gen/android/app/build/outputs/apk -name "*armeabi*.apk" -o -name "*v7a*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-armeabi-v7a.apk || true
           find src-tauri/gen/android/app/build/outputs/apk -name "*x86_64*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-x86_64.apk || true
           find src-tauri/gen/android/app/build/outputs/apk -name "*universal*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-universal.apk || true
-          find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.aab || true
+          # find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.aab || true
 
           if [ -f "dist-binaries/Pawstash-universal.apk" ]; then
             cp dist-binaries/Pawstash-universal.apk dist-binaries/Pawstash.apk
