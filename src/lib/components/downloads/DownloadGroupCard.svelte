@@ -42,6 +42,34 @@
   let totalBytes = $derived(items.reduce((sum, item) => sum + Math.max(item.total_bytes, item.downloaded_bytes), 0));
   let downloadedBytes = $derived(items.reduce((sum, item) => sum + item.downloaded_bytes, 0));
   let progress = $derived(totalBytes > 0 ? Math.min(100, Math.round(downloadedBytes / totalBytes * 100)) : 0);
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let playTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  function handleMouseEnter() {
+    if (videoEl && isVideo && !previewFailed) {
+      if (playTimeout) clearTimeout(playTimeout);
+      playTimeout = setTimeout(() => {
+        if (videoEl) {
+          videoEl.currentTime = 0;
+          videoEl.play().catch(() => {});
+        }
+      }, 80);
+    }
+  }
+
+  function handleMouseLeave() {
+    if (playTimeout) clearTimeout(playTimeout);
+    if (videoEl && isVideo) {
+      videoEl.pause();
+      videoEl.currentTime = 0;
+    }
+  }
+
+  $effect(() => {
+    if (previewUrl) {
+      previewFailed = false;
+    }
+  });
 
   async function runGroup(event: MouseEvent, jobs: DownloadItem[], operation: (id: string) => Promise<void>) {
     event.stopPropagation();
@@ -53,12 +81,28 @@
   }
 </script>
 
-<article class="grid-tile download-group-tile" style:aspect-ratio={ratio}>
+<article
+  class="grid-tile download-group-tile"
+  style:aspect-ratio={ratio}
+  onmouseenter={handleMouseEnter}
+  onmouseleave={handleMouseLeave}
+>
   {#if onopen}<button class="grid-tile-open" type="button" onclick={onopen} aria-label={title}></button>{/if}
   {#if previewUrl && !previewFailed && isImage}
     <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
   {:else if previewUrl && !previewFailed && isVideo}
-    <video class="grid-tile-media" src={`${previewUrl}#t=0.001`} muted playsinline disablepictureinpicture disableremoteplayback preload="metadata" onerror={() => previewFailed = true}></video>
+    <video
+      bind:this={videoEl}
+      class="grid-tile-media"
+      src={`${previewUrl}#t=0.001`}
+      muted
+      loop
+      playsinline
+      disablepictureinpicture
+      disableremoteplayback
+      preload="metadata"
+      onerror={() => previewFailed = true}
+    ></video>
   {:else}
     <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else}<IconDocument />{/if}</div>
   {/if}

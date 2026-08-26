@@ -410,30 +410,57 @@
     });
   });
 
+  function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.path && b.path && a.path === b.path) return true;
+    if (a.name && b.name && a.name === b.name) return true;
+
+    const aNode = (a as any).cloud_node_id;
+    const bNode = (b as any).cloud_node_id;
+    if (aNode && bNode && aNode === bNode) return true;
+    if (aNode && b.path && (b.path === aNode || b.path.endsWith(aNode))) return true;
+    if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
+
+    const aPath = decodeURIComponent(a.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+    const bPath = decodeURIComponent(b.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
+    const aName = (a.name || '').toLowerCase();
+    const bName = (b.name || '').toLowerCase();
+    const aBase = aPath.split('/').pop() || aName;
+    const bBase = bPath.split('/').pop() || bName;
+
+    if (aBase && bBase && aBase.length >= 4 && aBase === bBase) return true;
+    if (aName && bName && aName.length >= 3 && aName === bName) return true;
+
+    if (aName && aName.length >= 4 && (bBase.endsWith(aName) || bName.endsWith(aName) || bBase.includes(aName))) return true;
+    if (bName && bName.length >= 4 && (aBase.endsWith(bName) || aName.endsWith(bName) || aBase.includes(bName))) return true;
+    if (aBase && aBase.length >= 6 && (bPath.includes(aBase) || bBase.includes(aBase))) return true;
+    if (bBase && bBase.length >= 6 && (aPath.includes(bBase) || aBase.includes(bBase))) return true;
+
+    return false;
+  }
+
   let media = $derived.by(() => {
-    if (!post) return [];
     const items: Attachment[] = [];
-    if (post.file && (post.file.path || post.file.name)) {
-      items.push(post.file);
-    }
-    if (post.attachments && Array.isArray(post.attachments)) {
-      for (const att of post.attachments) {
-        if (!att || (!att.path && !att.name)) continue;
-        const exists = items.some(
-          (existing) => (existing.path && existing.path === att.path) || (!existing.path && existing.name === att.name)
-        );
-        if (!exists) {
-          items.push(att);
+    if (post) {
+      if (post.file && (post.file.path || post.file.name)) {
+        items.push(post.file);
+      }
+      if (post.attachments && Array.isArray(post.attachments)) {
+        for (const att of post.attachments) {
+          if (!att || (!att.path && !att.name)) continue;
+          const exists = items.some((existing) => isSameAttachment(existing, att));
+          if (!exists) {
+            items.push(att);
+          }
         }
       }
-    }
-    if (resolvedCloudAttachments.length > 0) {
-      for (const att of resolvedCloudAttachments) {
-        const exists = items.some(
-          (existing) => (existing.path && existing.path === att.path) || (!existing.path && existing.name === att.name)
-        );
-        if (!exists) {
-          items.push(att);
+      if (resolvedCloudAttachments.length > 0) {
+        for (const att of resolvedCloudAttachments) {
+          const exists = items.some((existing) => isSameAttachment(existing, att));
+          if (!exists) {
+            items.push(att);
+          }
         }
       }
     }
@@ -450,21 +477,28 @@
       const port = mediaPort ?? 0;
       const encoded = d.final_path!.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
       const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : d.url;
-      const exists = items.some(
-        (existing) => (existing.path && (existing.path === streamUrl || existing.path === d.url || existing.path === d.media_id)) ||
-                      (existing.name && existing.name === d.filename)
-      );
-      if (!exists) {
-        items.push({
-          name: d.filename,
-          path: d.url || d.media_id,
-          size: d.total_bytes || d.downloaded_bytes,
-          server: '',
+      const downloadAtt = {
+        name: d.filename,
+        path: streamUrl,
+        size: d.total_bytes || d.downloaded_bytes,
+        server: '',
+        is_cloud: true,
+        is_cloud_folder: false,
+        cloud_provider: 'download',
+        cloud_node_id: d.media_id
+      } as Attachment;
+
+      const existingIdx = items.findIndex((existing) => isSameAttachment(existing, downloadAtt));
+      if (existingIdx >= 0) {
+        items[existingIdx] = {
+          ...items[existingIdx],
+          path: streamUrl,
+          cloud_node_id: d.media_id,
           is_cloud: true,
-          is_cloud_folder: false,
-          cloud_provider: 'download',
-          cloud_node_id: d.media_id
-        } as any);
+          cloud_provider: 'download'
+        } as any;
+      } else {
+        items.push(downloadAtt);
       }
     }
 
@@ -765,57 +799,76 @@
 
     const sourceItems = allSource
       .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
-      .filter((item, itemIndex, list) => list.findIndex((candidate) => candidate.path === item.path) === itemIndex);
+      .filter((item, itemIndex, list) => list.findIndex((candidate) => isSameAttachment(candidate, item)) === itemIndex);
 
-    if (post?.file?.path && !sourceItems.some((s) => s.path === post?.file?.path)) {
+    if (post?.file?.path && !sourceItems.some((s) => isSameAttachment(s, post?.file))) {
       sourceItems.push(post.file);
     }
 
-    const nextIndex = sourceItems.findIndex((item) => (item.path && item.path === file.path) || (item.name && file.name && item.name === file.name));
+    const nextIndex = sourceItems.findIndex((item) => isSameAttachment(item, file));
     viewerFiles = nextIndex >= 0 ? sourceItems : [file, ...sourceItems];
     viewerIndex = nextIndex >= 0 ? nextIndex : 0;
   }
 
   let initialViewerHandled = $state(false);
-  let lastHandledPostId = $state('');
+  let lastHandledViewerKey = $state('');
 
   function findTargetAttachment(needleStr: string): Attachment | undefined {
+    if (!needleStr || !needleStr.trim()) return undefined;
     const raw = decodeURIComponent(needleStr).trim();
     const normNeedle = raw.toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
     const needleBase = normNeedle.split('/').pop() || normNeedle;
 
-    // 1. Direct search in post attachments / media
-    const directMatch = media.find((f) => {
-      const fPath = decodeURIComponent(f.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
-      const fName = (f.name || '').toLowerCase();
-      const fBase = fPath.split('/').pop() || fPath;
-      return (
-        fPath === normNeedle ||
-        fName === normNeedle ||
-        fBase === needleBase ||
-        (fName && (normNeedle.endsWith(fName) || normNeedle.includes(fName) || fName.includes(needleBase) || needleBase.includes(fName))) ||
-        (fPath && (normNeedle.endsWith(fPath) || normNeedle.includes(fPath) || fPath.includes(needleBase)))
-      );
-    });
-    if (directMatch) return directMatch;
+    const probeAtt: Attachment = {
+      name: needleBase,
+      path: normNeedle,
+      cloud_node_id: raw
+    } as any;
 
-    // 2. Search across all resolved cloud folder results
+    // 1. Direct search in media using isSameAttachment
+    for (const f of media) {
+      if (isSameAttachment(f, probeAtt)) {
+        return f;
+      }
+    }
+
+    // 2. Check completed downloaded files in downloadState FIRST (instant, 100% offline, zero network latency)
+    const downloadedMatch = downloadState.downloads.find((d) => {
+      if (d.service !== service || d.creator_id !== creatorId || d.post_id !== postId) return false;
+      const dAtt: Attachment = {
+        name: d.filename,
+        path: d.final_path || d.url || d.media_id,
+        cloud_node_id: d.media_id
+      } as any;
+      return isSameAttachment(dAtt, probeAtt);
+    });
+
+    if (downloadedMatch && downloadedMatch.status === 'completed' && downloadedMatch.final_path) {
+      const port = mediaPort ?? 0;
+      const encoded = downloadedMatch.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : downloadedMatch.url;
+      return {
+        name: downloadedMatch.filename,
+        path: streamUrl,
+        size: downloadedMatch.total_bytes || downloadedMatch.downloaded_bytes,
+        server: '',
+        is_cloud: true,
+        is_cloud_folder: false,
+        cloud_provider: 'download',
+        cloud_node_id: downloadedMatch.media_id
+      } as any;
+    }
+
+    // 3. Search across all resolved cloud folder results
     for (const [_, res] of cloudFolderResults) {
       const matchingNode = res.nodes.find((n) => {
         if (n.is_folder) return false;
-        const nName = (n.name || '').toLowerCase();
-        const nPath = decodeURIComponent(n.stream_url || n.download_url || n.id || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
-        const nBase = nPath.split('/').pop() || nName;
-        return (
-          n.id === raw ||
-          n.id === normNeedle ||
-          nName === normNeedle ||
-          nName === needleBase ||
-          nName.includes(needleBase) ||
-          needleBase.includes(nName) ||
-          normNeedle.includes(nName) ||
-          (nPath && (nPath === normNeedle || nPath.endsWith(needleBase) || normNeedle.endsWith(nPath)))
-        );
+        const nAtt: Attachment = {
+          name: n.name,
+          path: n.stream_url || n.download_url || `cloud:${res.provider}:${n.id}`,
+          cloud_node_id: n.id
+        } as any;
+        return isSameAttachment(nAtt, probeAtt);
       });
 
       if (matchingNode) {
@@ -834,78 +887,49 @@
       }
     }
 
-    // 3. Search across completed downloaded files in downloadState (for 100% offline access)
-    const downloadedMatch = downloadState.downloads.find((d) => {
-      if (d.service !== service || d.creator_id !== creatorId || d.post_id !== postId) return false;
-      const dName = (d.filename || '').toLowerCase();
-      const dPath = (d.final_path || d.media_id || d.url || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
-      const dBase = dPath.split('/').pop() || dName;
-      return (
-        d.media_id === raw ||
-        d.media_id === normNeedle ||
-        dName === normNeedle ||
-        dName === needleBase ||
-        dName.includes(needleBase) ||
-        needleBase.includes(dName) ||
-        normNeedle.includes(dName) ||
-        (dPath && (dPath === normNeedle || dPath.endsWith(needleBase) || normNeedle.endsWith(dPath)))
-      );
-    });
-
-    if (downloadedMatch && downloadedMatch.status === 'completed' && downloadedMatch.final_path) {
-      const port = mediaPort ?? 0;
-      const encoded = downloadedMatch.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : downloadedMatch.url;
-      return {
-        name: downloadedMatch.filename,
-        path: streamUrl,
-        size: downloadedMatch.total_bytes || downloadedMatch.downloaded_bytes,
-        server: '',
-        is_cloud: true,
-        is_cloud_folder: false,
-        cloud_provider: 'download'
-      } as any;
-    }
-
     return undefined;
   }
 
   $effect(() => {
-    if (postId !== lastHandledPostId) {
-      lastHandledPostId = postId;
+    const currentKey = `${postId}:${initialMedia || ''}:${openViewer ? '1' : '0'}`;
+    if (currentKey !== lastHandledViewerKey) {
+      lastHandledViewerKey = currentKey;
       initialViewerHandled = false;
     }
   });
 
   $effect(() => {
     const _ver = cloudResolvedVersion;
-    const isPostLoading = entry.loading;
+    const isPostFullyLoaded = entry.loaded && Boolean(post?.detail_fetched);
+    const isPostLoading = entry.loading || (!isPostFullyLoaded && !entry.loaded && !entry.error);
     const isCloudResolving = cloudResolving;
     const mediaCount = media.length;
 
     if (!initialViewerHandled && (openViewer || initialMedia)) {
-      if (isPostLoading && mediaCount === 0) {
-        return;
-      }
-
       let targetFile: Attachment | undefined;
       if (initialMedia) {
         targetFile = findTargetAttachment(initialMedia);
       }
 
-      // If looking for a specific media item and cloud link resolution is still ongoing, wait
-      if (initialMedia && !targetFile && (isPostLoading || isCloudResolving)) {
-        return;
-      }
-
-      // Fallback: if specific item was not found but openViewer was requested, open first media item
-      if (!targetFile && openViewer && mediaCount > 0) {
-        targetFile = (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || post?.file || media[0];
-      }
-
+      // If target file is found (e.g. from local download disk or existing media), open immediately!
       if (targetFile) {
         initialViewerHandled = true;
         openMediaViewer(targetFile, media);
+        return;
+      }
+
+      // If looking for an un-downloaded online media item, wait for post fetching/cloud resolve to finish unless it failed
+      if (initialMedia && (isPostLoading || isCloudResolving) && !entry.error) {
+        return;
+      }
+
+      // Fallback: if specific item was not found after loading finished but openViewer was requested, open first media item
+      if (openViewer && mediaCount > 0) {
+        targetFile = (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || post?.file || media[0];
+        if (targetFile) {
+          initialViewerHandled = true;
+          openMediaViewer(targetFile, media);
+        }
       }
     }
   });
@@ -913,24 +937,29 @@
   $effect(() => {
     if (viewerIndex !== null && media.length > 0) {
       const currentSelected = viewerFiles[viewerIndex];
-      const allSource = embedAttachment && !media.some((s) => s.path === embedAttachment!.path)
+      const allSource = embedAttachment && !media.some((s) => isSameAttachment(s, embedAttachment!))
         ? [embedAttachment, ...media]
         : media;
       const updatedSourceItems = allSource
         .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
-        .filter((item, itemIndex, list) => list.findIndex((candidate) => candidate.path === item.path) === itemIndex);
+        .filter((item, itemIndex, list) => list.findIndex((candidate) => isSameAttachment(candidate, item)) === itemIndex);
 
-      if (post?.file?.path && !updatedSourceItems.some((s) => s.path === post?.file?.path)) {
+      if (post?.file?.path && !updatedSourceItems.some((s) => isSameAttachment(s, post?.file))) {
         updatedSourceItems.push(post.file);
       }
 
-      if (updatedSourceItems.length !== viewerFiles.length) {
-        viewerFiles = updatedSourceItems;
+      if (updatedSourceItems.length !== viewerFiles.length || (currentSelected && !isSameAttachment(viewerFiles[viewerIndex], currentSelected))) {
         if (currentSelected) {
-          const idx = updatedSourceItems.findIndex((item) => (item.path && item.path === currentSelected.path) || (currentSelected.name && item.name === currentSelected.name));
+          const idx = updatedSourceItems.findIndex((item) => isSameAttachment(item, currentSelected));
           if (idx >= 0) {
+            viewerFiles = updatedSourceItems;
             viewerIndex = idx;
+          } else {
+            viewerFiles = [currentSelected, ...updatedSourceItems.filter((item) => !isSameAttachment(item, currentSelected))];
+            viewerIndex = 0;
           }
+        } else {
+          viewerFiles = updatedSourceItems;
         }
       }
     }

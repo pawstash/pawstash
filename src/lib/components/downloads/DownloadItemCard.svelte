@@ -46,6 +46,34 @@
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
   let selected = $derived(isSelectionActive && selectionState.isSelected(item.id));
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let playTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  function handleMouseEnter() {
+    if (videoEl && mediaKind === 'video' && !previewFailed) {
+      if (playTimeout) clearTimeout(playTimeout);
+      playTimeout = setTimeout(() => {
+        if (videoEl) {
+          videoEl.currentTime = 0;
+          videoEl.play().catch(() => {});
+        }
+      }, 80);
+    }
+  }
+
+  function handleMouseLeave() {
+    if (playTimeout) clearTimeout(playTimeout);
+    if (videoEl && mediaKind === 'video') {
+      videoEl.pause();
+      videoEl.currentTime = 0;
+    }
+  }
+
+  $effect(() => {
+    if (previewUrl || thumbnailUrl) {
+      previewFailed = false;
+    }
+  });
 
   function handleCardClick(event: MouseEvent) {
     if (event.ctrlKey || event.metaKey) {
@@ -102,8 +130,10 @@
   class:completed={item.status === 'completed'}
   style:aspect-ratio={ratio}
   data-download-id={item.id}
+  onmouseenter={handleMouseEnter}
+  onmouseleave={handleMouseLeave}
 >
-  <button class="grid-tile-open" type="button" onclick={handleCardClick} aria-label={[postTitle, item.filename].filter(Boolean).join(' — ')}></button>
+  <button class="grid-tile-open" type="button" onclick={handleCardClick} aria-label={[item.filename, postTitle].filter(Boolean).join(' — ')}></button>
 
   {#if isSelectionActive}
     <button
@@ -187,7 +217,18 @@
   {:else if previewUrl && !previewFailed && mediaKind === 'image'}
     <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
   {:else if previewUrl && !previewFailed && mediaKind === 'video'}
-    <video class="grid-tile-media" src={`${previewUrl}#t=0.001`} muted playsinline disablepictureinpicture disableremoteplayback preload="metadata" onerror={() => previewFailed = true}></video>
+    <video
+      bind:this={videoEl}
+      class="grid-tile-media"
+      src={`${previewUrl}#t=0.001`}
+      muted
+      loop
+      playsinline
+      disablepictureinpicture
+      disableremoteplayback
+      preload="metadata"
+      onerror={() => previewFailed = true}
+    ></video>
   {:else}
     <div class="grid-tile-placeholder download-placeholder">
       {#if mediaKind === 'audio'}<IconMusic />{:else if mediaKind === 'video'}<IconVideo />{:else}<IconDocument />{/if}
@@ -213,8 +254,10 @@
   </div>
 
   <div class="download-copy">
-    {#if postTitle}<h2 class="grid-tile-title">{postTitle}</h2>{/if}
-    <p class="download-filename" title={item.filename}>{item.filename}</p>
+    <h2 class="grid-tile-title" title={item.filename}>{item.filename}</h2>
+    {#if postTitle}
+      <p class="download-post-title" title={postTitle}>{postTitle}</p>
+    {/if}
   </div>
   <div class="grid-tile-footer">
     {#if item.status !== 'completed'}
@@ -243,8 +286,8 @@
   .download-placeholder span { font-size: calc(9px * var(--grid-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .download-copy { position: absolute; z-index: 5; left: calc(12px * var(--grid-scale, 1)); right: calc(12px * var(--grid-scale, 1)); bottom: calc(52px * var(--grid-scale, 1)); display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: calc(3px * var(--grid-scale, 1)); pointer-events: none; }
   .download-tile.completed .download-copy { bottom: calc(32px * var(--grid-scale, 1)); }
-  .download-copy .grid-tile-title { position: static; width: 100%; overflow-wrap: anywhere; word-break: break-word; }
-  .download-filename { width: 100%; margin: 0; color: rgba(255,255,255,.62); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .download-copy .grid-tile-title { position: static; width: 100%; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .download-post-title { width: 100%; margin: 0; color: rgba(255,255,255,.62); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
   .download-actions-left { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); left: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
   .download-actions-left .download-action { position: relative; inset: auto; flex: none; }
   .download-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }

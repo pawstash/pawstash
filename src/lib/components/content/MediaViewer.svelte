@@ -55,6 +55,14 @@
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
   let index = $state(0);
+  let lastPropIndex = $state<number | null>(null);
+
+  $effect(() => {
+    if (initialIndex !== lastPropIndex) {
+      lastPropIndex = initialIndex;
+      index = Math.max(0, Math.min(items.length - 1, initialIndex));
+    }
+  });
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);

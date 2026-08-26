@@ -511,7 +511,6 @@
           <DownloadItemCard
             {item}
             previewUrl={previewUrl(item)}
-            thumbnailUrl={localPathUrl(item.post_preview_path) || item.post_preview_url}
             postTitle={item.post_title}
             onopen={identity ? (openViewer) => openPost(identity, item.media_id || item.filename || item.url, openViewer) : undefined}
             orderedKeys={downloadKeys}
