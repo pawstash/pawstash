@@ -224,10 +224,8 @@ pub fn read_recent_logs(max_lines: usize) -> Result<String, String> {
     let reader = BufReader::new(file);
     let mut lines: Vec<String> = Vec::new();
 
-    for line in reader.lines() {
-        if let Ok(l) = line {
-            lines.push(l);
-        }
+    for l in reader.lines().map_while(Result::ok) {
+        lines.push(l);
     }
 
     if lines.len() > max_lines {

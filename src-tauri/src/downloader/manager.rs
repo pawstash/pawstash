@@ -387,7 +387,9 @@ impl DownloadManager {
                 PathBuf::from(preferred),
                 PathBuf::from("/storage/emulated/0/Download/Pawstash"),
                 PathBuf::from("/storage/emulated/0/Download"),
-                PathBuf::from("/storage/emulated/0/Android/data/app.pawstash.client/files/Download"),
+                PathBuf::from(
+                    "/storage/emulated/0/Android/data/app.pawstash.client/files/Download",
+                ),
                 PathBuf::from("/data/user/0/app.pawstash.client/files/Pawstash/Downloads"),
                 PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"),
             ];
@@ -502,9 +504,17 @@ impl DownloadManager {
         }
 
         let effective_url = if job.url.starts_with("https://pawchive.pw/data/") {
-            job.url.replacen("https://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+            job.url.replacen(
+                "https://pawchive.pw/data/",
+                "https://file.pawchive.pw/data/",
+                1,
+            )
         } else if job.url.starts_with("http://pawchive.pw/data/") {
-            job.url.replacen("http://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+            job.url.replacen(
+                "http://pawchive.pw/data/",
+                "https://file.pawchive.pw/data/",
+                1,
+            )
         } else {
             job.url.clone()
         };
@@ -594,18 +604,20 @@ impl DownloadManager {
         }
         let final_path = Path::new(&job.final_path);
         if let Some(parent) = final_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| DownloadRunError::Failed(format!("Failed to create destination folder: {error}")))?;
+            tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                DownloadRunError::Failed(format!("Failed to create destination folder: {error}"))
+            })?;
         }
 
-        if recovered_final_size.is_none() {
-            if tokio::fs::rename(&job.temp_path, final_path).await.is_err() {
-                tokio::fs::copy(&job.temp_path, final_path)
-                    .await
-                    .map_err(|error| DownloadRunError::Failed(format!("Failed to write final file: {error}")))?;
-                let _ = tokio::fs::remove_file(&job.temp_path).await;
-            }
+        if recovered_final_size.is_none()
+            && tokio::fs::rename(&job.temp_path, final_path).await.is_err()
+        {
+            tokio::fs::copy(&job.temp_path, final_path)
+                .await
+                .map_err(|error| {
+                    DownloadRunError::Failed(format!("Failed to write final file: {error}"))
+                })?;
+            let _ = tokio::fs::remove_file(&job.temp_path).await;
         }
 
         let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);

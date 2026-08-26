@@ -251,9 +251,24 @@ impl PawchiveClient {
         let mut clean_query = String::new();
 
         if let Some(raw_q) = query.map(str::trim).filter(|q| !q.is_empty()) {
-            if raw_q.contains("hide=ai") || raw_q.contains("hide=(ai)") || raw_q.contains("?hide=ai") || raw_q.contains("?hide=(ai)") || raw_q.contains("ai:hide") {
+            if raw_q.contains("hide=ai")
+                || raw_q.contains("hide=(ai)")
+                || raw_q.contains("?hide=ai")
+                || raw_q.contains("?hide=(ai)")
+                || raw_q.contains("ai:hide")
+            {
                 hide_ai_directive = true;
-            } else if raw_q.contains("only=ai") || raw_q.contains("only=(ai)") || raw_q.contains("show=ai") || raw_q.contains("show=(ai)") || raw_q.contains("?only=ai") || raw_q.contains("?only=(ai)") || raw_q.contains("?show=ai") || raw_q.contains("?show=(ai)") || raw_q.contains("ai:only") || raw_q.contains("ai:show") {
+            } else if raw_q.contains("only=ai")
+                || raw_q.contains("only=(ai)")
+                || raw_q.contains("show=ai")
+                || raw_q.contains("show=(ai)")
+                || raw_q.contains("?only=ai")
+                || raw_q.contains("?only=(ai)")
+                || raw_q.contains("?show=ai")
+                || raw_q.contains("?show=(ai)")
+                || raw_q.contains("ai:only")
+                || raw_q.contains("ai:show")
+            {
                 show_ai_directive = true;
             }
             let cleaned = raw_q
@@ -276,7 +291,9 @@ impl PawchiveClient {
                 .to_string();
             if !cleaned.is_empty() {
                 if cleaned.chars().count() < 2 {
-                    return Err("Pawchive search query must contain at least 2 characters".to_string());
+                    return Err(
+                        "Pawchive search query must contain at least 2 characters".to_string()
+                    );
                 }
                 clean_query = cleaned;
             }
@@ -800,8 +817,18 @@ impl PawchiveClient {
         seen.insert((service.to_string(), creator_id.to_string()));
 
         for card in document.select(&card_selector) {
-            let id = card.value().attr("data-id").unwrap_or_default().trim().to_string();
-            let srv = card.value().attr("data-service").unwrap_or(service).trim().to_string();
+            let id = card
+                .value()
+                .attr("data-id")
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let srv = card
+                .value()
+                .attr("data-service")
+                .unwrap_or(service)
+                .trim()
+                .to_string();
             let name = card
                 .select(&name_selector)
                 .next()
@@ -1177,7 +1204,9 @@ impl SourceProvider for PawchiveProvider {
         service: &str,
         creator_id: &str,
     ) -> Result<Vec<CreatorProfile>, String> {
-        self.client.fetch_similar_creators(service, creator_id).await
+        self.client
+            .fetch_similar_creators(service, creator_id)
+            .await
     }
 
     async fn fetch_creator_tags(

@@ -363,10 +363,7 @@ impl AppSettings {
                 "smart_merge_attachments",
                 self.smart_merge_attachments.to_string(),
             ),
-            (
-                "pawchive_hide_ai",
-                self.pawchive_hide_ai.to_string(),
-            ),
+            ("pawchive_hide_ai", self.pawchive_hide_ai.to_string()),
         ]
     }
 

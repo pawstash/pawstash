@@ -368,6 +368,7 @@
     "unfavorite": "Favorited",
     "unsupported_codec_desc": "H.265 / HEVC is not natively supported by the system WebView. Please download the file to play it in an external player.",
     "video_count": "video",
+    "video_load_failed": "Failed to play video",
     "view_preview": "Preview",
     "viewer_close": "Close viewer",
     "viewer_exit_fullscreen": "Exit fullscreen",

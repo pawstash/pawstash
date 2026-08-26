@@ -25,7 +25,9 @@ impl NativeDownloader {
                 .send()
                 .await
             {
-                if response.status() == StatusCode::PARTIAL_CONTENT || response.status().is_success() {
+                if response.status() == StatusCode::PARTIAL_CONTENT
+                    || response.status().is_success()
+                {
                     if let Some(total) = response
                         .headers()
                         .get(CONTENT_RANGE)
@@ -251,10 +253,7 @@ impl NativeDownloader {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             ),
         );
-        headers.insert(
-            reqwest::header::ACCEPT,
-            HeaderValue::from_static("*/*"),
-        );
+        headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("*/*"));
         headers.insert(
             reqwest::header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
@@ -273,7 +272,11 @@ impl NativeDownloader {
                 "https://coomer.party/"
             } else if host.contains("pawchive") {
                 "https://pawchive.pw/"
-            } else if host.contains("dropbox") || host.contains("google") || host.contains("mega") || host.contains("pixeldrain") {
+            } else if host.contains("dropbox")
+                || host.contains("google")
+                || host.contains("mega")
+                || host.contains("pixeldrain")
+            {
                 ""
             } else if !host.is_empty() {
                 let scheme = parsed.scheme();

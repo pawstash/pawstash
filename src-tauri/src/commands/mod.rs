@@ -181,9 +181,17 @@ pub async fn probe_download_size(
     }
     let settings = state.config_manager.load()?;
     let effective_url = if url.starts_with("https://pawchive.pw/data/") {
-        url.replacen("https://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+        url.replacen(
+            "https://pawchive.pw/data/",
+            "https://file.pawchive.pw/data/",
+            1,
+        )
     } else if url.starts_with("http://pawchive.pw/data/") {
-        url.replacen("http://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+        url.replacen(
+            "http://pawchive.pw/data/",
+            "https://file.pawchive.pw/data/",
+            1,
+        )
     } else {
         url
     };
@@ -670,9 +678,10 @@ pub async fn fetch_creator_tags(
     {
         Ok(items) => {
             if !items.is_empty() {
-                let _ = state
-                    .content
-                    .save_document("creator_tags", &service, &creator_id, "", &items);
+                let _ =
+                    state
+                        .content
+                        .save_document("creator_tags", &service, &creator_id, "", &items);
             }
             Ok(items)
         }
@@ -746,14 +755,12 @@ pub async fn resolve_external_post_link(
 
     let post_parsed = if let Some(parsed) = parse_external_post_link(&url) {
         Some(parsed)
+    } else if let Ok(Some(expanded_url)) = state.provider_manager.expand_short_link(&url).await {
+        let res = parse_external_post_link(&expanded_url);
+        expanded_opt = Some(expanded_url);
+        res
     } else {
-        if let Ok(Some(expanded_url)) = state.provider_manager.expand_short_link(&url).await {
-            let res = parse_external_post_link(&expanded_url);
-            expanded_opt = Some(expanded_url);
-            res
-        } else {
-            None
-        }
+        None
     };
 
     if let Some(parsed) = post_parsed {
@@ -831,7 +838,10 @@ pub async fn resolve_external_post_link(
     // Check for creator profile links
     let target_url = expanded_opt.as_deref().unwrap_or(&url);
     if let Some(creator_link) = parse_external_creator_link(target_url) {
-        if let Some(creator_id) = state.content.find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)? {
+        if let Some(creator_id) = state
+            .content
+            .find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)?
+        {
             return Ok(Some(ResolvedPostLink {
                 service: creator_link.service.clone(),
                 creator_id,
@@ -842,7 +852,11 @@ pub async fn resolve_external_post_link(
             }));
         }
 
-        if let Ok(profile) = state.provider_manager.fetch_creator_profile(&creator_link.service, &creator_link.creator_hint).await {
+        if let Ok(profile) = state
+            .provider_manager
+            .fetch_creator_profile(&creator_link.service, &creator_link.creator_hint)
+            .await
+        {
             let _ = state.content.save_creators(std::slice::from_ref(&profile));
             return Ok(Some(ResolvedPostLink {
                 service: profile.service,
@@ -856,7 +870,10 @@ pub async fn resolve_external_post_link(
 
         if let Ok(creators) = state.provider_manager.fetch_creators().await {
             let _ = state.content.save_creators(&creators);
-            if let Some(creator_id) = state.content.find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)? {
+            if let Some(creator_id) = state
+                .content
+                .find_creator_by_alias(&creator_link.service, &creator_link.creator_hint)?
+            {
                 return Ok(Some(ResolvedPostLink {
                     service: creator_link.service.clone(),
                     creator_id,
@@ -1456,8 +1473,10 @@ pub async fn start_download(
             }
         });
 
-        let root = crate::downloader::manager::DownloadManager::ensure_download_root(&settings.download_dir)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&settings.download_dir));
+        let root = crate::downloader::manager::DownloadManager::ensure_download_root(
+            &settings.download_dir,
+        )
+        .unwrap_or_else(|_| std::path::PathBuf::from(&settings.download_dir));
         let c_name = creator_name.as_deref().unwrap_or("");
         let ctx = crate::downloader::template::TemplateContext {
             service: &post.service,
@@ -1906,7 +1925,9 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
             use jni::objects::JValue;
             let url_jstr = env.new_string(safe_url).map_err(|e| e.to_string())?;
 
-            let uri_class = env.find_class("android/net/Uri").map_err(|e| e.to_string())?;
+            let uri_class = env
+                .find_class("android/net/Uri")
+                .map_err(|e| e.to_string())?;
             let uri_obj = env
                 .call_static_method(
                     uri_class,
@@ -1943,7 +1964,12 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
             Ok(())
         })
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
     {
         let _ = safe_url;
         Err("Unsupported operating system".to_string())
@@ -2424,14 +2450,8 @@ pub async fn resolve_cloud_link(
 }
 
 #[tauri::command]
-pub fn log_message(
-    level: String,
-    message: String,
-    context: Option<serde_json::Value>,
-) {
-    let ctx_str = context
-        .map(|c| c.to_string())
-        .unwrap_or_default();
+pub fn log_message(level: String, message: String, context: Option<serde_json::Value>) {
+    let ctx_str = context.map(|c| c.to_string()).unwrap_or_default();
     match level.to_lowercase().as_str() {
         "error" => {
             if ctx_str.is_empty() {
@@ -2466,7 +2486,9 @@ pub fn log_message(
 
 #[tauri::command]
 pub fn get_debug_log_path() -> Result<String, String> {
-    Ok(crate::logging::log_file_path().to_string_lossy().to_string())
+    Ok(crate::logging::log_file_path()
+        .to_string_lossy()
+        .to_string())
 }
 
 #[tauri::command]

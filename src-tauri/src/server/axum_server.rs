@@ -106,17 +106,18 @@ async fn serve_media_handler(
     let allowed = true;
 
     #[cfg(not(target_os = "android"))]
-    let allowed = _state.allowed_roots.is_empty() || _state.allowed_roots.iter().any(|root| {
-        if target.starts_with(root) {
-            return true;
-        }
-        if let Ok(can_root) = std::fs::canonicalize(root) {
-            if target.starts_with(&can_root) {
+    let allowed = _state.allowed_roots.is_empty()
+        || _state.allowed_roots.iter().any(|root| {
+            if target.starts_with(root) {
                 return true;
             }
-        }
-        false
-    });
+            if let Ok(can_root) = std::fs::canonicalize(root) {
+                if target.starts_with(&can_root) {
+                    return true;
+                }
+            }
+            false
+        });
 
     if !allowed {
         return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
@@ -437,7 +438,8 @@ async fn serve_cloud_proxy_stream_handler(
             if !settings.proxy_url.trim().is_empty() {
                 if let Ok(mut proxy) = reqwest::Proxy::all(settings.proxy_url.trim()) {
                     if !settings.proxy_username.is_empty() {
-                        proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
+                        proxy =
+                            proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
                     }
                     builder = builder.proxy(proxy);
                 }

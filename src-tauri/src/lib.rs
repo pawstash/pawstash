@@ -109,7 +109,11 @@ pub fn run() {
                     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                     #[cfg(target_os = "windows")]
                     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+                    #[cfg(not(any(
+                        target_os = "linux",
+                        target_os = "macos",
+                        target_os = "windows"
+                    )))]
                     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
                     if let Some(window) = wh_fallback.get_webview_window("main") {
@@ -131,16 +135,26 @@ pub fn run() {
                     std::path::PathBuf::from(&media_download_dir),
                     db::storage::content_cache_path(),
                 ];
-                if let Ok(ensured) = crate::downloader::manager::DownloadManager::ensure_download_root(&media_download_dir) {
+                if let Ok(ensured) =
+                    crate::downloader::manager::DownloadManager::ensure_download_root(
+                        &media_download_dir,
+                    )
+                {
                     if !roots.contains(&ensured) {
                         roots.push(ensured);
                     }
                 }
                 #[cfg(target_os = "android")]
                 {
-                    roots.push(std::path::PathBuf::from("/storage/emulated/0/Download/Pawstash"));
-                    roots.push(std::path::PathBuf::from("/storage/emulated/0/Android/data/app.pawstash.client/files/Download"));
-                    roots.push(std::path::PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"));
+                    roots.push(std::path::PathBuf::from(
+                        "/storage/emulated/0/Download/Pawstash",
+                    ));
+                    roots.push(std::path::PathBuf::from(
+                        "/storage/emulated/0/Android/data/app.pawstash.client/files/Download",
+                    ));
+                    roots.push(std::path::PathBuf::from(
+                        "/data/data/app.pawstash.client/files/Pawstash/Downloads",
+                    ));
                     roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
                 }
                 if let Ok(server) = MediaServer::start(roots, server_config_manager).await {
