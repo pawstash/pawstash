@@ -87,12 +87,37 @@ pub fn run() {
             // Do not reveal an uninitialized WebView: on Windows it otherwise
             // appears as a large gray surface while Vite is still serving the UI.
             let window_handle = app.handle().clone();
+            let wh = window_handle.clone();
             app.listen("frontend-ready", move |_| {
-                if let Some(window) = window_handle.get_webview_window("main") {
+                if let Some(window) = wh.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
                     let _ = window.set_focus();
                 }
             });
+
+            #[cfg(desktop)]
+            {
+                let wh_fallback = window_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    #[cfg(target_os = "linux")]
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    #[cfg(target_os = "macos")]
+                    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                    #[cfg(target_os = "windows")]
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                    if let Some(window) = wh_fallback.get_webview_window("main") {
+                        if !window.is_visible().unwrap_or(false) {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            }
 
             let axum_port = Arc::new(AtomicU16::new(0));
             let server_port = axum_port.clone();
@@ -240,6 +265,7 @@ pub fn run() {
             commands::updater::check_for_updates,
             commands::updater::download_and_install_update,
             commands::window_effects::set_window_effect,
+            show_main_window,
             hide_to_tray,
             update_panic_key,
             update_boss_key,

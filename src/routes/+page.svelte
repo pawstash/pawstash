@@ -13,7 +13,7 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
-  import { apiGetSettings, apiGetPendingDeepLink } from '$lib/utils/ipc';
+  import { apiGetSettings, apiGetPendingDeepLink, apiShowMainWindow } from '$lib/utils/ipc';
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
   import DesktopTitlebar from '$lib/components/layout/DesktopTitlebar.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
@@ -97,7 +97,10 @@
     void providerState.loadProviders().catch((error) => console.warn('Failed to load providers', error));
     void creatorsState.load().catch((error) => console.warn('Failed to preload creators list', error));
 
-    requestAnimationFrame(() => void emit('frontend-ready'));
+    requestAnimationFrame(() => {
+      void emit('frontend-ready');
+      void apiShowMainWindow().catch(() => {});
+    });
 
     return () => {
       document.removeEventListener('touchstart', preventPinchZoom);

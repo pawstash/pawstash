@@ -58,6 +58,7 @@ export const apiOpenDownloadFile = (filePath: string) =>
   invoke<void>('open_download_file', { filePath });
 export const apiShowInFolder = (path: string) =>
   invoke<void>('show_in_folder', { path });
+export const apiShowMainWindow = () => invoke<void>('show_main_window');
 export const apiPickFolder = () => invoke<string | null>('pick_folder');
 export const apiGetAccountSession = () => invoke<AccountSession>('get_account_session');
 export const apiLoginAccount = (username: string, password: string) =>

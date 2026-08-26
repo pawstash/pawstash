@@ -2310,6 +2310,21 @@ pub async fn get_pending_deep_link() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn show_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+    let _ = app_handle;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn hide_to_tray(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(desktop)]
     {
