@@ -11,15 +11,34 @@ body:
         - Windows 11
         - Windows 10
         - Android
-        - Linux (AppImage / DEB)
-        - macOS
+        - Linux — Arch / Manjaro / EndeavourOS
+        - Linux — Ubuntu / Debian / Mint
+        - Linux — Fedora / RHEL
+        - Linux — openSUSE / Void / Other
+        - macOS — Apple Silicon (M-series)
+        - macOS — Intel (x86_64)
+    validations:
+      required: true
+  - type: dropdown
+    id: package_format
+    attributes:
+      label: Package / Binary Type
+      options:
+        - Windows Portable (.exe)
+        - Windows Installer (Setup .exe / .msi)
+        - Linux AppImage (.AppImage)
+        - Linux DEB package (.deb)
+        - Linux Standalone Archive (.tar.gz / AUR)
+        - Android APK (arm64-v8a / universal)
+        - macOS DMG (.dmg / .app)
+        - Built from source
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: App Version
-      placeholder: e.g. 26.8.1-pre1
+      placeholder: e.g. 26.8.1
     validations:
       required: false
   - type: textarea
