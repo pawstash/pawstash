@@ -116,7 +116,7 @@ class DownloadForegroundService : Service() {
                 }
 
                 val notification = NotificationCompat.Builder(context, CHANNEL_COMPLETED_ID)
-                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setSmallIcon(R.drawable.ic_notification)
                     .setContentTitle("Download Complete")
                     .setContentText(displayTitle)
                     .setSubText(subtitle)
@@ -205,7 +205,7 @@ class DownloadForegroundService : Service() {
         isServiceRunning = true
 
         val initialNotification = NotificationCompat.Builder(this, CHANNEL_DOWNLOADS_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Pawstash Downloads")
             .setContentText("Starting download...")
             .setOngoing(true)
@@ -310,7 +310,7 @@ class DownloadForegroundService : Service() {
         val pendingIntent = PendingIntent.getActivity(this, FOREGROUND_NOTIFICATION_ID, openIntent, pendingFlags)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_DOWNLOADS_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(contentText)
             .setProgress(100, progressPercent, isIndeterminate)
