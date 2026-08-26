@@ -457,12 +457,13 @@
       if (!exists) {
         items.push({
           name: d.filename,
-          path: streamUrl,
+          path: d.url || d.media_id,
           size: d.total_bytes || d.downloaded_bytes,
           server: '',
           is_cloud: true,
           is_cloud_folder: false,
-          cloud_provider: 'download'
+          cloud_provider: 'download',
+          cloud_node_id: d.media_id
         } as any);
       }
     }
@@ -492,6 +493,10 @@
   function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
+      if ((file as any)?.is_cloud || file.path?.startsWith('http') || file.path?.startsWith('/cloud_stream/')) {
+        videoFailures[index] = true;
+        return;
+      }
       const remote = remoteFileUrl(file);
       if (remote && video.src !== remote) {
         console.warn('Local video playback failed, falling back to remote stream:', file.name);
@@ -738,14 +743,10 @@
 
     if ((file as any)?.cloud_folder_result) {
       const fRes = (file as any).cloud_folder_result as CloudFolderResult;
-      const port = mediaPort ?? 0;
       const cloudFiles = fRes.nodes.filter((n) => !n.is_folder).map((n) => {
-        const streamUrl = n.stream_url?.startsWith('/cloud_stream/') && port > 0
-          ? `http://127.0.0.1:${port}${n.stream_url}`
-          : (n.download_url || '');
         return {
           name: n.name,
-          path: streamUrl || n.stream_url || n.download_url || `cloud:${fRes.provider}:${n.id}`,
+          path: n.stream_url || n.download_url || `cloud:${fRes.provider}:${n.id}`,
           size: n.size,
           server: '',
           is_cloud: true,
@@ -818,13 +819,9 @@
       });
 
       if (matchingNode) {
-        const port = mediaPort ?? 0;
-        const streamUrl = matchingNode.stream_url?.startsWith('/cloud_stream/') && port > 0
-          ? `http://127.0.0.1:${port}${matchingNode.stream_url}`
-          : (matchingNode.download_url || '');
         return {
           name: matchingNode.name,
-          path: streamUrl || matchingNode.stream_url || matchingNode.download_url || `cloud:${res.provider}:${matchingNode.id}`,
+          path: matchingNode.stream_url || matchingNode.download_url || `cloud:${res.provider}:${matchingNode.id}`,
           size: matchingNode.size,
           server: '',
           is_cloud: true,
@@ -1252,9 +1249,29 @@
       return `http://127.0.0.1:${mediaPort}${file.path}`;
     }
 
-    // 3. Absolute http / https URL
+    // 3. Absolute http / https URL - proxy cloud URLs through Axum so Android WebView plays without TLS/CORS issues
     if (file.path?.startsWith('http://') || file.path?.startsWith('https://')) {
-      return file.path;
+      let targetPath = file.path;
+      if (targetPath.includes('dropbox.com')) {
+        try {
+          const u = new URL(targetPath);
+          u.searchParams.delete('dl');
+          u.searchParams.set('raw', '1');
+          targetPath = u.toString();
+        } catch {
+          // ignore
+        }
+      }
+      if (
+        mediaPort &&
+        (targetPath.includes('dropbox.com') ||
+          targetPath.includes('pixeldrain.com') ||
+          targetPath.includes('drive.google.com') ||
+          targetPath.includes('dropboxusercontent.com'))
+      ) {
+        return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
+      }
+      return targetPath;
     }
 
     // 4. Remote Kemono / Coomer / Fanbox attachment URL
@@ -1343,12 +1360,31 @@
     }
   }
 
-  async function download(file: { path?: string; server?: string; name?: string }, index: number) {
+  async function download(file: { path?: string; server?: string; name?: string; is_cloud?: boolean; cloud_folder_result?: any; cloud_node_id?: string }, index: number) {
     if (!file.path) return;
     try {
       if (!post) return;
       const targetName = file.name || `${postId}_${index + 1}`;
-      await downloadState.start(post, file.path, fileUrl(file), targetName);
+      let targetUrl = file.path;
+      if (file.is_cloud && file.cloud_folder_result) {
+        const matchingNode = file.cloud_folder_result.nodes?.find((n: any) => n.id === file.cloud_node_id || n.name === file.name);
+        if (matchingNode?.download_url) {
+          targetUrl = matchingNode.download_url;
+        }
+      } else if (!targetUrl.startsWith('http')) {
+        targetUrl = remoteFileUrl(file as Attachment);
+      }
+      if (targetUrl.includes('dropbox.com')) {
+        try {
+          const u = new URL(targetUrl);
+          u.searchParams.delete('raw');
+          u.searchParams.set('dl', '1');
+          targetUrl = u.toString();
+        } catch {
+          // ignore
+        }
+      }
+      await downloadState.start(post, file.path, targetUrl, targetName);
       notify.success(i18n.t('feed.download_started'), targetName);
     } catch (error) {
       notify.error(i18n.t('feed.download_failed'), error);
@@ -1873,7 +1909,7 @@
                     {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                       <!-- svelte-ignore a11y_media_has_caption -->
                       <video
-                        src={postEmbed.url}
+                        src={embedAttachment ? fileUrl(embedAttachment) : (mediaPort ? `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
                         controls
                         playsinline
                         preload="metadata"

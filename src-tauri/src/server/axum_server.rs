@@ -24,20 +24,33 @@ pub struct MediaServer {
     pub port: u16,
 }
 
+#[derive(Clone)]
+pub struct MediaServerState {
+    pub allowed_roots: Vec<PathBuf>,
+    pub config_manager: Arc<crate::config::ConfigManager>,
+}
+
 impl MediaServer {
     pub async fn start(
         allowed_roots: Vec<PathBuf>,
+        config_manager: Arc<crate::config::ConfigManager>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any);
 
+        let state = Arc::new(MediaServerState {
+            allowed_roots,
+            config_manager,
+        });
+
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
             .route("/cloud_stream/mega", get(serve_mega_stream_handler))
+            .route("/cloud_stream/proxy", get(serve_cloud_proxy_stream_handler))
             .route("/health", get(|| async { "OK" }))
-            .with_state(Arc::new(allowed_roots))
+            .with_state(state)
             .layer(cors);
 
         // Bind to dynamic loopback port
@@ -58,7 +71,7 @@ impl MediaServer {
 }
 
 async fn serve_media_handler(
-    State(allowed_roots): State<Arc<Vec<PathBuf>>>,
+    State(state): State<Arc<MediaServerState>>,
     Path(file_path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
@@ -93,7 +106,7 @@ async fn serve_media_handler(
     let allowed = true;
 
     #[cfg(not(target_os = "android"))]
-    let allowed = allowed_roots.is_empty() || allowed_roots.iter().any(|root| {
+    let allowed = state.allowed_roots.is_empty() || state.allowed_roots.iter().any(|root| {
         if target.starts_with(root) {
             return true;
         }
@@ -393,4 +406,125 @@ fn parse_range(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
     }
 
     Some((start, end))
+}
+
+#[derive(Deserialize)]
+struct CloudProxyParams {
+    url: String,
+    name: Option<String>,
+}
+
+async fn serve_cloud_proxy_stream_handler(
+    State(state): State<Arc<MediaServerState>>,
+    Query(params): Query<CloudProxyParams>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    let settings = state.config_manager.load().unwrap_or_default();
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+
+    let is_local = params.url.starts_with("http://127.0.0.1")
+        || params.url.starts_with("http://localhost")
+        || params.url.starts_with("https://127.0.0.1")
+        || params.url.starts_with("https://localhost");
+
+    match settings.proxy_mode {
+        crate::config::ProxyMode::None => builder = builder.no_proxy(),
+        crate::config::ProxyMode::System => {}
+        crate::config::ProxyMode::Custom if !(settings.proxy_bypass_local && is_local) => {
+            if !settings.proxy_url.trim().is_empty() {
+                if let Ok(mut proxy) = reqwest::Proxy::all(settings.proxy_url.trim()) {
+                    if !settings.proxy_username.is_empty() {
+                        proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
+                    }
+                    builder = builder.proxy(proxy);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let client = builder
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut target_url = params.url.clone();
+    if target_url.contains("dropbox.com") {
+        if let Ok(mut u) = reqwest::Url::parse(&target_url) {
+            let query: Vec<(String, String)> = u
+                .query_pairs()
+                .filter(|(k, _)| k != "dl" && k != "raw")
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            u.query_pairs_mut()
+                .clear()
+                .extend_pairs(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                .append_pair("raw", "1");
+            target_url = u.to_string();
+        }
+    }
+
+    let mut req = client.get(&target_url);
+    if let Some(range) = headers.get(header::RANGE) {
+        if let Ok(range_val) = range.to_str() {
+            req = req.header(header::RANGE, range_val);
+        }
+    }
+
+    let upstream = req.send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Cloud upstream request failed: {e}"),
+        )
+    })?;
+
+    let status = upstream.status();
+    let upstream_headers = upstream.headers().clone();
+    let body = Body::from_stream(upstream.bytes_stream());
+
+    let mut response = Response::builder()
+        .status(status)
+        .body(body)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let resp_headers = response.headers_mut();
+    for (k, v) in upstream_headers.iter() {
+        if k == header::CONTENT_TYPE
+            || k == header::CONTENT_LENGTH
+            || k == header::CONTENT_RANGE
+            || k == header::ACCEPT_RANGES
+        {
+            resp_headers.insert(k.clone(), v.clone());
+        }
+    }
+
+    // Ensure valid streaming MIME type
+    let is_html_or_generic = resp_headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.starts_with("text/html") || ct.starts_with("application/octet-stream"))
+        .unwrap_or(true);
+
+    if is_html_or_generic {
+        if let Some(name) = &params.name {
+            let mime = mime_guess::from_path(name)
+                .first_or_octet_stream()
+                .to_string();
+            if let Ok(val) = mime.parse() {
+                resp_headers.insert(header::CONTENT_TYPE, val);
+            }
+        } else if target_url.contains(".mp4") {
+            resp_headers.insert(header::CONTENT_TYPE, "video/mp4".parse().unwrap());
+        }
+    }
+
+    if !resp_headers.contains_key(header::ACCEPT_RANGES) {
+        if let Ok(val) = "bytes".parse() {
+            resp_headers.insert(header::ACCEPT_RANGES, val);
+        }
+    }
+
+    Ok(response)
 }

@@ -570,6 +570,17 @@ select:focus-visible,
     filter 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+video.grid-tile-media::-webkit-media-controls,
+video.grid-tile-media::-webkit-media-controls-start-playback-button,
+video.grid-tile-media::-webkit-media-controls-play-button,
+video.grid-tile-media::-webkit-media-controls-enclosure {
+  display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .grid-tile:hover .grid-tile-media {
   transform: scale(1.05);
   filter: brightness(0.9);

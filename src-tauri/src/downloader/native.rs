@@ -15,45 +15,51 @@ pub struct NativeDownloader;
 impl NativeDownloader {
     pub async fn probe_total_size(task: &DownloadTask) -> Result<Option<u64>, DownloadRunError> {
         let client = Self::client(task)?;
-        let headers = Self::headers(task, None)?;
-        if let Ok(response) = client
-            .head(&task.url)
-            .headers(headers)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-        {
-            if response.status().is_success() {
-                if let Some(size) = response.content_length().filter(|size| *size > 0) {
-                    return Ok(Some(size));
+
+        // 1. First try Range GET (bytes=0-0), which works reliably across CDNs that block or truncate HEAD requests
+        if let Ok(headers) = Self::headers(task, Some("bytes=0-0")) {
+            if let Ok(response) = client
+                .get(&task.url)
+                .headers(headers)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                if response.status() == StatusCode::PARTIAL_CONTENT || response.status().is_success() {
+                    if let Some(total) = response
+                        .headers()
+                        .get(CONTENT_RANGE)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.rsplit_once('/').map(|(_, total)| total))
+                        .and_then(|total| total.parse::<u64>().ok())
+                        .filter(|total| *total > 0)
+                    {
+                        return Ok(Some(total));
+                    }
+                    if let Some(len) = response.content_length().filter(|len| *len > 1) {
+                        return Ok(Some(len));
+                    }
                 }
             }
         }
 
-        let headers = Self::headers(task, Some("bytes=0-0"))?;
-        let response = client
-            .get(&task.url)
-            .headers(headers)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
-        if !response.status().is_success() {
-            return Ok(None);
+        // 2. Fallback to HEAD request
+        if let Ok(headers) = Self::headers(task, None) {
+            if let Ok(response) = client
+                .head(&task.url)
+                .headers(headers)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                if response.status().is_success() {
+                    if let Some(size) = response.content_length().filter(|size| *size > 0) {
+                        return Ok(Some(size));
+                    }
+                }
+            }
         }
-        if let Some(total) = response
-            .headers()
-            .get(CONTENT_RANGE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.rsplit_once('/').map(|(_, total)| total))
-            .and_then(|total| total.parse::<u64>().ok())
-            .filter(|total| *total > 0)
-        {
-            return Ok(Some(total));
-        }
-        if response.status() != StatusCode::PARTIAL_CONTENT {
-            return Ok(response.content_length().filter(|size| *size > 0));
-        }
+
         Ok(None)
     }
 
@@ -186,7 +192,10 @@ impl NativeDownloader {
             || task.url.starts_with("https://127.0.0.1")
             || task.url.starts_with("https://localhost")
             || task.url.starts_with("https://[::1]");
-        let mut builder = Client::builder();
+        let mut builder = Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(30));
         match task.proxy_mode {
             ProxyMode::None => builder = builder.no_proxy(),
             ProxyMode::System => {}
@@ -223,27 +232,82 @@ impl NativeDownloader {
             .headers(headers)
             .send()
             .await
-            .map_err(|error| DownloadRunError::Failed(error.to_string()))
+            .map_err(|error| {
+                let mut details = error.to_string();
+                let mut source = std::error::Error::source(&error);
+                while let Some(s) = source {
+                    details.push_str(&format!(" -> {s}"));
+                    source = s.source();
+                }
+                DownloadRunError::Failed(details)
+            })
     }
 
     fn headers(task: &DownloadTask, range: Option<&str>) -> Result<HeaderMap, DownloadRunError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Pawstash/0.1.0"),
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+            ),
         );
-        if let Some(cookie) = &task.session_cookie {
-            if !cookie.trim().is_empty() {
-                let cookie = if cookie.contains('=') {
-                    cookie.clone()
-                } else {
-                    format!("session={cookie}")
-                };
-                let value = HeaderValue::from_str(&cookie)
-                    .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
-                headers.insert(COOKIE, value);
+        headers.insert(
+            reqwest::header::ACCEPT,
+            HeaderValue::from_static("*/*"),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT_ENCODING,
+            HeaderValue::from_static("identity"),
+        );
+
+        if let Ok(parsed) = reqwest::Url::parse(&task.url) {
+            let host = parsed.host_str().unwrap_or("");
+            let is_kemono_or_pawchive = host.contains("kemono")
+                || host.contains("coomer")
+                || host.contains("cum.st")
+                || host.contains("pawchive");
+
+            let referer = if host.contains("kemono") {
+                "https://kemono.cr/"
+            } else if host.contains("coomer") || host.contains("cum.st") {
+                "https://coomer.party/"
+            } else if host.contains("pawchive") {
+                "https://pawchive.pw/"
+            } else if host.contains("dropbox") || host.contains("google") || host.contains("mega") || host.contains("pixeldrain") {
+                ""
+            } else if !host.is_empty() {
+                let scheme = parsed.scheme();
+                let owned = format!("{scheme}://{host}/");
+                if let Ok(val) = HeaderValue::from_str(&owned) {
+                    headers.insert(reqwest::header::REFERER, val);
+                }
+                ""
+            } else {
+                ""
+            };
+            if !referer.is_empty() {
+                if let Ok(val) = HeaderValue::from_str(referer) {
+                    headers.insert(reqwest::header::REFERER, val);
+                }
+            }
+
+            // Only attach Pawchive/Kemono session cookie to Pawchive/Kemono endpoints
+            if is_kemono_or_pawchive {
+                if let Some(cookie) = &task.session_cookie {
+                    if !cookie.trim().is_empty() {
+                        let cookie = if cookie.contains('=') {
+                            cookie.clone()
+                        } else {
+                            format!("session={cookie}")
+                        };
+                        let value = HeaderValue::from_str(&cookie)
+                            .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
+                        headers.insert(COOKIE, value);
+                    }
+                }
             }
         }
+
         if let Some(range) = range {
             let value = HeaderValue::from_str(range)
                 .map_err(|error| DownloadRunError::Failed(error.to_string()))?;

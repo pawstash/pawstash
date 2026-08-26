@@ -8,7 +8,7 @@ import { execSync } from 'child_process';
 let commitHash = 'unknown';
 try {
   commitHash = execSync('git rev-parse --short HEAD').toString().trim();
-} catch {}
+} catch { }
 
 const buildTime = new Date().toISOString();
 
@@ -21,8 +21,8 @@ export default defineConfig({
     __COMMIT_HASH__: JSON.stringify(commitHash)
   },
   plugins: [
-    tailwindcss(),
     svelte(),
+    tailwindcss(),
     Icons({
       compiler: 'svelte',
       autoInstall: true
@@ -39,10 +39,10 @@ export default defineConfig({
     host: host || false,
     hmr: host
       ? {
-          protocol: 'ws',
-          host,
-          port: 1421,
-        }
+        protocol: 'ws',
+        host,
+        port: 1421,
+      }
       : undefined,
     watch: {
       ignored: ['**/src-tauri/**'],

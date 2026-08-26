@@ -244,7 +244,25 @@
     if (node.download_url?.startsWith('/cloud_stream/') && mediaPort > 0) {
       return `http://127.0.0.1:${mediaPort}${node.download_url}`;
     }
-    return node.download_url || '';
+    const rawUrl = node.stream_url || node.download_url || '';
+    if (
+      mediaPort > 0 &&
+      rawUrl &&
+      (rawUrl.includes('dropbox.com') ||
+        rawUrl.includes('pixeldrain.com') ||
+        rawUrl.includes('drive.google.com') ||
+        rawUrl.includes('dropboxusercontent.com'))
+    ) {
+      return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`;
+    }
+    return rawUrl;
+  }
+
+  function resolveDownloadUrl(node: CloudNode): string {
+    if (node.download_url?.startsWith('/cloud_stream/') && mediaPort > 0) {
+      return `http://127.0.0.1:${mediaPort}${node.download_url}`;
+    }
+    return node.download_url || node.stream_url || '';
   }
 
   let currentItems = $derived.by(() => {
@@ -421,10 +439,10 @@
 
     let started = 0;
     for (const f of filesToDownload) {
-      const streamUrl = resolveStreamUrl(f);
-      if (!streamUrl) continue;
+      const dlUrl = resolveDownloadUrl(f);
+      if (!dlUrl) continue;
       try {
-        await apiStartDownload(targetPost, f.id, streamUrl, f.name);
+        await apiStartDownload(targetPost, f.id, dlUrl, f.name);
         started++;
       } catch {
         // ignore
@@ -466,10 +484,10 @@
 
       let started = 0;
       for (const f of filesToDownload) {
-        const streamUrl = resolveStreamUrl(f);
-        if (!streamUrl) continue;
+        const dlUrl = resolveDownloadUrl(f);
+        if (!dlUrl) continue;
         try {
-          await apiStartDownload(targetPost, f.id, streamUrl, f.name);
+          await apiStartDownload(targetPost, f.id, dlUrl, f.name);
           started++;
         } catch {
           // ignore
@@ -495,11 +513,11 @@
       return;
     }
 
-    const streamUrl = resolveStreamUrl(node);
-    if (!streamUrl) return;
+    const dlUrl = resolveDownloadUrl(node);
+    if (!dlUrl) return;
 
     try {
-      await apiStartDownload(targetPost, node.id, streamUrl, node.name);
+      await apiStartDownload(targetPost, node.id, dlUrl, node.name);
       toast.success(i18n.t('feed.download_started') || 'Download started', { description: node.name });
     } catch {
       // ignore

@@ -180,9 +180,16 @@ pub async fn probe_download_size(
         return Err("Only HTTP and HTTPS media probes are supported".to_string());
     }
     let settings = state.config_manager.load()?;
+    let effective_url = if url.starts_with("https://pawchive.pw/data/") {
+        url.replacen("https://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+    } else if url.starts_with("http://pawchive.pw/data/") {
+        url.replacen("http://pawchive.pw/data/", "https://file.pawchive.pw/data/", 1)
+    } else {
+        url
+    };
     let task = DownloadTask {
         id: "size-probe".to_string(),
-        url,
+        url: effective_url,
         output_dir: String::new(),
         temp_path: String::new(),
         final_path: String::new(),
@@ -2354,7 +2361,8 @@ pub async fn resolve_cloud_link(
         return Ok(cached);
     }
 
-    let resolver = crate::cloud::CloudResolver::new();
+    let settings = state.config_manager.load().ok();
+    let resolver = crate::cloud::CloudResolver::new(settings.as_ref());
     match resolver.resolve(&url).await {
         Ok(result) => {
             let _ = state

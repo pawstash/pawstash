@@ -97,6 +97,7 @@ pub fn run() {
             let axum_port = Arc::new(AtomicU16::new(0));
             let server_port = axum_port.clone();
             let media_download_dir = settings.download_dir.clone();
+            let server_config_manager = config_manager.clone();
             tauri::async_runtime::spawn(async move {
                 let mut roots = vec![
                     std::path::PathBuf::from(&media_download_dir),
@@ -114,7 +115,7 @@ pub fn run() {
                     roots.push(std::path::PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"));
                     roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
                 }
-                if let Ok(server) = MediaServer::start(roots).await {
+                if let Ok(server) = MediaServer::start(roots, server_config_manager).await {
                     server_port.store(server.port, Ordering::Release);
                 }
             });

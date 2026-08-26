@@ -6,6 +6,7 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { i18n } from '$lib/i18n';
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { apiGetAxumPort, apiOpenDownloadsFolder, apiSaveSettings } from '$lib/utils/ipc';
   import type { DownloadItem } from '$lib/types/download';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -185,17 +186,23 @@
 
   function previewUrl(item?: DownloadItem) {
     if (!item) return undefined;
-    if (item.status === 'completed' && item.final_path && mediaPort) {
-      const path = item.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      return `http://127.0.0.1:${mediaPort}/media/${path}`;
+    if (item.status === 'completed' && item.final_path) {
+      if (mediaPort) {
+        const path = item.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+        return `http://127.0.0.1:${mediaPort}/media/${path}`;
+      }
+      return convertFileSrc(item.final_path);
     }
     return item.url;
   }
 
   function localPathUrl(path?: string) {
-    if (!path || !mediaPort) return undefined;
-    const encoded = path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-    return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+    if (!path) return undefined;
+    if (mediaPort) {
+      const encoded = path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
+      return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+    }
+    return convertFileSrc(path);
   }
 
   $effect(() => {
@@ -504,6 +511,7 @@
           <DownloadItemCard
             {item}
             previewUrl={previewUrl(item)}
+            thumbnailUrl={localPathUrl(item.post_preview_path) || item.post_preview_url}
             postTitle={item.post_title}
             onopen={identity ? (openViewer) => openPost(identity, item.media_id || item.filename || item.url, openViewer) : undefined}
             orderedKeys={downloadKeys}

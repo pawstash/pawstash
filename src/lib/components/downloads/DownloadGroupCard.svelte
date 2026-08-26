@@ -15,6 +15,7 @@
   import IconDelete from '~icons/fluent/delete-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-20-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconVideo from '~icons/fluent/video-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
   interface Props { items: DownloadItem[]; previewUrl?: string; avatarUrl?: string; title: string; creatorName: string; onopen?: () => void; oncreator?: () => void; }
@@ -57,9 +58,9 @@
   {#if previewUrl && !previewFailed && isImage}
     <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
   {:else if previewUrl && !previewFailed && isVideo}
-    <video class="grid-tile-media" src={previewUrl} muted playsinline preload="metadata" onerror={() => previewFailed = true}></video>
+    <video class="grid-tile-media" src={`${previewUrl}#t=0.001`} muted playsinline disablepictureinpicture disableremoteplayback preload="metadata" onerror={() => previewFailed = true}></video>
   {:else}
-    <div class="grid-tile-placeholder group-placeholder"><IconDocument /></div>
+    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else}<IconDocument />{/if}</div>
   {/if}
   <div class="grid-tile-shade"></div>
 

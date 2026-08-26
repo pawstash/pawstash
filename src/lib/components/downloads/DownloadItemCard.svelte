@@ -19,6 +19,7 @@
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
+  import IconVideo from '~icons/fluent/video-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
@@ -26,12 +27,13 @@
   interface Props {
     item: DownloadItem;
     previewUrl?: string;
+    thumbnailUrl?: string;
     postTitle?: string;
     onopen?: (openViewer?: boolean) => void;
     orderedKeys?: string[];
     itemsMap?: Map<string, DownloadItem>;
   }
-  let { item, previewUrl, postTitle, onopen, orderedKeys, itemsMap }: Props = $props();
+  let { item, previewUrl, thumbnailUrl, postTitle, onopen, orderedKeys, itemsMap }: Props = $props();
   const ratios = { square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const;
   let busy = $state(false);
   let previewFailed = $state(false);
@@ -180,13 +182,15 @@
     </div>
   {/if}
 
-  {#if previewUrl && !previewFailed && mediaKind === 'image'}
+  {#if thumbnailUrl && !previewFailed}
+    <img class="grid-tile-media" src={thumbnailUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
+  {:else if previewUrl && !previewFailed && mediaKind === 'image'}
     <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
   {:else if previewUrl && !previewFailed && mediaKind === 'video'}
-    <video class="grid-tile-media" src={previewUrl} muted playsinline preload="metadata" onerror={() => previewFailed = true}></video>
+    <video class="grid-tile-media" src={`${previewUrl}#t=0.001`} muted playsinline disablepictureinpicture disableremoteplayback preload="metadata" onerror={() => previewFailed = true}></video>
   {:else}
     <div class="grid-tile-placeholder download-placeholder">
-      {#if mediaKind === 'audio'}<IconMusic />{:else}<IconDocument />{/if}
+      {#if mediaKind === 'audio'}<IconMusic />{:else if mediaKind === 'video'}<IconVideo />{:else}<IconDocument />{/if}
       {#if extension}<span>{extension}</span>{/if}
     </div>
   {/if}

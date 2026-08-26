@@ -19,7 +19,7 @@ class DownloadForegroundService : Service() {
     companion object {
         private const val TAG = "PawstashService"
         const val CHANNEL_DOWNLOADS_ID = "pawstash_downloads"
-        const val CHANNEL_COMPLETED_ID = "pawstash_download_completed"
+        const val CHANNEL_COMPLETED_ID = "pawstash_completed"
         const val FOREGROUND_NOTIFICATION_ID = 1001
         private const val BASE_COMPLETED_NOTIFICATION_ID = 2000
 
@@ -121,7 +121,10 @@ class DownloadForegroundService : Service() {
                     .setContentText(displayTitle)
                     .setSubText(subtitle)
                     .setAutoCancel(true)
-                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .setSilent(true)
+                    .setSound(null)
+                    .setVibrate(null)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setContentIntent(pendingIntent)
                     .build()
 
@@ -165,11 +168,12 @@ class DownloadForegroundService : Service() {
                     val channel = NotificationChannel(
                         CHANNEL_COMPLETED_ID,
                         "Completed Downloads",
-                        NotificationManager.IMPORTANCE_DEFAULT
+                        NotificationManager.IMPORTANCE_LOW
                     ).apply {
                         description = "Notifications when downloads finish"
-                        setShowBadge(true)
-                        enableVibration(true)
+                        setShowBadge(false)
+                        setSound(null, null)
+                        enableVibration(false)
                     }
                     manager.createNotificationChannel(channel)
                 }

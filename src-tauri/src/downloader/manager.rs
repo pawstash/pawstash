@@ -184,7 +184,18 @@ impl DownloadManager {
         let resolved_filename = resolve_filename(&settings.download_filename_template, &ctx);
         let final_path = self.unique_final_path(&target_dir, &resolved_filename)?;
         let id = Uuid::new_v4().to_string();
-        let temp_path = root.join(".temp").join(format!("{id}.part"));
+        let temp_dir = {
+            #[cfg(target_os = "android")]
+            {
+                std::env::temp_dir().join("pawstash_temp")
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                root.join(".temp")
+            }
+        };
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let temp_path = temp_dir.join(format!("{id}.part"));
         let custom_socks = settings.proxy_mode == ProxyMode::Custom
             && (settings.proxy_url.starts_with("socks5://")
                 || settings.proxy_url.starts_with("socks5h://"));
@@ -370,43 +381,49 @@ impl DownloadManager {
     }
 
     pub fn ensure_download_root(preferred: &str) -> Result<PathBuf, String> {
-        let root = PathBuf::from(preferred);
-        let temp = root.join(".temp");
-        let media = root.join(".media");
-        if std::fs::create_dir_all(&temp).is_ok() && std::fs::create_dir_all(&media).is_ok() {
-            Self::hide_folder(&temp);
-            Self::hide_folder(&media);
-            return Ok(root);
-        }
-
         #[cfg(target_os = "android")]
         {
-            let fallbacks = [
+            let candidates = [
+                PathBuf::from(preferred),
                 PathBuf::from("/storage/emulated/0/Download/Pawstash"),
-                PathBuf::from(
-                    "/storage/emulated/0/Android/data/app.pawstash.client/files/Download",
-                ),
+                PathBuf::from("/storage/emulated/0/Download"),
+                PathBuf::from("/storage/emulated/0/Android/data/app.pawstash.client/files/Download"),
+                PathBuf::from("/data/user/0/app.pawstash.client/files/Pawstash/Downloads"),
                 PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"),
             ];
 
-            for fb in fallbacks {
-                let fb_temp = fb.join(".temp");
-                let fb_media = fb.join(".media");
-                if std::fs::create_dir_all(&fb_temp).is_ok()
-                    && std::fs::create_dir_all(&fb_media).is_ok()
-                {
-                    Self::hide_folder(&fb_temp);
-                    Self::hide_folder(&fb_media);
-                    return Ok(fb);
+            for candidate in candidates {
+                if candidate.as_os_str().is_empty() {
+                    continue;
+                }
+                if std::fs::create_dir_all(&candidate).is_ok() {
+                    let test_file = candidate.join(".write_test");
+                    if std::fs::write(&test_file, b"ok").is_ok() {
+                        let _ = std::fs::remove_file(&test_file);
+                        return Ok(candidate);
+                    }
                 }
             }
+            return Err("Unable to access any writable download directory on Android".to_string());
         }
 
-        std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(&media).map_err(|error| error.to_string())?;
-        Self::hide_folder(&temp);
-        Self::hide_folder(&media);
-        Ok(root)
+        #[cfg(not(target_os = "android"))]
+        {
+            let root = PathBuf::from(preferred);
+            let temp = root.join(".temp");
+            let media = root.join(".media");
+            if std::fs::create_dir_all(&temp).is_ok() && std::fs::create_dir_all(&media).is_ok() {
+                Self::hide_folder(&temp);
+                Self::hide_folder(&media);
+                return Ok(root);
+            }
+
+            std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(&media).map_err(|error| error.to_string())?;
+            Self::hide_folder(&temp);
+            Self::hide_folder(&media);
+            Ok(root)
+        }
     }
 
     fn remove_download_file(output_root: &Path, path: &Path) -> Result<(), String> {
@@ -429,6 +446,8 @@ impl DownloadManager {
     ) {
         match self.run_inner(&id, settings, control, &app_handle).await {
             Err(DownloadRunError::Failed(message)) => {
+                eprintln!("[Pawstash Downloader] Job {id} failed: {message}");
+                tracing::error!(id = %id, error = %message, "Download job failed");
                 if let Ok(job) = self
                     .repository
                     .mark_failed(&id, "download_failed", &message)
@@ -573,59 +592,34 @@ impl DownloadManager {
                 "Downloaded file size changed during verification".to_string(),
             ));
         }
-        let root =
-            Self::ensure_download_root(&settings.download_dir).map_err(DownloadRunError::Failed)?;
-        let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
-        let blob_path = root.join(&relative_blob);
-        if let Some(parent) = blob_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
-        }
-        if blob_path.exists() {
-            let (existing_hash, existing_size) = Self::hash_file(&blob_path).await?;
-            if existing_hash != sha256 || existing_size != measured_size {
-                return Err(DownloadRunError::Failed(
-                    "Content-addressed blob failed integrity verification".to_string(),
-                ));
-            }
-            if recovered_final_size.is_none() {
-                tokio::fs::remove_file(&job.temp_path).await.ok();
-            }
-        } else if recovered_final_size.is_some() {
-            if tokio::fs::hard_link(&job.final_path, &blob_path)
-                .await
-                .is_err()
-            {
-                tokio::fs::copy(&job.final_path, &blob_path)
-                    .await
-                    .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
-            }
-        } else {
-            tokio::fs::rename(&job.temp_path, &blob_path)
-                .await
-                .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
-        }
-
         let final_path = Path::new(&job.final_path);
         if let Some(parent) = final_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
+                .map_err(|error| DownloadRunError::Failed(format!("Failed to create destination folder: {error}")))?;
         }
-        if final_path.exists() {
-            if recovered_final_size.is_none() {
-                let (existing_hash, existing_size) = Self::hash_file(final_path).await?;
-                if existing_hash != sha256 || existing_size != measured_size {
-                    return Err(DownloadRunError::Failed(
-                        "The destination path was occupied by a different file".to_string(),
-                    ));
+
+        if recovered_final_size.is_none() {
+            if tokio::fs::rename(&job.temp_path, final_path).await.is_err() {
+                tokio::fs::copy(&job.temp_path, final_path)
+                    .await
+                    .map_err(|error| DownloadRunError::Failed(format!("Failed to write final file: {error}")))?;
+                let _ = tokio::fs::remove_file(&job.temp_path).await;
+            }
+        }
+
+        let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
+        #[cfg(not(target_os = "android"))]
+        {
+            if let Ok(root) = Self::ensure_download_root(&settings.download_dir) {
+                let blob_path = root.join(&relative_blob);
+                if let Some(parent) = blob_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                if !blob_path.exists() {
+                    let _ = tokio::fs::hard_link(final_path, &blob_path).await;
                 }
             }
-        } else if tokio::fs::hard_link(&blob_path, final_path).await.is_err() {
-            tokio::fs::copy(&blob_path, final_path)
-                .await
-                .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
         }
         if let Some(interruption) = control.interruption() {
             return Err(DownloadRunError::Interrupted(interruption));
