@@ -36,7 +36,17 @@ impl DownloadManager {
     }
 
     pub fn list(&self) -> Result<Vec<DownloadJob>, String> {
-        self.repository.list()
+        let mut jobs = self.repository.list()?;
+        for job in &mut jobs {
+            if job.status == "completed"
+                && !job.final_path.is_empty()
+                && !Path::new(&job.final_path).exists()
+            {
+                job.status = "missing".to_string();
+                let _ = self.repository.update_status(&job.id, "missing");
+            }
+        }
+        Ok(jobs)
     }
 
     pub fn start(self: &Arc<Self>, app_handle: tauri::AppHandle) {

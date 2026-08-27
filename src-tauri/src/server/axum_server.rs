@@ -239,7 +239,13 @@ async fn serve_mega_stream_handler(
         return Err((StatusCode::BAD_REQUEST, "Invalid key length".to_string()));
     };
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let payload = if let Some(ref nid) = params.node_id {
         json!([{"a": "g", "g": 1, "n": nid}])
     } else if let Some(ref fid) = params.file_id {
@@ -422,6 +428,9 @@ async fn serve_cloud_proxy_stream_handler(
 ) -> Result<Response, (StatusCode, String)> {
     let settings = state.config_manager.load().unwrap_or_default();
     let mut builder = reqwest::Client::builder()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
         .timeout(std::time::Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::limited(10))
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");

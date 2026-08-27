@@ -100,7 +100,7 @@
       playsinline
       disablepictureinpicture
       disableremoteplayback
-      preload="metadata"
+      preload="none"
       onerror={() => previewFailed = true}
     ></video>
   {:else}

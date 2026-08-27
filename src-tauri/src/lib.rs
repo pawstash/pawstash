@@ -27,14 +27,102 @@ use sync::manager::SyncManager;
 use sync::repository::SyncRepository;
 use tauri::{Listener, Manager};
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    #[cfg(target_os = "linux")]
-    {
-        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+#[cfg(target_os = "linux")]
+fn setup_platform() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
+    // Configure GStreamer search paths for WebKitGTK media playback
+    let mut candidate_plugin_dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    if let Ok(appdir) = std::env::var("APPDIR") {
+        let appdir_path = std::path::Path::new(&appdir);
+        candidate_plugin_dirs.push(appdir_path.join("usr/lib/gstreamer-1.0"));
+        candidate_plugin_dirs.push(appdir_path.join("usr/lib/x86_64-linux-gnu/gstreamer-1.0"));
+        candidate_plugin_dirs.push(appdir_path.join("usr/lib64/gstreamer-1.0"));
+    }
+
+    let system_dirs = [
+        "/usr/lib/gstreamer-1.0",
+        "/usr/lib/x86_64-linux-gnu/gstreamer-1.0",
+        "/usr/lib64/gstreamer-1.0",
+        "/usr/local/lib/gstreamer-1.0",
+        "/usr/local/lib64/gstreamer-1.0",
+        "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+        "/usr/lib/arm-linux-gnueabihf/gstreamer-1.0",
+    ];
+
+    for dir in &system_dirs {
+        let p = std::path::PathBuf::from(dir);
+        if !candidate_plugin_dirs.contains(&p) {
+            candidate_plugin_dirs.push(p);
         }
     }
+
+    let valid_plugin_dirs: Vec<String> = candidate_plugin_dirs
+        .into_iter()
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    if !valid_plugin_dirs.is_empty() {
+        let joined_paths = valid_plugin_dirs.join(":");
+
+        if let Ok(existing) = std::env::var("GST_PLUGIN_SYSTEM_PATH_1_0") {
+            if !existing.trim().is_empty() {
+                let combined = format!("{}:{}", existing, joined_paths);
+                std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", combined);
+            } else {
+                std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &joined_paths);
+            }
+        } else {
+            std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &joined_paths);
+        }
+
+        if let Ok(existing) = std::env::var("GST_PLUGIN_PATH_1_0") {
+            if !existing.trim().is_empty() {
+                let combined = format!("{}:{}", existing, joined_paths);
+                std::env::set_var("GST_PLUGIN_PATH_1_0", combined);
+            } else {
+                std::env::set_var("GST_PLUGIN_PATH_1_0", &joined_paths);
+            }
+        } else {
+            std::env::set_var("GST_PLUGIN_PATH_1_0", &joined_paths);
+        }
+    }
+
+    if std::env::var_os("GST_PLUGIN_SCANNER_1_0").is_none() {
+        let mut candidate_scanners: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(appdir) = std::env::var("APPDIR") {
+            let appdir_path = std::path::Path::new(&appdir);
+            candidate_scanners.push(appdir_path.join("usr/lib/gstreamer-1.0/gst-plugin-scanner"));
+            candidate_scanners.push(appdir_path.join("usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"));
+            candidate_scanners.push(appdir_path.join("usr/libexec/gstreamer-1.0/gst-plugin-scanner"));
+        }
+        candidate_scanners.extend([
+            std::path::PathBuf::from("/usr/lib/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/lib64/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/libexec/gstreamer-1.0/gst-plugin-scanner"),
+            std::path::PathBuf::from("/usr/lib/gst-plugin-scanner"),
+        ]);
+
+        for scanner in candidate_scanners {
+            if scanner.is_file() {
+                std::env::set_var("GST_PLUGIN_SCANNER_1_0", scanner);
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_platform() {}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    setup_platform();
 
     logging::init_logging();
     let config_mgr = ConfigManager::new().expect("Failed to initialize SQLite settings");

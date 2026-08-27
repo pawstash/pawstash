@@ -1941,7 +1941,7 @@
                         src={embedAttachment ? fileUrl(embedAttachment) : (mediaPort ? `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
                         controls
                         playsinline
-                        preload="metadata"
+                        preload="none"
                         use:panicCapture
                         onkeydown={handleGlobalPanicKey}
                       ></video>
@@ -2069,7 +2069,7 @@
                             poster={attachmentThumbnailUrl(file, service)}
                             controls
                             playsinline
-                            preload={index === 0 ? 'metadata' : 'none'}
+                            preload="none"
                             use:panicCapture
                             onkeydown={handleGlobalPanicKey}
                             onerror={(e) => handleVideoError(e, file, index)}

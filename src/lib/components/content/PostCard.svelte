@@ -15,6 +15,7 @@
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import IconImage from '~icons/fluent/image-24-regular';
+  import IconVideo from '~icons/fluent/video-24-regular';
   import IconAttach from '~icons/fluent/attach-24-regular';
   import IconHeart from '~icons/fluent/heart-24-filled';
   import IconSave from '~icons/fluent/bookmark-add-24-regular';
@@ -314,7 +315,7 @@
       }}
     />
   {:else if video}
-    <video class="grid-tile-media" src={mediaUrl ?? undefined} muted preload="metadata"></video>
+    <div class="grid-tile-placeholder"><IconVideo /></div>
   {:else if mediaUrl}
     <img class="grid-tile-media" src={mediaUrl} alt="" loading="lazy" decoding="async" />
   {:else}
