@@ -21,10 +21,10 @@
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
   import { extractCloudLinks } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
-  import { logger } from '$lib/utils/logger';
+  import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -527,13 +527,15 @@
   function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
+      logMediaError('video', video.src, file.name, video.error);
+
       if ((file as any)?.is_cloud || file.path?.startsWith('http') || file.path?.startsWith('/cloud_stream/')) {
         videoFailures[index] = true;
         return;
       }
       const remote = remoteFileUrl(file);
       if (remote && video.src !== remote) {
-        console.warn('Local video playback failed, falling back to remote stream:', file.name);
+        logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
         video.src = remote;
         return;
       }
@@ -1304,7 +1306,18 @@
     }
 
     // 4. Remote Kemono / Coomer / Fanbox attachment URL
-    return remoteFileUrl(file as Attachment);
+    const remoteUrl = remoteFileUrl(file as Attachment);
+    if (!remoteUrl) return '';
+
+    if (
+      mediaPort &&
+      (isAttachmentVideo(file as Attachment, remoteUrl) ||
+        isAttachmentAudio(file as Attachment, remoteUrl))
+    ) {
+      return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(remoteUrl)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
+    }
+
+    return remoteUrl;
   }
 
   let probeQueue: string[] = [];

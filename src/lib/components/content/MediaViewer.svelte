@@ -26,6 +26,7 @@
   import { tooltip } from '$lib/motion';
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
+  import { logMediaError } from '$lib/utils/logger';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -560,6 +561,7 @@
             onload={handleImageLoad}
             onerror={(e) => {
               const target = e.currentTarget as HTMLImageElement;
+              logMediaError('image', target.src, current.name);
               if (current?.poster && target.src !== current.poster) {
                 target.src = current.poster;
               }
@@ -590,6 +592,10 @@
             preload="auto"
             use:panicCapture
             onkeydown={handleGlobalPanicKey}
+            onerror={(e) => {
+              const el = e.currentTarget as HTMLVideoElement;
+              logMediaError('video', el.src, current.name, el.error);
+            }}
             onloadedmetadata={handleVideoMetadata}
             ontimeupdate={handleVideoTimeUpdate}
             onended={handleVideoEnded}
@@ -603,7 +609,15 @@
             <IconMusic />
             <strong>{current.name}</strong>
             {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
-            <audio src={current.url} controls autoplay></audio>
+            <audio
+              src={current.url}
+              controls
+              autoplay
+              onerror={(e) => {
+                const el = e.currentTarget as HTMLAudioElement;
+                logMediaError('audio', el.src, current.name, el.error);
+              }}
+            ></audio>
           </div>
         {:else}
           <div

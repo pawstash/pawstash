@@ -148,6 +148,23 @@ export function postMediaUrl(post: PawchivePost): string | null {
   return attachmentMediaUrl(media, post.service);
 }
 
+export function resolveServerOrigin(server: string, service?: string): string {
+  const srv = server.trim().replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(srv)) return srv;
+  if (srv.includes('.')) return `https://${srv}`;
+
+  const providerOrigin = getProviderOrigin(service, 'file');
+  try {
+    const url = new URL(providerOrigin);
+    const host = url.hostname;
+    const parts = host.split('.');
+    const baseHost = parts.length > 2 ? parts.slice(1).join('.') : host;
+    return `${url.protocol}//${srv}.${baseHost}`;
+  } catch {
+    return providerOrigin;
+  }
+}
+
 export function attachmentMediaUrl(file: Attachment, service: string): string {
   if (!file?.path) return '';
   if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
@@ -173,7 +190,7 @@ export function attachmentMediaUrl(file: Attachment, service: string): string {
     return `https://e1.cum.st/media/${key}/original.${ext}`;
   }
 
-  const origin = file.server ? siteOrigin(file.server) : getProviderOrigin(service, 'file');
+  const origin = file.server ? resolveServerOrigin(file.server, service) : getProviderOrigin(service, 'file');
   return `${origin}/data/${key}`;
 }
 
@@ -297,6 +314,18 @@ export function isAttachmentImage(file?: Attachment | null, url?: string | null)
   if (kind === 'image' || kind === 'gif') return true;
   const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
   if (mime.includes('image')) return true;
+  return false;
+}
+
+export function isAttachmentAudio(file?: Attachment | null, url?: string | null): boolean {
+  if (!file && !url) return false;
+  if (url && isAudioUrl(url)) return true;
+  const name = (file?.name || '').toLowerCase();
+  if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(?:$|[?#])/i.test(name)) return true;
+  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
+  if (kind === 'audio') return true;
+  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+  if (mime.includes('audio')) return true;
   return false;
 }
 
@@ -438,7 +467,7 @@ export function getPostDownloadTargets(post: PawchivePost): DownloadTarget[] {
         filename = `${filename}.${ext}`;
       }
     } else {
-      const origin = item.server ? siteOrigin(item.server) : getProviderOrigin(post.service, 'file');
+      const origin = item.server ? resolveServerOrigin(item.server, post.service) : getProviderOrigin(post.service, 'file');
       url = `${origin}/data/${key}`;
     }
 

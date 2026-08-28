@@ -64,6 +64,19 @@ class Logger {
 
 export const logger = new Logger();
 
+export function logMediaError(kind: 'video' | 'audio' | 'image', src: string, name?: string, error?: MediaError | Event | null) {
+  let detail = '';
+  if (error && typeof error === 'object' && 'code' in error) {
+    const me = error as MediaError;
+    const codeName = me.code === 1 ? 'MEDIA_ERR_ABORTED' :
+      me.code === 2 ? 'MEDIA_ERR_NETWORK' :
+      me.code === 3 ? 'MEDIA_ERR_DECODE' :
+      me.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' : `UNKNOWN_CODE_${me.code}`;
+    detail = ` [code: ${me.code} (${codeName}), message: "${me.message}"]`;
+  }
+  logger.error(`Media element error: <${kind}> failed to load "${name || 'unnamed'}"${detail} | URL: ${src}`);
+}
+
 export async function getDebugLogPath(): Promise<string> {
   return invoke<string>('get_debug_log_path');
 }

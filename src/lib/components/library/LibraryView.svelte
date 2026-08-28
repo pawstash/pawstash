@@ -23,7 +23,7 @@
   import { ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { selectionState } from '$lib/state/selectionState.svelte';
-  import { getPostDownloadTargets } from '$lib/utils/media';
+  import { getPostDownloadTargets, attachmentMediaUrl } from '$lib/utils/media';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconAdd from '~icons/fluent/add-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
@@ -360,22 +360,17 @@
     { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
   ];
 
-  function fileUrl(file: { path?: string; server?: string }) {
-    const cdn = file.server || `https://${configState.settings.file_domain}`;
-    return `${cdn}/data${file.path}`;
-  }
-
   function isPostDownloaded(post: PawchivePost): boolean {
     const file = post.file as any;
     const attachments = (post.attachments as any[]) || [];
     
     const urls: string[] = [];
     if (file && file.path) {
-      urls.push(fileUrl(file));
+      urls.push(attachmentMediaUrl(file, post.service));
     }
     for (const a of attachments) {
       if (a && a.path) {
-        urls.push(fileUrl(a));
+        urls.push(attachmentMediaUrl(a, post.service));
       }
     }
     

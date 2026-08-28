@@ -1350,10 +1350,36 @@ impl SourceProvider for PawchiveProvider {
             .trim_start_matches('/');
 
         if let Some(srv) = server.filter(|s| !s.trim().is_empty()) {
+            let srv = srv.trim();
             let base = if srv.starts_with("http://") || srv.starts_with("https://") {
                 srv.trim_end_matches('/').to_string()
-            } else {
+            } else if srv.contains('.') {
                 format!("https://{}", srv.trim_end_matches('/'))
+            } else {
+                let file_base = conf
+                    .file_url
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| derive_subdomain_url(&conf.api_url, "file"));
+
+                if let Ok(parsed) = Url::parse(&file_base) {
+                    let host = parsed.host_str().unwrap_or("");
+                    let parts: Vec<&str> = host.split('.').collect();
+                    let base_domain = if parts.len() > 2 {
+                        parts[1..].join(".")
+                    } else {
+                        host.to_string()
+                    };
+                    format!(
+                        "{}://{}.{}",
+                        parsed.scheme(),
+                        srv.trim_end_matches('/'),
+                        base_domain
+                    )
+                } else {
+                    file_base
+                }
             };
             return format!("{base}/data/{clean}");
         }
@@ -1498,6 +1524,37 @@ mod tests {
         assert_eq!(
             PawchiveClient::base_url("http://localhost:8080/"),
             "http://localhost:8080/api/v1"
+        );
+    }
+
+    #[test]
+    fn server_subdomain_prefix_resolution() {
+        let conf = ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://file.pawchive.pw".into()),
+            image_url: Some("https://img.pawchive.pw".into()),
+            session_cookie: String::new(),
+            username: String::new(),
+            services: vec![],
+            is_custom: false,
+            priority: 1,
+        };
+        let provider = PawchiveProvider::new(conf).unwrap();
+        assert_eq!(
+            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("file1")),
+            "https://file1.pawchive.pw/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("https://c1.kemono.su")),
+            "https://c1.kemono.su/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_media_url("/data/ab/cd/video.mp4", None),
+            "https://file.pawchive.pw/data/ab/cd/video.mp4"
         );
     }
 
