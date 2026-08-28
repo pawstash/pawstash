@@ -352,8 +352,12 @@ pub async fn login_account(
         .await?;
     let previous = state.config_manager.load()?;
     let mut settings = previous.clone();
-    settings.session_cookie = cookie;
+    settings.session_cookie = cookie.clone();
     settings.pawchive_username = username.trim().to_string();
+    if let Some(pawchive) = settings.providers.iter_mut().find(|p| p.id == "pawchive") {
+        pawchive.session_cookie = cookie;
+        pawchive.username = username.trim().to_string();
+    }
     let _ = state
         .provider_manager
         .update_providers(settings.providers.clone())
@@ -378,6 +382,10 @@ pub async fn logout_account(state: State<'_, AppState>) -> Result<AccountSession
     let mut settings = state.config_manager.load()?;
     settings.session_cookie.clear();
     settings.pawchive_username.clear();
+    if let Some(pawchive) = settings.providers.iter_mut().find(|p| p.id == "pawchive") {
+        pawchive.session_cookie.clear();
+        pawchive.username.clear();
+    }
     let _ = state
         .provider_manager
         .update_providers(settings.providers.clone())
@@ -936,7 +944,25 @@ pub async fn fetch_account_favorites(
                     );
                 }
             }
-            return Ok(remote_items);
+
+            // Merge remote items with existing local/guest favorites
+            let mut merged = remote_items;
+            let mut seen_keys = std::collections::HashSet::new();
+            for item in &merged {
+                let srv = item.service.as_deref().unwrap_or("").to_lowercase();
+                let id = item.id.to_lowercase();
+                seen_keys.insert((srv, id));
+            }
+
+            for local in local_favorites {
+                let srv = local.service.as_deref().unwrap_or("").to_lowercase();
+                let id = local.id.to_lowercase();
+                if seen_keys.insert((srv, id)) {
+                    merged.push(local);
+                }
+            }
+
+            return Ok(merged);
         }
     }
 

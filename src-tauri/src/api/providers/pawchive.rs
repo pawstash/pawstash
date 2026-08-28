@@ -29,7 +29,6 @@ impl PawchiveClient {
             return Err("Username and password are required".to_string());
         }
         let settings = self.settings.read().await.clone();
-        let client = self.client.read().await.clone();
         let url = Url::parse(&format!(
             "{}/account/login",
             Self::site_url(&settings.api_domain)
@@ -39,7 +38,13 @@ impl PawchiveClient {
         if url.scheme() != "https" && !local {
             return Err("Pawchive login requires HTTPS".to_string());
         }
-        let response = client
+        let login_client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .gzip(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let response = login_client
             .post(url)
             .headers(Self::build_headers(&AppSettings {
                 session_cookie: String::new(),
@@ -113,7 +118,7 @@ impl PawchiveClient {
     fn build_client(settings: &AppSettings) -> Result<Client, String> {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(45))
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::limited(10))
             .gzip(true);
 
         match settings.proxy_mode {
@@ -337,9 +342,35 @@ impl PawchiveClient {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, String> {
-        let response = self.send(method, path, query).await?;
+        let response = self.send(method.clone(), path, query).await?;
         let status = response.status();
         if !status.is_success() {
+            let settings = self.settings.read().await.clone();
+            if !settings.session_cookie.trim().is_empty()
+                && (status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN)
+            {
+                let guest_settings = AppSettings {
+                    session_cookie: String::new(),
+                    ..settings
+                };
+                let client = self.client.read().await.clone();
+                let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
+                if let Ok(guest_resp) = client
+                    .request(method, url)
+                    .headers(Self::build_headers(&guest_settings))
+                    .query(query)
+                    .send()
+                    .await
+                {
+                    if guest_resp.status().is_success() {
+                        return guest_resp
+                            .json::<T>()
+                            .await
+                            .map_err(|e| format!("Invalid Pawchive response: {e}"));
+                    }
+                }
+            }
+
             let body = response.text().await.unwrap_or_default();
             return Err(format!("Pawchive API HTTP {status}: {}", body.trim()));
         }
