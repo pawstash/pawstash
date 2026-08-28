@@ -87,6 +87,7 @@ export interface Fancard {
 
 export interface Favorite {
   faved_seq?: number;
+  faved_at?: string;
   id: string;
   service?: string;
   name?: string;

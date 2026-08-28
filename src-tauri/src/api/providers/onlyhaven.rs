@@ -709,10 +709,18 @@ impl SourceProvider for OnlyHavenProvider {
             _ => return Err("Unsupported creator artwork kind".to_string()),
         };
 
-        let candidate_urls = [
-            format!("https://img.cum.st/creator/{service}/{creator_id}/{file_name}"),
-            format!("https://img.coomer.su/creator/{service}/{creator_id}/{file_name}"),
-        ];
+        let img_base = {
+            let conf = self.config.read().unwrap();
+            conf.image_url
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim_end_matches('/').to_string())
+                .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "img"))
+        };
+
+        let candidate_urls = vec![format!(
+            "{img_base}/creator/{service}/{creator_id}/{file_name}"
+        )];
 
         for url in candidate_urls {
             let req = self.client.get(&url).header(USER_AGENT, "Pawstash/0.1");

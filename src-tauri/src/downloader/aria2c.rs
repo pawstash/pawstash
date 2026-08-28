@@ -70,20 +70,7 @@ impl Aria2cManager {
         cmd.arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
         cmd.arg("--header=Accept: */*");
 
-        if let Ok(parsed) = reqwest::Url::parse(&task.url) {
-            let host = parsed.host_str().unwrap_or("");
-            let referer = if host.contains("kemono") {
-                "https://kemono.cr/"
-            } else if host.contains("coomer") || host.contains("cum.st") {
-                "https://coomer.party/"
-            } else if host.contains("pawchive") {
-                "https://pawchive.pw/"
-            } else if !host.is_empty() {
-                let scheme = parsed.scheme();
-                &format!("{scheme}://{host}/")
-            } else {
-                "https://pawchive.pw/"
-            };
+        if let Some(referer) = super::derive_download_referer(&task.url) {
             cmd.arg(format!("--header=Referer: {referer}"));
         }
 

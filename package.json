@@ -19,6 +19,7 @@
     "rust:fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "rust:check": "cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --workspace",
+    "test:frontend": "node scripts/test-frontend.js",
     "clean": "node scripts/clean.js",
     "clean:all": "node scripts/clean.js --all",
     "preflight": "node scripts/preflight.js",

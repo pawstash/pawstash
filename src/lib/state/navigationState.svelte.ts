@@ -1,3 +1,5 @@
+import { logger } from '$lib/utils/logger';
+
 export type RootRouteName = 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'profile' | 'settings';
 
 export type AppRoute =
@@ -128,7 +130,7 @@ export class NavigationState {
         );
         pushedModalState = true;
       } catch (e) {
-        console.warn('Failed to push modal history state:', e);
+        logger.warn('Failed to push modal history state', e);
       }
     }
 

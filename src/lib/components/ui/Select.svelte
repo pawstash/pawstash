@@ -5,6 +5,7 @@
   import { portal } from '$lib/actions/portal';
   import { ripple } from '$lib/motion';
   import { i18n } from '$lib/i18n';
+  import { logger } from '$lib/utils/logger';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import IconAdd from '~icons/fluent/add-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
@@ -189,7 +190,7 @@
       isCreating = false;
       isOpen = false;
     } catch (e) {
-      console.error('Failed to create item in Select:', e);
+      logger.error('Failed to create item in Select', e);
     } finally {
       creatingPending = false;
     }

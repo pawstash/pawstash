@@ -479,18 +479,9 @@ async fn serve_cloud_proxy_stream_handler(
     }
 
     let mut req = client.get(&target_url);
-    if let Ok(parsed) = reqwest::Url::parse(&target_url) {
-        if let Some(host) = parsed.host_str() {
-            let parts: Vec<&str> = host.split('.').collect();
-            let base_host = if parts.len() > 2 {
-                parts[parts.len() - 2..].join(".")
-            } else {
-                host.to_string()
-            };
-            let referer_url = format!("{}://{}/", parsed.scheme(), base_host);
-            if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
-                req = req.header(header::REFERER, ref_val);
-            }
+    if let Some(referer_url) = crate::downloader::derive_download_referer(&target_url) {
+        if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
+            req = req.header(header::REFERER, ref_val);
         }
     }
 
@@ -501,7 +492,11 @@ async fn serve_cloud_proxy_stream_handler(
     }
 
     let upstream = req.send().await.map_err(|e| {
-        tracing::error!("Cloud proxy stream request failed for target '{}': {}", target_url, e);
+        tracing::error!(
+            "Cloud proxy stream request failed for target '{}': {}",
+            target_url,
+            e
+        );
         (
             StatusCode::BAD_GATEWAY,
             format!("Cloud upstream request failed: {e}"),
@@ -510,7 +505,11 @@ async fn serve_cloud_proxy_stream_handler(
 
     let status = upstream.status();
     if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
-        tracing::warn!("Cloud proxy upstream returned HTTP status {} for target '{}'", status, target_url);
+        tracing::warn!(
+            "Cloud proxy upstream returned HTTP status {} for target '{}'",
+            status,
+            target_url
+        );
     }
     let upstream_headers = upstream.headers().clone();
     let body = Body::from_stream(upstream.bytes_stream());
@@ -539,13 +538,14 @@ async fn serve_cloud_proxy_stream_handler(
         .unwrap_or(true);
 
     if is_html_or_generic {
-        let extracted_path = if let Some(name) = params.name.as_deref().filter(|s| !s.trim().is_empty()) {
-            Some(name.to_string())
-        } else if let Ok(u) = reqwest::Url::parse(&target_url) {
-            Some(u.path().to_string())
-        } else {
-            None
-        };
+        let extracted_path =
+            if let Some(name) = params.name.as_deref().filter(|s| !s.trim().is_empty()) {
+                Some(name.to_string())
+            } else if let Ok(u) = reqwest::Url::parse(&target_url) {
+                Some(u.path().to_string())
+            } else {
+                None
+            };
 
         if let Some(path_str) = extracted_path {
             if let Some(mime) = mime_guess::from_path(&path_str).first() {

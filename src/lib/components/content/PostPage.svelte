@@ -21,8 +21,9 @@
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName } from '$lib/utils/media';
-  import { extractCloudLinks } from './RichContent.svelte';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl } from '$lib/utils/media';
+  import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
+  import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -48,6 +49,10 @@
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconCheck from '~icons/fluent/checkmark-20-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
+  import IconPause from '~icons/fluent/pause-24-regular';
+  import IconPlay from '~icons/fluent/play-24-regular';
+  import IconDismiss from '~icons/fluent/dismiss-24-regular';
+  import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
   import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
@@ -72,6 +77,7 @@
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
+  import CodecGuideModal from '$lib/components/content/CodecGuideModal.svelte';
   import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
@@ -83,6 +89,8 @@
     provider?: string;
     provider_url?: string;
     html?: string;
+    linked_object_id?: number | string;
+    linked_object_type?: string;
     [key: string]: unknown;
   }
 
@@ -283,7 +291,7 @@
         await apiStartDownload(targetPost, node.id, streamUrl, node.name);
         started++;
       } catch (err) {
-        console.error('Failed to queue download:', node.name, err);
+        logger.error(`Failed to queue download for "${node.name}"`, err);
       }
     }
     toast.success(
@@ -301,7 +309,7 @@
         globalCloudFolderCache.set(url, existing);
         cloudResolvedVersion++;
       } catch (err) {
-        console.warn('Failed to resolve cloud link from text:', url, err);
+        logger.warn(`Failed to resolve cloud link from text: ${url}`, err);
       }
     }
     if (existing) {
@@ -394,7 +402,7 @@
               }
             }
           } catch (err) {
-            console.warn('Failed to auto-resolve cloud link for post gallery:', url, err);
+            logger.warn(`Failed to auto-resolve cloud link for post gallery: ${url}`, err);
           }
         }
 
@@ -463,6 +471,23 @@
           }
         }
       }
+      const directMedia = extractDirectMediaLinks(post.content || post.substring || '');
+      for (const d of directMedia) {
+        const provName = deriveCloudProviderFromUrl(d.url);
+        const att: Attachment = {
+          name: d.name,
+          path: d.url,
+          size: undefined,
+          server: '',
+          is_cloud: true,
+          is_cloud_folder: false,
+          cloud_provider: provName
+        } as any;
+        const exists = items.some((existing) => isSameAttachment(existing, att));
+        if (!exists) {
+          items.push(att);
+        }
+      }
     }
 
     // Include completed downloaded items for this post (enables 100% offline playback)
@@ -517,11 +542,23 @@
 
   let hevcSupported = $state(true);
   let videoFailures = $state<Record<number, boolean>>({});
+  let isCodecModalOpen = $state(false);
 
   function isH265Video(filename?: string) {
     if (!filename) return false;
     const name = filename.toLowerCase();
     return /\b(h265|hevc|x265)\b|\.(h265|hevc)$/i.test(name);
+  }
+
+  function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
+    if (typeof index === 'number' && file) {
+      const video = e.currentTarget as HTMLVideoElement;
+      // If duration is known and video has 0 dimensions, video track cannot be decoded (e.g. HEVC in Chromium)
+      if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
+        logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
+        videoFailures[index] = true;
+      }
+    }
   }
 
   function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
@@ -570,7 +607,41 @@
     ) && resolvedCloudAttachments.length > 0
   ));
 
+  let isEmbedLinkedPost = $derived(Boolean(
+    postEmbed && (
+      postEmbed.linked_object_type === 'post' ||
+      Boolean(postEmbed.linked_object_id) ||
+      (postEmbed.url && /patreon\.com\/.*\/posts\/[a-zA-Z0-9_-]*?(\d+)/i.test(postEmbed.url))
+    )
+  ));
+
+  let linkedPostId = $derived.by(() => {
+    if (!postEmbed) return null;
+    if (postEmbed.linked_object_id) return String(postEmbed.linked_object_id);
+    if (postEmbed.url) {
+      const match = postEmbed.url.match(/posts\/[a-zA-Z0-9_-]*?(\d+)/i);
+      if (match) return match[1];
+    }
+    return null;
+  });
+
+  let isEmbedVideo = $derived(Boolean(
+    postEmbed && !isEmbedLinkedPost && (
+      Boolean(postEmbed.html && /<iframe|<video/i.test(postEmbed.html)) ||
+      Boolean(postEmbed.url && (isVideoUrl(postEmbed.url) || /youtube|youtu\.be|vimeo|redgifs|streamable|sproutvideo|bilibili|vids\.io/i.test(postEmbed.url)))
+    )
+  ));
+
   let hasEmbed = $derived(Boolean(!isEmbedResolvedToCloud && postEmbed && (postEmbed.url || postEmbed.subject || postEmbed.html)));
+
+  let isEmbedVisibleInTab = $derived.by(() => {
+    if (!hasEmbed) return false;
+    if (activeMediaTab === 'all') return true;
+    if (activeMediaTab === 'video') return isEmbedVideo;
+    if (activeMediaTab === 'file') return isEmbedLinkedPost || !isEmbedVideo;
+    return false;
+  });
+
   let embedMatchesSearch = $derived.by(() => {
     const q = mediaSearchQuery.trim().toLowerCase();
     if (!q) return true;
@@ -593,7 +664,11 @@
       else files++;
     }
     if (hasEmbed) {
-      videos++;
+      if (isEmbedVideo) {
+        videos++;
+      } else {
+        files++;
+      }
     }
     return {
       all: media.length + (hasEmbed ? 1 : 0),
@@ -713,7 +788,7 @@
     return 'file';
   }
 
-  let embedAttachment = $derived(postEmbed ? ({
+  let embedAttachment = $derived(postEmbed && !isEmbedLinkedPost ? ({
     name: postEmbed.subject || postEmbed.description || post?.title || 'Embed',
     path: postEmbed.url || `embed:${postId}`,
     server: '',
@@ -936,36 +1011,7 @@
     }
   });
 
-  $effect(() => {
-    if (viewerIndex !== null && media.length > 0) {
-      const currentSelected = viewerFiles[viewerIndex];
-      const allSource = embedAttachment && !media.some((s) => isSameAttachment(s, embedAttachment!))
-        ? [embedAttachment, ...media]
-        : media;
-      const updatedSourceItems = allSource
-        .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
-        .filter((item, itemIndex, list) => list.findIndex((candidate) => isSameAttachment(candidate, item)) === itemIndex);
 
-      if (post?.file?.path && !updatedSourceItems.some((s) => isSameAttachment(s, post?.file))) {
-        updatedSourceItems.push(post.file);
-      }
-
-      if (updatedSourceItems.length !== viewerFiles.length || (currentSelected && !isSameAttachment(viewerFiles[viewerIndex], currentSelected))) {
-        if (currentSelected) {
-          const idx = updatedSourceItems.findIndex((item) => isSameAttachment(item, currentSelected));
-          if (idx >= 0) {
-            viewerFiles = updatedSourceItems;
-            viewerIndex = idx;
-          } else {
-            viewerFiles = [currentSelected, ...updatedSourceItems.filter((item) => !isSameAttachment(item, currentSelected))];
-            viewerIndex = 0;
-          }
-        } else {
-          viewerFiles = updatedSourceItems;
-        }
-      }
-    }
-  });
 
   function handleCloseViewer(finalIndex?: number, finalTime?: number) {
     const closedIndex = typeof finalIndex === 'number' ? finalIndex : viewerIndex;
@@ -984,9 +1030,13 @@
   }
 
   function openPreviewViewer() {
-    if (!post?.file) return;
-    const source = [post.file, ...media.filter((file) => file.path !== post?.file?.path)];
-    openMediaViewer(post.file, source);
+    if (!post) return;
+    const targetFile = (post.file && (isAttachmentImage(post.file, post.file.path) || isAttachmentVideo(post.file, post.file.path)))
+      ? post.file
+      : (post.attachments?.find((att) => isAttachmentImage(att, att.path) || isAttachmentVideo(att, att.path)) || post.file || media[0]);
+    if (!targetFile) return;
+    const source = [targetFile, ...media.filter((file) => file.path !== targetFile?.path)];
+    openMediaViewer(targetFile, source);
   }
 
   async function downloadViewerItem(item: MediaViewerItem) {
@@ -1149,7 +1199,7 @@
             }
           })
           .catch((err) => {
-            console.warn('Failed to load creator profile:', err);
+            logger.warn(`Failed to load creator profile for ${service}:${creatorId}`, err);
           });
       }
 
@@ -1175,9 +1225,30 @@
     }
   });
 
+  let heroImageUrl = $derived.by(() => {
+    if (!post) return '';
+    if (post.file && isAttachmentImage(post.file, post.file.path)) {
+      return fileUrl(post.file);
+    }
+    const firstImg = post.attachments?.find((att) => isAttachmentImage(att, att.path));
+    if (firstImg) {
+      return fileUrl(firstImg);
+    }
+    const thumb = postThumbnailUrl(post);
+    if (thumb) return thumb;
+    if (post.file) {
+      return attachmentThumbnailUrl(post.file, service);
+    }
+    return '';
+  });
+
   function getAverageColor(url: string): Promise<string> {
     return new Promise((resolve) => {
       const img = new Image();
+      let effectiveUrl = url;
+      if (mediaPort && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
+        effectiveUrl = `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(url)}`;
+      }
       img.crossOrigin = 'Anonymous';
       img.onload = () => {
         try {
@@ -1190,31 +1261,43 @@
           const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
           resolve(`rgb(${r}, ${g}, ${b})`);
         } catch (e) {
-          console.warn('Canvas color extraction failed:', e);
+          logger.warn('Canvas color extraction failed', e);
           resolve('');
         }
       };
       img.onerror = () => resolve('');
-      img.src = url;
+      img.src = effectiveUrl;
     });
   }
 
   $effect(() => {
-    if (post && post.file && configState.settings.dynamic_accent && isImageUrl(fileUrl(post.file))) {
-      const url = fileUrl(post.file);
-      void getAverageColor(url).then((color) => {
-        if (color) {
-          const root = document.documentElement;
-          root.style.setProperty('--accent-primary', color);
-          root.style.setProperty('--accent-primary-hover', color);
-          const glowColor = color.replace('rgb', 'rgba').replace(')', ', 0.35)');
-          root.style.setProperty('--accent-glow', glowColor);
-          root.style.setProperty('--text-on-accent', getContrastColor(color));
-        }
+    if (!post || !configState.settings.dynamic_accent) return;
+
+    let cancelled = false;
+    const postThumbhash = (post as any)?.preview_thumbhash || (post.extra as any)?.preview_thumbhash || (post.file as any)?.extra?.thumbhash;
+    const thumbColor = thumbHashToAverageColor(postThumbhash);
+
+    if (thumbColor) {
+      const root = document.documentElement;
+      root.style.setProperty('--accent-primary', thumbColor);
+      root.style.setProperty('--accent-primary-hover', thumbColor);
+      root.style.setProperty('--accent-glow', thumbColor.replace('rgb', 'rgba').replace(')', ', 0.35)'));
+      root.style.setProperty('--text-on-accent', getContrastColor(thumbColor));
+    }
+
+    if (!thumbColor && heroImageUrl) {
+      void getAverageColor(heroImageUrl).then((color) => {
+        if (!color || cancelled) return;
+        const root = document.documentElement;
+        root.style.setProperty('--accent-primary', color);
+        root.style.setProperty('--accent-primary-hover', color);
+        root.style.setProperty('--accent-glow', color.replace('rgb', 'rgba').replace(')', ', 0.35)'));
+        root.style.setProperty('--text-on-accent', getContrastColor(color));
       });
     }
 
     return () => {
+      cancelled = true;
       themeState.applyCssTokens();
     };
   });
@@ -1224,7 +1307,7 @@
       const favorites = await accountState.fetchFavorites('post');
       isFavorited = favorites.some((fav) => String(fav.id) === String(postId) && fav.service === service);
     } catch (error) {
-      console.error('Failed to check post favorite status:', error);
+      logger.error(`Failed to check post favorite status for ${service}:${postId}`, error);
     }
   }
 
@@ -1249,7 +1332,7 @@
         accountState.removePostFavoriteOptimistic(service, creatorId, postId);
       }
     } catch (error) {
-      console.error('Failed to toggle post favorite:', error);
+      logger.error(`Failed to toggle post favorite for ${service}:${postId}`, error);
       notify.error(i18n.t('post.favorite_failed'), error);
     } finally {
       favoritingPending = false;
@@ -1563,7 +1646,7 @@
       if (errMsg.includes('404') || errMsg.toLowerCase().includes('not found')) {
         comments = [];
       } else {
-        console.error('Failed to load comments:', err);
+        logger.error(`Failed to load comments for ${service}:${postId}`, err);
         commentsError = errMsg;
       }
     } finally {
@@ -1605,12 +1688,16 @@
 {#snippet mediaDownloadAction(file: Attachment, index: number)}
   {@const job = attachmentDownload(file)}
   {@const downloaded = job?.status === 'completed' ? job : undefined}
-  {@const active = job && ['queued', 'resolving', 'downloading', 'paused', 'verifying'].includes(job.status)}
+  {@const isDownloading = Boolean(job && ['queued', 'resolving', 'downloading', 'verifying'].includes(job.status))}
+  {@const isPaused = job?.status === 'paused'}
+  {@const isFailedOrCancelled = Boolean(job && ['failed', 'cancelled', 'missing'].includes(job.status))}
   {@const verifying = job?.status === 'verifying'}
+  {@const queued = job?.status === 'queued'}
+  {@const resolving = job?.status === 'resolving'}
   {@const knownTotal = job?.total_bytes || 0}
   {@const declaredBytes = getEffectiveFileSize(file)}
   {@const declaredSize = declaredBytes > 0 ? formatBytes(declaredBytes) : ''}
-  {@const hasProgress = Boolean(active && !verifying && knownTotal > 0)}
+  {@const hasProgress = Boolean(job && !verifying && !queued && knownTotal > 0)}
   {@const progress = job && knownTotal > 0 ? Math.min(100, Math.round(job.downloaded_bytes / knownTotal * 100)) : 0}
   <div class="media-download-group">
     {#if downloaded}
@@ -1648,23 +1735,112 @@
           <IconDelete class="w-[18px] h-[18px]" />
         {/if}
       </Button>
+    {:else if isDownloading && job}
+      <Button
+        variant="ghost"
+        class="media-download-btn is-downloading"
+        disabled={true}
+        title={i18n.t(verifying ? 'downloads.status_verifying' : queued ? 'downloads.status_queued' : resolving ? 'downloads.status_resolving' : 'post.downloading')}
+      >
+        {#if hasProgress}<span class="attachment-progress-fill" style:width={`${progress}%`}></span>{/if}
+        <span class="attachment-button-state downloading-state">
+          {#if hasProgress}<IconDownload />{:else}<IconLoading />{/if}
+          <span>
+            {verifying ? i18n.t('downloads.status_verifying') : queued ? i18n.t('downloads.status_queued') : resolving ? i18n.t('downloads.status_resolving') : i18n.t('post.downloading')}
+            {hasProgress ? ` · ${progress}%` : ''}
+          </span>
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn"
+        onclick={() => void downloadState.pause(job.id)}
+        tooltip={i18n.t('downloads.pause')}
+        aria-label={i18n.t('downloads.pause')}
+      >
+        <IconPause class="w-[18px] h-[18px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn is-danger"
+        onclick={() => void downloadState.remove(job.id)}
+        tooltip={i18n.t('downloads.cancel')}
+        aria-label={i18n.t('downloads.cancel')}
+      >
+        <IconDismiss class="w-[18px] h-[18px]" />
+      </Button>
+    {:else if isPaused && job}
+      <Button
+        variant="ghost"
+        class="media-download-btn is-downloading is-paused"
+        onclick={() => void downloadState.resume(job.id)}
+        title={i18n.t('downloads.resume')}
+      >
+        {#if hasProgress}<span class="attachment-progress-fill opacity-50" style:width={`${progress}%`}></span>{/if}
+        <span class="attachment-button-state downloading-state text-[var(--warning,#fbbf24)]">
+          <IconPause />
+          <span>{i18n.t('downloads.status_paused')}{hasProgress ? ` · ${progress}%` : ''}</span>
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn"
+        onclick={() => void downloadState.resume(job.id)}
+        tooltip={i18n.t('downloads.resume')}
+        aria-label={i18n.t('downloads.resume')}
+      >
+        <IconPlay class="w-[18px] h-[18px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn is-danger"
+        onclick={() => void downloadState.remove(job.id)}
+        tooltip={i18n.t('downloads.cancel')}
+        aria-label={i18n.t('downloads.cancel')}
+      >
+        <IconDismiss class="w-[18px] h-[18px]" />
+      </Button>
+    {:else if isFailedOrCancelled && job}
+      <Button
+        variant="ghost"
+        class="media-download-btn is-failed"
+        onclick={() => void downloadState.retry(job.id)}
+        title={i18n.t('downloads.retry')}
+      >
+        <span class="attachment-button-state text-[var(--danger,#ff626d)]">
+          <IconArrowClockwise />
+          <span>{i18n.t('downloads.retry')}{declaredSize ? ` · ${declaredSize}` : ''}</span>
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn"
+        onclick={() => void downloadState.retry(job.id)}
+        tooltip={i18n.t('downloads.retry')}
+        aria-label={i18n.t('downloads.retry')}
+      >
+        <IconArrowClockwise class="w-[18px] h-[18px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn is-danger"
+        onclick={() => void downloadState.remove(job.id)}
+        tooltip={i18n.t('downloads.remove')}
+        aria-label={i18n.t('downloads.remove')}
+      >
+        <IconDismiss class="w-[18px] h-[18px]" />
+      </Button>
     {:else}
       <Button
         variant="ghost"
-        disabled={Boolean(active)}
         onclick={() => void download(file, index)}
-        class={`media-download-btn${active ? ' is-downloading' : ''}`}
-        title={i18n.t(verifying ? 'downloads.status_verifying' : active ? 'post.downloading' : 'post.download')}
+        class="media-download-btn"
+        title={i18n.t('post.download')}
       >
-        {#if active}
-          {#if hasProgress}<span class="attachment-progress-fill" style:width={`${progress}%`}></span>{/if}
-          <span class="attachment-button-state downloading-state">
-            {#if hasProgress}<IconDownload />{:else}<IconLoading />{/if}
-            <span>{verifying ? i18n.t('downloads.status_verifying') : i18n.t('post.downloading')}{hasProgress ? ` · ${progress}%` : ''}</span>
-          </span>
-        {:else}
-          <span class="attachment-button-state"><IconDownload /><span>{i18n.t('post.download')}{declaredSize ? ` · ${declaredSize}` : ''}</span></span>
-        {/if}
+        <span class="attachment-button-state">
+          <IconDownload />
+          <span>{i18n.t('post.download')}{declaredSize ? ` · ${declaredSize}` : ''}</span>
+        </span>
       </Button>
     {/if}
   </div>
@@ -1731,8 +1907,8 @@
     </StickyHeader>
   {/snippet}
 
-  {#if post && post.file && isImageUrl(fileUrl(post.file))}
-    <HeroBackdrop src={fileUrl(post.file)} />
+  {#if heroImageUrl}
+    <HeroBackdrop src={heroImageUrl} />
   {/if}
 
   <div class="post-content-wrapper">
@@ -1933,69 +2109,118 @@
             </div>
           </div>
 
-          {#if filteredMedia.length > 0 || (hasEmbed && (activeMediaTab === 'all' || activeMediaTab === 'video') && embedMatchesSearch)}
+          {#if filteredMedia.length > 0 || (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch)}
             <div class="media-gallery-wrapper">
               <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
                 <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
-                {#if postEmbed && !isEmbedResolvedToCloud && (activeMediaTab === 'all' || activeMediaTab === 'video') && embedMatchesSearch}
-                  <div class="media-item is-embed-item">
-                    <div class="media-header">
-                      <span class="media-filename">{postEmbed.subject || postEmbed.description || post.title}</span>
-                      <span class="cloud-source-badge">{postEmbed.provider || postEmbed.provider_url || 'Embed'}</span>
-                    </div>
-
-                    {#if postEmbed.html}
-                      <div class="media-embed-player">
-                        {@html postEmbed.html}
+                {#if postEmbed && !isEmbedResolvedToCloud && isEmbedVisibleInTab && embedMatchesSearch}
+                  {#if isEmbedLinkedPost}
+                    <div class="media-item is-embed-item is-linked-post-item">
+                      <div class="media-header">
+                        <span class="media-filename">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Post #${linkedPostId}` : post.title)}</span>
+                        <span class="cloud-source-badge">Post</span>
                       </div>
-                    {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
-                      <!-- svelte-ignore a11y_media_has_caption -->
-                      <video
-                        src={embedAttachment ? fileUrl(embedAttachment) : (mediaPort ? `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
-                        controls
-                        playsinline
-                        preload="none"
-                        use:panicCapture
-                        onkeydown={handleGlobalPanicKey}
-                      ></video>
-                    {:else}
+
                       <button
-                        class="file-placeholder media-open-surface"
+                        class="file-placeholder media-open-surface cursor-pointer hover:bg-[var(--bg-card-hover)] transition-colors"
                         type="button"
-                        onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
-                        aria-label={postEmbed.subject || 'External Video'}
+                        onclick={() => {
+                          if (linkedPostId) {
+                            navigationState.openPost(service, creatorId, linkedPostId);
+                          } else if (postEmbed?.url) {
+                            void apiOpenInBrowser(postEmbed.url);
+                          }
+                        }}
+                        aria-label={postEmbed.subject || (linkedPostId ? `Post #${linkedPostId}` : 'Linked Post')}
                       >
-                        <IconVideo class="placeholder-icon" />
-                        <p class="placeholder-text">{postEmbed.subject || postEmbed.description || 'External Video'}</p>
+                        <IconDocument class="placeholder-icon text-[var(--accent)]" />
+                        <p class="placeholder-text font-medium">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Open Post #${linkedPostId}` : i18n.t('post.linked_post') || 'Linked Post')}</p>
                       </button>
-                    {/if}
 
-                    {#if embedAttachment}
-                      <button
-                        class="media-viewer-open-btn"
-                        type="button"
-                        onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
-                        use:tooltip={i18n.t('post.viewer_open')}
-                        aria-label={i18n.t('post.viewer_open')}
-                      ><IconEye /></button>
-                    {/if}
-
-                    {#if postEmbed.url}
                       <div class="media-download-group">
                         <Button
                           variant="ghost"
-                          onclick={() => postEmbed?.url && void apiOpenInBrowser(postEmbed.url)}
+                          onclick={() => {
+                            if (linkedPostId) {
+                              navigationState.openPost(service, creatorId, linkedPostId);
+                            } else if (postEmbed?.url) {
+                              void apiOpenInBrowser(postEmbed.url);
+                            }
+                          }}
                           class="media-download-btn is-embed-btn"
-                          title={i18n.t('post.open_link')}
+                          title={i18n.t('post.open_linked_post') || 'Open Post'}
                         >
                           <span class="attachment-button-state">
-                            <IconOpen class="w-[16px] h-[16px]" />
-                            <span>{i18n.t('post.open_link')}</span>
+                            <IconDocument class="w-[16px] h-[16px]" />
+                            <span>{i18n.t('post.open_linked_post') || (linkedPostId ? `Post #${linkedPostId}` : 'Open Post')}</span>
                           </span>
                         </Button>
                       </div>
-                    {/if}
-                  </div>
+                    </div>
+                  {:else}
+                    <div class="media-item is-embed-item">
+                      <div class="media-header">
+                        <span class="media-filename">{postEmbed.subject || postEmbed.description || post.title}</span>
+                        <span class="cloud-source-badge">{postEmbed.provider || postEmbed.provider_url || 'Embed'}</span>
+                      </div>
+
+                      {#if postEmbed.html}
+                        <div class="media-embed-player">
+                          {@html postEmbed.html}
+                        </div>
+                      {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <video
+                          src={embedAttachment ? fileUrl(embedAttachment) : (mediaPort ? `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
+                          controls
+                          playsinline
+                          preload="none"
+                          use:panicCapture
+                          onkeydown={handleGlobalPanicKey}
+                        ></video>
+                      {:else}
+                        <button
+                          class="file-placeholder media-open-surface"
+                          type="button"
+                          onclick={() => {
+                            if (postEmbed?.url) {
+                              void apiOpenInBrowser(postEmbed.url);
+                            }
+                          }}
+                          aria-label={postEmbed.subject || 'External Link'}
+                        >
+                          <IconGlobe class="placeholder-icon text-[var(--text-secondary)]" />
+                          <p class="placeholder-text">{postEmbed.subject || postEmbed.description || 'External Link'}</p>
+                        </button>
+                      {/if}
+
+                      {#if embedAttachment && isEmbedVideo}
+                        <button
+                          class="media-viewer-open-btn"
+                          type="button"
+                          onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
+                          use:tooltip={i18n.t('post.viewer_open')}
+                          aria-label={i18n.t('post.viewer_open')}
+                        ><IconEye /></button>
+                      {/if}
+
+                      {#if postEmbed.url}
+                        <div class="media-download-group">
+                          <Button
+                            variant="ghost"
+                            onclick={() => postEmbed?.url && void apiOpenInBrowser(postEmbed.url)}
+                            class="media-download-btn is-embed-btn"
+                            title={i18n.t('post.open_link')}
+                          >
+                            <span class="attachment-button-state">
+                              <IconOpen class="w-[16px] h-[16px]" />
+                              <span>{i18n.t('post.open_link')}</span>
+                            </span>
+                          </Button>
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 {/if}
 
                 {#each filteredMedia as file, index}
@@ -2049,8 +2274,8 @@
                     {:else if isDeferred}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
-                        {#if isCloud}
-                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {#if isCloud && (file as any).cloud_provider}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                       </div>
                       <div class="file-placeholder media-open-surface is-deferred-placeholder" title={i18n.t('post.file_not_saved_desc')}>
@@ -2062,17 +2287,25 @@
                       {@const effSize = getEffectiveFileSize(file)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
-                        {#if isCloud}
-                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {#if isCloud && (file as any).cloud_provider}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                         {#if effSize > 0}
                           <span class="media-filesize">({formatBytes(effSize)})</span>
                         {/if}
                       </div>
                       {#if isVid && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
-                        <div class="video-placeholder">
+                        <div class="file-placeholder">
                           <IconVideoOff class="placeholder-icon" />
-                          <p class="placeholder-text">{isH265Video(file?.name) && !hevcSupported ? i18n.t('post.unsupported_codec_desc') : (i18n.t('post.video_load_failed') || 'Failed to play video')}</p>
+                          <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
+                          <Button
+                            variant="ghost"
+                            class="placeholder-fix-btn"
+                            onclick={() => isCodecModalOpen = true}
+                          >
+                            <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                            <span>{i18n.t('post.codec_how_to_fix')}</span>
+                          </Button>
                         </div>
                       {:else}
                         {#if isVid}
@@ -2082,9 +2315,11 @@
                             poster={attachmentThumbnailUrl(file, service)}
                             controls
                             playsinline
-                            preload="none"
+                            preload="metadata"
                             use:panicCapture
                             onkeydown={handleGlobalPanicKey}
+                            onloadedmetadata={(e) => handleVideoLoadedMetadata(e, file, index)}
+                            onplaying={(e) => handleVideoLoadedMetadata(e, file, index)}
                             onerror={(e) => handleVideoError(e, file, index)}
                             onplay={handleVideoPlay}
                           ></video>
@@ -2125,8 +2360,8 @@
                       {@const sizeStr = effSize > 0 ? formatBytes(effSize) : ''}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
-                        {#if isCloud}
-                          <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        {#if isCloud && (file as any).cloud_provider}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                         {#if effSize > 0}
                           <span class="media-filesize">({formatBytes(effSize)})</span>
@@ -2227,7 +2462,7 @@
             </Button>
           {/if}
 
-          {#if post.file}
+          {#if post.file || media.length > 0}
             <Button variant="ghost" onclick={openPreviewViewer} class="post-footer-action">
               <IconEye class="w-[18px] h-[18px]" />
               <span>{i18n.t('post.view_preview')}</span>
@@ -2238,7 +2473,7 @@
             variant="ghost"
             onclick={() => {
               const url = postPageUrl(service, creatorId, postId);
-              void apiOpenInBrowser(url).catch((err) => console.warn('Failed to open post URL in browser:', err));
+              void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open post URL in browser', err));
             }}
             class="post-footer-action"
             title={postPageUrl(service, creatorId, postId)}
@@ -2394,6 +2629,11 @@
   post={post}
   open={isCloudModalOpen}
   onclose={() => isCloudModalOpen = false}
+/>
+
+<CodecGuideModal
+  open={isCodecModalOpen}
+  onclose={() => isCodecModalOpen = false}
 />
 
 <style>
@@ -2723,28 +2963,13 @@
     align-self: center;
   }
 
-  .video-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    height: 240px;
-    max-height: 520px;
-    width: 100%;
-    box-sizing: border-box;
-    padding: 16px;
-    background: transparent;
-    border: 0;
-  }
-
-  .video-placeholder :global(.placeholder-icon) {
-    width: 48px;
-    height: 48px;
-    color: var(--text-secondary);
-    opacity: 0.6;
-    display: block;
-    margin: 0 auto;
+  :global(.placeholder-fix-btn) {
+    height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+    border-radius: var(--radius-full, 9999px) !important;
+    gap: 6px !important;
+    margin-top: 4px;
   }
 
   .placeholder-text {

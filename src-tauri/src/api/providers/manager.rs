@@ -562,10 +562,11 @@ impl ProviderManager {
             if let Some(first) = enabled.first() {
                 first.resolve_media_url(file_path, server)
             } else {
-                format!(
-                    "https://file.pawchive.pw/{}",
-                    file_path.trim_start_matches('/')
-                )
+                let clean = file_path
+                    .trim_start_matches('/')
+                    .trim_start_matches("data/")
+                    .trim_start_matches('/');
+                format!("https://file.pawchive.pw/data/{clean}")
             }
         }
     }
@@ -579,10 +580,11 @@ impl ProviderManager {
             if let Some(first) = enabled.first() {
                 first.resolve_thumbnail_url(thumb_path)
             } else {
-                format!(
-                    "https://img.pawchive.pw/thumbnail/{}",
-                    thumb_path.trim_start_matches('/')
-                )
+                let clean = thumb_path
+                    .trim_start_matches('/')
+                    .trim_start_matches("data/")
+                    .trim_start_matches('/');
+                format!("https://img.pawchive.pw/thumbnail/data/{clean}")
             }
         }
     }

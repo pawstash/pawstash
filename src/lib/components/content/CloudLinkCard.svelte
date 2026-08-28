@@ -2,6 +2,7 @@
   import type { CloudFolderResult } from '$lib/types/cloud';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { formatBytes } from '$lib/utils/formatters';
+  import { logger } from '$lib/utils/logger';
   import CloudFolderModal from './CloudFolderModal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
@@ -53,7 +54,7 @@
       if (openModalAfter) modalOpen = true;
     } catch (err: any) {
       error = typeof err === 'string' ? err : err?.message || 'Failed to resolve cloud link';
-      console.warn('Cloud link resolution failed:', err);
+      logger.warn(`Cloud link resolution failed for ${url}`, err);
     } finally {
       loading = false;
     }

@@ -32,7 +32,9 @@
     getPostDownloadTargets,
     getPostFormats
   } from '$lib/utils/media';
+  import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { parseTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
+  import { logger } from '$lib/utils/logger';
   import type { DownloadScope, InitialImport } from '$lib/types/subscription';
   import type { PawchivePost, CreatorProfile, Announcement, Fancard } from '$lib/types/pawchive';
   import type { FilterMap } from '$lib/types/filter';
@@ -495,7 +497,7 @@
           const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
           resolve(`rgb(${r}, ${g}, ${b})`);
         } catch (error) {
-          console.warn('Creator artwork color extraction failed:', error);
+          logger.warn('Creator artwork color extraction failed', error);
           resolve('');
         }
       };
@@ -515,19 +517,31 @@
         const color = await getAverageColor(dataUrl);
         if (color) return color;
       } catch (error) {
-        console.warn(`Failed to extract creator ${artworkKind} accent:`, error);
+        logger.warn(`Failed to extract creator ${artworkKind} accent for ${service}:${creatorId}`, error);
       }
     }
     return '';
   }
 
   $effect(() => {
+    const dynamicAccent = configState.settings.dynamic_accent;
+    if (!dynamicAccent) return;
+
+    let cancelled = false;
+    const thumbColor = thumbHashToAverageColor(headerThumbhash) || thumbHashToAverageColor(avatarThumbhash);
+
+    if (thumbColor) {
+      const root = document.documentElement;
+      root.style.setProperty('--accent-primary', thumbColor);
+      root.style.setProperty('--accent-primary-hover', thumbColor);
+      root.style.setProperty('--accent-glow', thumbColor.replace('rgb', 'rgba').replace(')', ', 0.35)'));
+      root.style.setProperty('--text-on-accent', getContrastColor(thumbColor));
+    }
+
     const hasBanner = Boolean(effectiveBanner);
     const hasAvatar = Boolean(effectiveAvatar);
-    const dynamicAccent = configState.settings.dynamic_accent;
-    let cancelled = false;
 
-    if (dynamicAccent && (hasBanner || hasAvatar)) {
+    if (!thumbColor && (hasBanner || hasAvatar)) {
       void getCreatorAccentColor(hasBanner, hasAvatar).then((color) => {
         if (!color || cancelled) return;
         const root = document.documentElement;
@@ -552,7 +566,7 @@
         String(favorite.service ?? '').toLowerCase() === service.toLowerCase()
       );
     } catch (error) {
-      console.error('Failed to check creator favorite status:', error);
+      logger.error(`Failed to check creator favorite status for ${service}:${creatorId}`, error);
     }
   }
 
@@ -675,7 +689,7 @@
       notify.success(i18n.t('common.copied') || 'Copied ID');
       setTimeout(() => { copiedId = false; }, 2000);
     } catch (e) {
-      console.error(e);
+      logger.error(`Failed to copy creator ID: ${creatorId}`, e);
     }
   }
 

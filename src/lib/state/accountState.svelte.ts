@@ -91,8 +91,9 @@ class AccountState {
   }
 
   addPostFavoriteOptimistic(post: PawchivePost | Favorite) {
+    const nowIso = new Date().toISOString();
     if (!this.favoritePosts) {
-      this.favoritePosts = [post as Favorite];
+      this.favoritePosts = [{ ...post, faved_seq: 1, faved_at: nowIso } as Favorite];
       return;
     }
     const exists = this.isPostFavorite(
@@ -101,7 +102,13 @@ class AccountState {
       String(post.id ?? '')
     );
     if (!exists) {
-      this.favoritePosts = [post as Favorite, ...this.favoritePosts];
+      const highestSeq = Math.max(0, ...this.favoritePosts.map((f) => Number(f.faved_seq ?? 0)));
+      const newFav: Favorite = {
+        ...post,
+        faved_seq: highestSeq + 1,
+        faved_at: nowIso
+      } as any;
+      this.favoritePosts = [newFav, ...this.favoritePosts];
     }
   }
 
@@ -121,13 +128,20 @@ class AccountState {
   }
 
   addCreatorFavoriteOptimistic(creator: Creator | Favorite) {
+    const nowIso = new Date().toISOString();
     if (!this.favoriteCreators) {
-      this.favoriteCreators = [creator as Favorite];
+      this.favoriteCreators = [{ ...creator, faved_seq: 1, faved_at: nowIso } as Favorite];
       return;
     }
     const exists = this.isCreatorFavorite(creator.service ?? '', String(creator.id ?? ''));
     if (!exists) {
-      this.favoriteCreators = [creator as Favorite, ...this.favoriteCreators];
+      const highestSeq = Math.max(0, ...this.favoriteCreators.map((f) => Number(f.faved_seq ?? 0)));
+      const newFav: Favorite = {
+        ...creator,
+        faved_seq: highestSeq + 1,
+        faved_at: nowIso
+      } as any;
+      this.favoriteCreators = [newFav, ...this.favoriteCreators];
     }
   }
 

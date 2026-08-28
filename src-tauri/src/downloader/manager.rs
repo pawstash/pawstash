@@ -513,25 +513,9 @@ impl DownloadManager {
             );
         }
 
-        let effective_url = if job.url.starts_with("https://pawchive.pw/data/") {
-            job.url.replacen(
-                "https://pawchive.pw/data/",
-                "https://file.pawchive.pw/data/",
-                1,
-            )
-        } else if job.url.starts_with("http://pawchive.pw/data/") {
-            job.url.replacen(
-                "http://pawchive.pw/data/",
-                "https://file.pawchive.pw/data/",
-                1,
-            )
-        } else {
-            job.url.clone()
-        };
-
         let task = DownloadTask {
             id: job.id.clone(),
-            url: effective_url,
+            url: job.url.clone(),
             output_dir: job.output_dir.clone(),
             temp_path: job.temp_path.clone(),
             final_path: job.final_path.clone(),

@@ -25,7 +25,17 @@
       if (host === 'onlyfans.com' || host.endsWith('.onlyfans.com')) return 'onlyfans';
       if (host === 'fansly.com' || host.endsWith('.fansly.com')) return 'fansly';
       if (host === 'candfans.jp' || host.endsWith('.candfans.jp')) return 'candfans';
-      if (['kemono.su', 'kemono.party', 'pawchive.pw', 'pawchive.st', 'coomer.su', 'coomer.party', 'cum.st'].includes(host)) return 'pawchive';
+      if (host.includes('proton.me') || host.includes('protondrive.com')) return 'proton';
+      if (host.includes('bunny.net') || host.includes('mediadelivery.net') || host.includes('b-cdn.net')) return 'bunny';
+      if (host.includes('gofile.io')) return 'gofile';
+      if (host.includes('mediafire.com')) return 'mediafire';
+      if (host.includes('terabox.com') || host.includes('1024tera.com') || host.includes('teraboxapp.com')) return 'terabox';
+      if (host.includes('catbox.moe') || host.includes('files.catbox.moe')) return 'catbox';
+      if (host.includes('workupload.com')) return 'workupload';
+      if (host.includes('qiwi.gg')) return 'qiwi';
+      if (host.includes('send.cm')) return 'sendcm';
+      if (host.includes('kemono') || host.includes('pawchive')) return 'pawchive';
+      if (host.includes('coomer') || host.includes('cum.st') || host.includes('onlyhaven')) return 'onlyhaven';
       if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
       if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
       if (host.includes('pixeldrain.com')) return 'pixeldrain';
@@ -35,6 +45,78 @@
       return null;
     } catch {
       return null;
+    }
+  }
+
+  export function isDirectMediaUrl(url: string): boolean {
+    if (!url) return false;
+    const clean = url.split('?')[0].split('#')[0].toLowerCase();
+    if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v|zip|rar|7z|tar|gz|pdf|mp3|wav|flac|opus|ogg|png|jpe?g|webp|gif|avif)$/i.test(clean)) {
+      return true;
+    }
+    if (url.includes('.b-cdn.net/') && (url.includes('play_') || url.includes('.mp4'))) {
+      return true;
+    }
+    return false;
+  }
+
+  export function extractDirectMediaLinks(raw: string): Array<{ url: string; name: string }> {
+    if (!raw) return [];
+    const results: Array<{ url: string; name: string }> = [];
+    const seen = new Set<string>();
+
+    const anchorRegex = /<a\s+[^>]*href=["'](https?:\/\/[^"'>]+)["'][^>]*>(.*?)<\/a>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = anchorRegex.exec(raw)) !== null) {
+      const url = match[1];
+      const text = match[2].replace(/<[^>]*>/g, '').trim();
+      if (isDirectMediaUrl(url) && !seen.has(url)) {
+        seen.add(url);
+        const filename = text && !text.startsWith('http')
+          ? text
+          : decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
+        results.push({ url, name: filename });
+      }
+    }
+
+    const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
+    while ((match = urlRegex.exec(raw)) !== null) {
+      const url = match[0];
+      if (isDirectMediaUrl(url) && !seen.has(url)) {
+        seen.add(url);
+        const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
+        results.push({ url, name: filename });
+      }
+    }
+
+    return results;
+  }
+
+  export function deriveCloudProviderFromUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '').toLowerCase();
+      if (host.includes('b-cdn.net') || host.includes('bunny.net') || host.includes('mediadelivery.net')) return 'Bunny';
+      if (host.includes('proton.me') || host.includes('protondrive.com')) return 'Proton';
+      if (host.includes('gofile.io')) return 'Gofile';
+      if (host.includes('mediafire.com')) return 'MediaFire';
+      if (host.includes('terabox.com') || host.includes('1024tera.com')) return 'TeraBox';
+      if (host.includes('catbox.moe')) return 'Catbox';
+      if (host.includes('workupload.com')) return 'WorkUpload';
+      if (host.includes('qiwi.gg')) return 'Qiwi';
+      if (host.includes('send.cm')) return 'Send.cm';
+      if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'MEGA';
+      if (host.includes('dropbox.com')) return 'Dropbox';
+      if (host.includes('pixeldrain.com')) return 'Pixeldrain';
+      if (host.includes('drive.google.com')) return 'Google Drive';
+      const parts = host.split('.');
+      if (parts.length >= 2) {
+        const name = parts[parts.length - 2];
+        return name.charAt(0).toUpperCase() + name.slice(1);
+      }
+      return host;
+    } catch {
+      return 'Cloud';
     }
   }
 
@@ -198,6 +280,13 @@
     anchor.title = i18n.t(resolved ? 'post.link_open_internal' : 'post.link_open_external');
   }
 
+  const POST_PLATFORMS = new Set([
+    'patreon', 'fanbox', 'fantia', 'boosty', 'subscribestar',
+    'afdian', 'candfans', 'onlyfans', 'fansly', 'pawchive', 'onlyhaven'
+  ]);
+
+  const CLOUD_PLATFORMS = new Set(['mega', 'dropbox', 'pixeldrain', 'googledrive']);
+
   async function enhanceLinks() {
     await tick();
     if (!root) return;
@@ -208,7 +297,7 @@
       const platform = smartLinkPlatform(anchor.href);
       anchor.dataset.linkPlatform = platform || 'external';
       anchor.title ||= i18n.t('post.link_open_external');
-      if (platform && platform !== 'gumroad' && platform !== 'mega' && platform !== 'dropbox' && platform !== 'pixeldrain' && platform !== 'googledrive') {
+      if (platform && (POST_PLATFORMS.has(platform) || platform === 'shortlink')) {
         anchor.dataset.smartState = 'checking';
         smartAnchors.push(anchor);
       }
@@ -237,7 +326,7 @@
     const platform = smartLinkPlatform(url);
 
     // 1. Cloud folder links (MEGA, Dropbox, Pixeldrain, Google Drive)
-    if (platform === 'mega' || platform === 'dropbox' || platform === 'pixeldrain' || platform === 'googledrive') {
+    if (platform && CLOUD_PLATFORMS.has(platform)) {
       linkPopover = {
         url,
         x: event.clientX,
@@ -248,28 +337,26 @@
       return;
     }
 
-    // 2. Smart links (Patreon, Fanbox, Fantia, Boosty, Afdian, Subscribestar)
-    if (platform && platform !== 'gumroad' && platform !== 'shortlink') {
+    // 2. Creator Post Smart links (Patreon, Fanbox, Fantia, Boosty, etc.)
+    if (platform && (POST_PLATFORMS.has(platform) || platform === 'shortlink')) {
       anchor.dataset.smartState = 'checking';
       const resolved = await resolveSmartLink(url, currentService, currentCreatorId);
       markResolved(anchor, resolved);
-      linkPopover = {
-        url,
-        x: event.clientX,
-        y: event.clientY,
-        canOpenInApp: Boolean(resolved),
-        resolvedPost: resolved || undefined
-      };
-      return;
+      if (resolved) {
+        linkPopover = {
+          url,
+          x: event.clientX,
+          y: event.clientY,
+          canOpenInApp: true,
+          resolvedPost: resolved
+        };
+        return;
+      }
     }
 
-    // 3. Regular external links (can only open in browser or copy)
-    linkPopover = {
-      url,
-      x: event.clientX,
-      y: event.clientY,
-      canOpenInApp: false
-    };
+    // 3. Regular external links (Proton Drive, Bunny, Gofile, MediaFire, general web links)
+    // Directly open external URL in the default browser so it works instantly!
+    void apiOpenInBrowser(url);
   }
 
   $effect(() => {
@@ -402,6 +489,15 @@
   .rich-content-root :global(a[data-link-platform='afdian']) { --smart-link-color: #9b7cff; }
   .rich-content-root :global(a[data-link-platform='gumroad']) { --smart-link-color: #ff90e8; }
   .rich-content-root :global(a[data-link-platform='shortlink']) { --smart-link-color: #a78bfa; }
+  .rich-content-root :global(a[data-link-platform='proton']) { --smart-link-color: #7b57ff; }
+  .rich-content-root :global(a[data-link-platform='bunny']) { --smart-link-color: #ff8300; }
+  .rich-content-root :global(a[data-link-platform='gofile']) { --smart-link-color: #3b82f6; }
+  .rich-content-root :global(a[data-link-platform='mediafire']) { --smart-link-color: #0070f3; }
+  .rich-content-root :global(a[data-link-platform='terabox']) { --smart-link-color: #06b6d4; }
+  .rich-content-root :global(a[data-link-platform='catbox']) { --smart-link-color: #f43f5e; }
+  .rich-content-root :global(a[data-link-platform='workupload']) { --smart-link-color: #10b981; }
+  .rich-content-root :global(a[data-link-platform='qiwi']) { --smart-link-color: #f59e0b; }
+  .rich-content-root :global(a[data-link-platform='sendcm']) { --smart-link-color: #ec4899; }
   .rich-content-root :global(a[data-link-platform='mega']) { --smart-link-color: #ef4444; }
   .rich-content-root :global(a[data-link-platform='dropbox']) { --smart-link-color: #3b82f6; }
   .rich-content-root :global(a[data-link-platform='pixeldrain']) { --smart-link-color: #a855f7; }

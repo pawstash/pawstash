@@ -810,18 +810,35 @@ impl ContentRepository {
     pub fn list_favorites(&self, kind: &str, account_id: &str) -> Result<Vec<Favorite>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let (sql, entity_kind) = if kind == "artist" {
-            ("SELECT DISTINCT c.snapshot_json FROM content_pins pin JOIN creators c USING(service,creator_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') ORDER BY pin.created_at DESC","creator")
+            (
+                "SELECT c.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN creators c USING(service,creator_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') GROUP BY c.service, c.creator_id ORDER BY faved_at DESC",
+                "creator",
+            )
         } else {
-            ("SELECT DISTINCT p.snapshot_json FROM content_pins pin JOIN posts p USING(service,creator_id,post_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') ORDER BY pin.created_at DESC","post")
+            (
+                "SELECT p.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN posts p USING(service,creator_id,post_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') GROUP BY p.service, p.creator_id, p.post_id ORDER BY faved_at DESC",
+                "post",
+            )
         };
         let mut statement = connection.prepare(sql).map_err(|e| e.to_string())?;
         let rows = statement
-            .query_map(params![entity_kind, account_id], |r| r.get::<_, String>(0))
+            .query_map(params![entity_kind, account_id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         let mut favorites = Vec::new();
-        for json in rows.flatten() {
+        for item in rows.flatten() {
+            let (json, created_at_str) = item;
             match serde_json::from_str::<Favorite>(&json) {
-                Ok(fav) => favorites.push(fav),
+                Ok(mut fav) => {
+                    if let Some(created_str) = created_at_str {
+                        fav.extra.insert(
+                            "faved_at".to_string(),
+                            serde_json::Value::String(created_str),
+                        );
+                    }
+                    favorites.push(fav);
+                }
                 Err(e) => {
                     tracing::warn!("Failed to deserialize favorite {}: {}", entity_kind, e);
                 }
@@ -1125,5 +1142,28 @@ mod tests {
         assert_eq!(stats.file_count, 2);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn test_list_favorites_attaches_faved_at() {
+        let repo = ContentRepository::new(512).unwrap();
+        let post: PawchivePost = serde_json::from_str(
+            r#"{
+                "id": "100",
+                "user": "creator_a",
+                "service": "patreon",
+                "title": "Test Post",
+                "content": "Hello",
+                "published": "2026-08-28 10:00:00",
+                "added": "2026-08-28 10:00:00"
+            }"#,
+        )
+        .unwrap();
+
+        repo.pin_post(&post, "favorite", "my_account").unwrap();
+        let favorites = repo.list_favorites("post", "my_account").unwrap();
+        assert!(favorites.iter().any(|f| f.id == "100"
+            && f.service.as_deref() == Some("patreon")
+            && f.extra.contains_key("faved_at")));
     }
 }

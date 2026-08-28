@@ -16,6 +16,7 @@ import {
   apiReorderLibraryStashes,
   apiSaveLibraryPost
 } from '$lib/utils/ipc';
+import { logger } from '$lib/utils/logger';
 
 const PAGE_SIZE = 50;
 
@@ -147,7 +148,7 @@ export class LibraryState {
       }
       this.postStashes = map;
     } catch (e) {
-      console.warn('Failed to refresh saved keys/memberships:', e);
+      logger.warn('Failed to refresh saved keys/memberships', e);
     }
   }
 
@@ -278,7 +279,7 @@ export class LibraryState {
     try {
       await apiReorderLibraryStashes(collectionIds);
     } catch (e) {
-      console.error('Failed to persist stash reorder:', e);
+      logger.error('Failed to persist stash reorder', e);
       await this.refreshCollections();
     }
   }

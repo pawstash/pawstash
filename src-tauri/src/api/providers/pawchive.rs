@@ -1075,7 +1075,7 @@ impl PawchiveProvider {
     }
 }
 
-fn derive_subdomain_url(api_url: &str, kind: &str) -> String {
+pub(crate) fn derive_subdomain_url(api_url: &str, kind: &str) -> String {
     let clean_url = if api_url.starts_with("http://") || api_url.starts_with("https://") {
         api_url.trim_end_matches('/').to_string()
     } else {
@@ -1555,6 +1555,26 @@ mod tests {
         assert_eq!(
             provider.resolve_media_url("/data/ab/cd/video.mp4", None),
             "https://file.pawchive.pw/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_media_url("data/ab/cd/video.mp4", None),
+            "https://file.pawchive.pw/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_media_url("ab/cd/video.mp4", None),
+            "https://file.pawchive.pw/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
+            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("data/ab/cd/thumb.jpg"),
+            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("ab/cd/thumb.jpg"),
+            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
         );
     }
 

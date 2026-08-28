@@ -106,6 +106,88 @@ export function cleanMediaPath(rawPath: string): string {
   return rawPath.replace(/^\/*data\//, '').replace(/^\/+/, '');
 }
 
+const MIME_MAP: Record<string, string> = {
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/x-flac': 'flac',
+  'audio/ogg': 'ogg',
+  'audio/opus': 'opus',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/webm': 'weba',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'video/x-matroska': 'mkv',
+  'video/x-msvideo': 'avi',
+  'video/x-flv': 'flv',
+  'video/x-ms-wmv': 'wmv',
+  'video/3gpp': '3gp',
+  'video/ogg': 'ogv',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+  'image/tiff': 'tiff',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/x-icon': 'ico',
+  'image/vnd.adobe.photoshop': 'psd',
+  'image/x-photoshop': 'psd',
+  'application/x-photoshop': 'psd',
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+  'application/x-rar-compressed': 'rar',
+  'application/x-rar': 'rar',
+  'application/vnd.rar': 'rar',
+  'application/x-7z-compressed': '7z',
+  'application/x-tar': 'tar',
+  'application/gzip': 'gz',
+  'application/x-bzip2': 'bz2',
+  'application/x-xz': 'xz',
+  'application/pdf': 'pdf',
+  'application/epub+zip': 'epub',
+  'application/x-blender': 'blend',
+  'text/plain': 'txt',
+  'text/html': 'html',
+  'text/markdown': 'md',
+  'application/json': 'json',
+  'application/xml': 'xml'
+};
+
+export function inferAttachmentExtension(file?: { name?: string; path?: string; extra?: any } | null, fallback = 'jpg'): string {
+  if (!file) return fallback;
+
+  const nameExt = file.name?.split('.').pop()?.trim().toLowerCase();
+  if (nameExt && nameExt.length <= 8) return nameExt;
+
+  const pathExt = file.path?.split('.').pop()?.split(/[?#]/)[0].trim().toLowerCase();
+  if (pathExt && pathExt.length <= 8 && !pathExt.includes('/')) return pathExt;
+
+  const mime = String((file.extra as any)?.mime_type || '').trim().toLowerCase();
+  if (mime) {
+    if (MIME_MAP[mime]) return MIME_MAP[mime];
+    const sub = mime.split('/')[1]?.split(';')[0]?.replace(/^x-/, '').trim();
+    if (sub && sub.length <= 8 && sub !== 'octet-stream') return sub;
+  }
+
+  const kind = (file.extra as any)?.kind;
+  if (kind === 'video') return 'mp4';
+  if (kind === 'audio') return 'mp3';
+  if (kind === 'archive') return 'zip';
+  if (kind === 'document') return 'pdf';
+
+  return fallback;
+}
+
 export function creatorAvatarUrl(service: string, creatorId: string, thumbhash?: string | null): string {
   if (thumbhash) {
     const dataUrl = thumbHashToUrl(thumbhash);
@@ -113,7 +195,8 @@ export function creatorAvatarUrl(service: string, creatorId: string, thumbhash?:
   }
   const s = (service || '').toLowerCase();
   if (isOnlyHavenService(s)) {
-    return `https://img.cum.st/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/avatar.webp`;
+    const origin = getProviderOrigin(service, 'image');
+    return `${origin}/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/avatar.webp`;
   }
   const origin = getProviderOrigin(service, 'api');
   return `${origin}/icons/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
@@ -126,7 +209,8 @@ export function creatorBannerUrl(service: string, creatorId: string, thumbhash?:
   }
   const s = (service || '').toLowerCase();
   if (isOnlyHavenService(s)) {
-    return `https://img.cum.st/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/header.webp`;
+    const origin = getProviderOrigin(service, 'image');
+    return `${origin}/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/header.webp`;
   }
   const origin = getProviderOrigin(service, 'api');
   return `${origin}/banners/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
@@ -171,26 +255,26 @@ export function attachmentMediaUrl(file: Attachment, service: string): string {
     return file.path;
   }
 
+  const isPreviewOnly = (file as any).preview_only === true || (file.extra as any)?.preview_only === true;
+  if (isPreviewOnly) {
+    return attachmentThumbnailUrl(file, service);
+  }
+
   const key = cleanMediaPath(file.path);
   const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
 
   if (isHaven) {
-    let ext = 'jpg';
-    if (file.name && file.name.includes('.')) {
-      ext = file.name.split('.').pop() || 'jpg';
-    } else if ((file.extra as any)?.mime_type) {
-      const mime = (file.extra as any).mime_type;
-      if (mime.includes('video') || mime.includes('mp4')) ext = 'mp4';
-      else if (mime.includes('png')) ext = 'png';
-      else if (mime.includes('webp')) ext = 'webp';
-      else if (mime.includes('gif')) ext = 'gif';
-    } else if ((file.extra as any)?.kind === 'video') {
-      ext = 'mp4';
-    }
-    return `https://e1.cum.st/media/${key}/original.${ext}`;
+    const ext = inferAttachmentExtension(file);
+    const origin = getProviderOrigin(service, 'file');
+    return `${origin}/media/${key}/original.${ext}`;
   }
 
-  const origin = file.server ? resolveServerOrigin(file.server, service) : getProviderOrigin(service, 'file');
+  if (file.server) {
+    const origin = resolveServerOrigin(file.server, service);
+    return `${origin}/data/${key}`;
+  }
+
+  const origin = getProviderOrigin(service, 'file');
   return `${origin}/data/${key}`;
 }
 
@@ -202,12 +286,12 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
 
   const key = cleanMediaPath(file.path);
   const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
+  const origin = getProviderOrigin(service, 'image');
 
   if (isHaven) {
-    return `https://img.cum.st/thumbnail/${key}/preview.webp`;
+    return `${origin}/thumbnail/${key}/preview.webp`;
   }
 
-  const origin = getProviderOrigin(service, 'image');
   return `${origin}/thumbnail/data/${key}`;
 }
 
@@ -224,12 +308,12 @@ export function postThumbnailUrl(post: PawchivePost): string | null {
 
   const key = cleanMediaPath(media.path);
   const isHaven = isOnlyHavenService(post.service) || (post.extra as any)?.provider_id === 'coomer' || (post.extra as any)?.provider_id === 'onlyhaven';
+  const origin = getProviderOrigin(post.service, 'image');
 
   if (isHaven) {
-    return `https://img.cum.st/thumbnail/${key}/preview.webp`;
+    return `${origin}/thumbnail/${key}/preview.webp`;
   }
 
-  const origin = getProviderOrigin(post.service, 'image');
   return `${origin}/thumbnail/data/${key}`;
 }
 
@@ -237,17 +321,12 @@ export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: stri
   if (!card.hash || card.hash.length < 4) return '';
   const sub1 = card.hash.slice(0, 2);
   const sub2 = card.hash.slice(2, 4);
-  let ext = (card.ext || '').replace(/^\.+/, '');
-  if (!ext) {
-    if (card.mime?.includes('png')) ext = 'png';
-    else if (card.mime?.includes('webp')) ext = 'webp';
-    else if (card.mime?.includes('gif')) ext = 'gif';
-    else ext = 'jpg';
-  }
+  const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
 
   const isHaven = isOnlyHavenService(service);
   if (isHaven) {
-    return `https://e1.cum.st/media/${sub1}/${sub2}/${card.hash}/original.${ext}`;
+    const origin = getProviderOrigin(service, 'file');
+    return `${origin}/media/${sub1}/${sub2}/${card.hash}/original.${ext}`;
   }
 
   const origin = getProviderOrigin(service, 'image');
@@ -262,20 +341,13 @@ export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: 
   if (!card.hash || card.hash.length < 4) return '';
   const sub1 = card.hash.slice(0, 2);
   const sub2 = card.hash.slice(2, 4);
-  let ext = (card.ext || '').replace(/^\.+/, '');
-  if (!ext) {
-    if (card.mime?.includes('png')) ext = 'png';
-    else if (card.mime?.includes('webp')) ext = 'webp';
-    else if (card.mime?.includes('gif')) ext = 'gif';
-    else ext = 'jpg';
-  }
-
-  const isHaven = isOnlyHavenService(service);
-  if (isHaven) {
-    return `https://img.cum.st/thumbnail/${sub1}/${sub2}/${card.hash}/preview.webp`;
-  }
+  const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
 
   const origin = getProviderOrigin(service, 'image');
+  if (isOnlyHavenService(service)) {
+    return `${origin}/thumbnail/${sub1}/${sub2}/${card.hash}/preview.webp`;
+  }
+
   return `${origin}/thumbnail/data/${sub1}/${sub2}/${card.hash}.${ext}`;
 }
 
@@ -443,32 +515,11 @@ export function getPostDownloadTargets(post: PawchivePost): DownloadTarget[] {
     if (seenPaths.has(pathKey)) continue;
     seenPaths.add(pathKey);
 
-    const key = cleanMediaPath(item.path);
-    const isHaven = isOnlyHavenService(post.service) || (post.extra as any)?.provider_id === 'coomer' || (post.extra as any)?.provider_id === 'onlyhaven';
-
-    let url: string;
+    const url = attachmentMediaUrl(item, post.service);
     let filename = item.name || `media_${i + 1}`;
-
-    if (isHaven) {
-      let ext = 'jpg';
-      if (item.name && item.name.includes('.')) {
-        ext = item.name.split('.').pop() || 'jpg';
-      } else if ((item.extra as any)?.mime_type) {
-        const mime = (item.extra as any).mime_type;
-        if (mime.includes('video') || mime.includes('mp4')) ext = 'mp4';
-        else if (mime.includes('png')) ext = 'png';
-        else if (mime.includes('webp')) ext = 'webp';
-        else if (mime.includes('gif')) ext = 'gif';
-      } else if ((item.extra as any)?.kind === 'video') {
-        ext = 'mp4';
-      }
-      url = `https://e1.cum.st/media/${key}/original.${ext}`;
-      if (!filename.includes('.')) {
-        filename = `${filename}.${ext}`;
-      }
-    } else {
-      const origin = item.server ? resolveServerOrigin(item.server, post.service) : getProviderOrigin(post.service, 'file');
-      url = `${origin}/data/${key}`;
+    if (!filename.includes('.')) {
+      const ext = inferAttachmentExtension(item);
+      filename = `${filename}.${ext}`;
     }
 
     targets.push({

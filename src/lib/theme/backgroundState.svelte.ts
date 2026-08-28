@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { type as osType, version as osVersion } from '@tauri-apps/plugin-os';
+import { logger } from '$lib/utils/logger';
 
 export type BackgroundType =
   | 'oled'
@@ -123,7 +124,7 @@ export class BackgroundState {
     else this.settings.videoUrl = '';
     this.save();
     void invoke('clear_custom_background', { kind }).catch((error) => {
-      console.warn('Failed to remove custom background file:', error);
+      logger.warn('Failed to remove custom background file', error);
     });
   }
 
@@ -131,7 +132,7 @@ export class BackgroundState {
     try {
       await invoke('set_window_effect', { effectType });
     } catch (e) {
-      console.warn('Native window effect not supported on this platform:', e);
+      logger.warn('Native window effect not supported on this platform', e);
     }
   }
 

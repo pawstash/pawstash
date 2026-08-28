@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ProviderConfig, ProviderHealth, PostRevisionData } from '$lib/types/provider';
+import { logger } from '$lib/utils/logger';
 
 class ProviderState {
   providers = $state<ProviderConfig[]>([]);
@@ -30,7 +31,7 @@ class ProviderState {
       }
       return sanitized;
     } catch (e) {
-      console.error('Failed to load providers:', e);
+      logger.error('Failed to load providers', e);
       return [];
     } finally {
       this.loading = false;
@@ -43,7 +44,7 @@ class ProviderState {
       await invoke('save_providers', { providers: list });
       this.providers = list;
     } catch (e) {
-      console.error('Failed to save providers:', e);
+      logger.error('Failed to save providers', e);
       throw e;
     } finally {
       this.loading = false;
@@ -130,7 +131,7 @@ class ProviderState {
       this.postRevisions = { ...this.postRevisions, [key]: revs || [] };
       return revs || [];
     } catch (e) {
-      console.warn('Failed to load post revisions:', e);
+      logger.warn('Failed to load post revisions', e);
       return [];
     }
   }

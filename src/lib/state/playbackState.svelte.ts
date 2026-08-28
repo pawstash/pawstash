@@ -1,3 +1,5 @@
+import { logger } from '$lib/utils/logger';
+
 interface PlaybackEntry {
   time: number;
   duration: number;
@@ -33,7 +35,7 @@ class PlaybackState {
         this.entries = cleaned;
       }
     } catch (e) {
-      console.warn('Failed to load playback state from localStorage:', e);
+      logger.warn('Failed to load playback state from localStorage', e);
     } finally {
       this.loaded = true;
     }
@@ -44,7 +46,7 @@ class PlaybackState {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.entries));
     } catch (e) {
-      console.warn('Failed to save playback state to localStorage:', e);
+      logger.warn('Failed to save playback state to localStorage', e);
     }
   }
 

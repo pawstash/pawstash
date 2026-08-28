@@ -249,7 +249,7 @@
   let targetCardWidth = $derived(Math.round(baseCardWidth * scale));
   let ratio = $derived(({ square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const)[configState.settings.grid_aspect_ratio]);
 
-  function mapFavoritePost(favorite: Favorite): PawchivePost {
+  function mapFavoritePost(favorite: Favorite, index = 0): PawchivePost {
     return {
       ...favorite,
       id: String(favorite.id ?? ''),
@@ -261,7 +261,9 @@
       attachments: favorite.attachments as PawchivePost['attachments'],
       added: String(favorite.added ?? favorite.indexed ?? ''),
       published: String(favorite.published ?? favorite.updated ?? ''),
-      favorite_count: Number(favorite.favorite_count ?? 0)
+      favorite_count: Number(favorite.favorite_count ?? 0),
+      faved_seq: typeof favorite.faved_seq === 'number' ? favorite.faved_seq : undefined,
+      faved_at: String(favorite.faved_at ?? (favorite.extra as any)?.faved_at ?? favorite.created_at ?? '') || undefined
     };
   }
 
@@ -283,7 +285,8 @@
       updated: timestampSeconds(favorite.updated),
       indexed: timestampSeconds(favorite.indexed),
       favorited: Number(favorite.favorited ?? favorite.favorite_count ?? 0) || undefined,
-      faved_seq: favorite.faved_seq
+      faved_seq: favorite.faved_seq,
+      faved_at: String(favorite.faved_at ?? (favorite.extra as any)?.faved_at ?? favorite.created_at ?? '') || undefined
     };
   }
 
@@ -298,7 +301,20 @@
   });
 
   function favoriteOrder(item: PawchivePost | Creator) {
-    return Number(item.faved_seq ?? 0);
+    const favedAt = (item as any).faved_at || (item as any).created_at || (item as any).faved_date;
+    if (favedAt) {
+      const parsed = dateOrder(favedAt);
+      if (parsed > 0) return parsed;
+    }
+    if (typeof item.faved_seq === 'number' && Number.isFinite(item.faved_seq)) {
+      return item.faved_seq;
+    }
+    const fallback = (item as any).published || (item as any).updated || (item as any).added || (item as any).indexed;
+    if (fallback) {
+      const parsed = dateOrder(fallback);
+      if (parsed > 0) return parsed;
+    }
+    return 0;
   }
 
   function dateOrder(value: unknown) {

@@ -180,24 +180,9 @@ pub async fn probe_download_size(
         return Err("Only HTTP and HTTPS media probes are supported".to_string());
     }
     let settings = state.config_manager.load()?;
-    let effective_url = if url.starts_with("https://pawchive.pw/data/") {
-        url.replacen(
-            "https://pawchive.pw/data/",
-            "https://file.pawchive.pw/data/",
-            1,
-        )
-    } else if url.starts_with("http://pawchive.pw/data/") {
-        url.replacen(
-            "http://pawchive.pw/data/",
-            "https://file.pawchive.pw/data/",
-            1,
-        )
-    } else {
-        url
-    };
     let task = DownloadTask {
         id: "size-probe".to_string(),
-        url: effective_url,
+        url,
         output_dir: String::new(),
         temp_path: String::new(),
         final_path: String::new(),
@@ -945,19 +930,34 @@ pub async fn fetch_account_favorites(
                 }
             }
 
-            // Merge remote items with existing local/guest favorites
-            let mut merged = remote_items;
-            let mut seen_keys = std::collections::HashSet::new();
-            for item in &merged {
-                let srv = item.service.as_deref().unwrap_or("").to_lowercase();
-                let id = item.id.to_lowercase();
-                seen_keys.insert((srv, id));
+            // Build map of local favorites with their faved_at timestamps from content_pins
+            let mut local_map = std::collections::HashMap::new();
+            for loc in local_favorites {
+                let srv = loc.service.as_deref().unwrap_or("").to_lowercase();
+                let id = loc.id.to_lowercase();
+                local_map.insert((srv, id), loc);
             }
 
-            for local in local_favorites {
-                let srv = local.service.as_deref().unwrap_or("").to_lowercase();
-                let id = local.id.to_lowercase();
-                if seen_keys.insert((srv, id)) {
+            let mut merged = Vec::new();
+            let mut seen_keys = std::collections::HashSet::new();
+
+            // First include all remote items, carrying over any local faved_at if already pinned
+            for mut item in remote_items {
+                let srv = item.service.as_deref().unwrap_or("").to_lowercase();
+                let id = item.id.to_lowercase();
+                if seen_keys.insert((srv.clone(), id.clone())) {
+                    if let Some(local_entry) = local_map.get(&(srv, id)) {
+                        if let Some(faved_at) = local_entry.extra.get("faved_at") {
+                            item.extra.insert("faved_at".to_string(), faved_at.clone());
+                        }
+                    }
+                    merged.push(item);
+                }
+            }
+
+            // Then include all purely local favorites (not present on remote)
+            for (key, local) in local_map {
+                if seen_keys.insert(key) {
                     merged.push(local);
                 }
             }
@@ -966,7 +966,15 @@ pub async fn fetch_account_favorites(
         }
     }
 
-    Ok(local_favorites)
+    let mut ordered_locals = local_favorites;
+    let count = ordered_locals.len() as i64;
+    for (idx, item) in ordered_locals.iter_mut().enumerate() {
+        if item.faved_seq.is_none() {
+            item.faved_seq = Some(count - idx as i64);
+        }
+    }
+
+    Ok(ordered_locals)
 }
 
 #[tauri::command]
@@ -1891,8 +1899,8 @@ pub fn set_sync_enabled(
 #[tauri::command]
 pub fn open_in_browser(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("Only HTTP and HTTPS links can be opened".to_string());
+    if !matches!(parsed.scheme(), "http" | "https" | "ms-windows-store") {
+        return Err("Only HTTP, HTTPS, and Store links can be opened".to_string());
     }
     let safe_url = parsed.as_str();
     #[cfg(target_os = "windows")]

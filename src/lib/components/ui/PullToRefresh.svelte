@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
+  import { logger } from '$lib/utils/logger';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
@@ -115,7 +116,7 @@
       try {
         await onrefresh();
       } catch (err) {
-        console.warn('Pull-to-refresh action failed:', err);
+        logger.warn('Pull-to-refresh action failed', err);
       } finally {
         refreshing = false;
         exiting = true;
