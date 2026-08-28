@@ -75,19 +75,23 @@ async fn serve_media_handler(
     Path(file_path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
+    let decoded_path = urlencoding::decode(&file_path)
+        .map(|s| s.into_owned())
+        .unwrap_or(file_path);
+
     #[cfg(not(windows))]
-    let path_str = if !file_path.starts_with('/') {
-        format!("/{file_path}")
+    let path_str = if !decoded_path.starts_with('/') {
+        format!("/{decoded_path}")
     } else {
-        file_path
+        decoded_path
     };
     #[cfg(windows)]
     let path_str = {
-        let trimmed = file_path.trim_start_matches('/');
+        let trimmed = decoded_path.trim_start_matches('/');
         if trimmed.len() >= 2 && trimmed.chars().nth(1) == Some(':') {
             trimmed.to_string()
         } else {
-            file_path
+            decoded_path
         }
     };
 
@@ -167,6 +171,12 @@ async fn serve_media_handler(
                     header::CONTENT_LENGTH,
                     chunk_size.to_string().parse().unwrap(),
                 );
+                res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+                res_headers.insert(
+                    header::ACCESS_CONTROL_ALLOW_METHODS,
+                    "GET, HEAD, OPTIONS".parse().unwrap(),
+                );
+                res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
 
                 return Ok(response);
             }
@@ -188,6 +198,12 @@ async fn serve_media_handler(
         header::CONTENT_LENGTH,
         file_size.to_string().parse().unwrap(),
     );
+    res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+    res_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        "GET, HEAD, OPTIONS".parse().unwrap(),
+    );
+    res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
 
     Ok(response)
 }
@@ -530,14 +546,29 @@ async fn serve_cloud_proxy_stream_handler(
         }
     }
 
-    // Ensure valid streaming MIME type
-    let is_html_or_generic = resp_headers
+    let upstream_content_type = upstream_headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.starts_with("text/html") || ct.starts_with("application/octet-stream"))
-        .unwrap_or(true);
+        .unwrap_or("");
 
-    if is_html_or_generic {
+    // If upstream returned an HTML page (e.g. Dropbox "File Deleted" or login page), fail immediately
+    if upstream_content_type.starts_with("text/html") {
+        tracing::warn!(
+            "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
+            target_url
+        );
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Upstream returned HTML page instead of media stream (file deleted or private)"
+                .to_string(),
+        ));
+    }
+
+    // Ensure valid streaming MIME type
+    let is_generic = upstream_content_type.starts_with("application/octet-stream")
+        || upstream_content_type.is_empty();
+
+    if is_generic {
         let extracted_path =
             if let Some(name) = params.name.as_deref().filter(|s| !s.trim().is_empty()) {
                 Some(name.to_string())

@@ -116,23 +116,37 @@
     if (hideTimer) clearTimeout(hideTimer);
   });
 
-  $effect(() => {
-    const viewport = scrollContext?.viewport;
-    if (!viewport || !loadSentinel || creatorsState.activeTab !== 'all') return;
+  function loadMore() {
+    if (!hasMore) return;
+    visibleCount += 80;
+  }
 
-    observer?.disconnect();
-    observer = new IntersectionObserver(
+  function handleScroll(top: number) {
+    if (!hasMore || !scrollContext?.viewport) return;
+    const vp = scrollContext.viewport;
+    const distanceToBottom = vp.scrollHeight - top - vp.clientHeight;
+    if (distanceToBottom < 1400) {
+      loadMore();
+    }
+  }
+
+  function sentinel(node: HTMLElement) {
+    const io = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && creatorsList.length >= visibleCount) {
-          visibleCount += 40;
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMore();
         }
       },
-      { root: viewport, rootMargin: '200px' }
+      { rootMargin: '1000px 0px' }
     );
-    observer.observe(loadSentinel);
+    io.observe(node);
 
-    return () => observer?.disconnect();
-  });
+    return {
+      destroy() {
+        io.disconnect();
+      }
+    };
+  }
 
   function getAvatarUrl(creator: Creator) {
     const headerThumb = (creator.extra as any)?.header_thumbhash;
@@ -230,6 +244,7 @@
 
   function selectTab(tab: 'all' | 'subscribed') {
     creatorsState.activeTab = tab;
+    visibleCount = 80;
     if (isSelectionActive) selectionState.clear();
     scrollContext?.viewport?.scrollTo({ top: 0 });
   }
@@ -506,7 +521,7 @@
   </HeaderActions>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={handleRefresh}>
+<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={handleRefresh} onscroll={handleScroll}>
   {#snippet overlay()}
     <StickyHeader threshold={120} title={i18n.t('creators.title') || 'Creators'}>
       {#snippet center()}
@@ -676,7 +691,7 @@
     </div>
 
     {#if hasMore}
-      <div bind:this={loadSentinel} class="sentinel">
+      <div use:sentinel class="sentinel">
         <IconLoading />
       </div>
     {/if}

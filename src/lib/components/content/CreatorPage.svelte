@@ -9,6 +9,7 @@
   import { subscriptionState } from '$lib/state/subscriptionState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import {
     apiFetchCreatorArtworkDataUrl,
     apiFetchCreatorPosts,
@@ -168,6 +169,11 @@
   let postSearchHasMore = $state(false);
   let postSearchRequest = 0;
   const CREATOR_POST_PAGE_SIZE = 50;
+
+  let baseCardWidth = $derived(layoutState.isMobile ? 155 : 245);
+  let scale = $derived(configState.settings.grid_scale / 100);
+  let gap = $derived(Math.round((layoutState.isMobile ? 8 : 10) * scale));
+  let targetCardWidth = $derived(baseCardWidth * scale);
 
   function toggleFormat(fmt: string) {
     formatFilters = toggleFilterKey(formatFilters, fmt);
@@ -528,7 +534,8 @@
     if (!dynamicAccent) return;
 
     let cancelled = false;
-    const thumbColor = thumbHashToAverageColor(headerThumbhash) || thumbHashToAverageColor(avatarThumbhash);
+    const cachedAccent = contentState.getCreatorAccent(service, creatorId);
+    const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumbhash) || thumbHashToAverageColor(avatarThumbhash);
 
     if (thumbColor) {
       const root = document.documentElement;
@@ -541,9 +548,10 @@
     const hasBanner = Boolean(effectiveBanner);
     const hasAvatar = Boolean(effectiveAvatar);
 
-    if (!thumbColor && (hasBanner || hasAvatar)) {
+    if (!cachedAccent && !thumbColor && (hasBanner || hasAvatar)) {
       void getCreatorAccentColor(hasBanner, hasAvatar).then((color) => {
         if (!color || cancelled) return;
+        contentState.setCreatorAccent(service, creatorId, color);
         const root = document.documentElement;
         root.style.setProperty('--accent-primary', color);
         root.style.setProperty('--accent-primary-hover', color);
@@ -1336,7 +1344,7 @@
             <span>{i18n.t('creator.no_similar_artists_desc')}</span>
           </div>
         {:else}
-          <div class="creator-cards-grid">
+          <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each similarCreators as sim}
               {@const sService = String(sim.service ?? service)}
               {@const sId = String(sim.id ?? '')}
@@ -1413,7 +1421,7 @@
             <span>{i18n.t('creator.no_links_desc') || 'This creator does not have other platform accounts linked yet.'}</span>
           </div>
         {:else}
-          <div class="creator-cards-grid">
+          <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each creatorLinks as link}
               {@const lService = String(link.service ?? '')}
               {@const lId = String(link.id ?? '')}
@@ -1515,7 +1523,7 @@
             <span>{i18n.t('creator.no_fancards_desc') || 'This creator does not have any fancards available.'}</span>
           </div>
         {:else}
-          <div class="creator-cards-grid">
+          <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each fancards as card, index}
               {@const cardThumb = fancardThumbnailUrl(card, service)}
               {@const cardFull = fancardMediaUrl(card, service)}
@@ -1895,8 +1903,8 @@
   .creator-cards-grid {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(245px * var(--grid-scale, 1))), 1fr));
-    gap: calc(10px * var(--grid-scale, 1));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width, 245px)), 1fr));
+    gap: var(--grid-gap, 10px);
     width: 100%;
   }
 

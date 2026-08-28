@@ -541,7 +541,7 @@
   let isOverflowing = $derived(contentHeight > MAX_CONTENT_HEIGHT);
 
   let hevcSupported = $state(true);
-  let videoFailures = $state<Record<number, boolean>>({});
+  let videoFailures = $state<Record<number, 'codec' | 'unavailable'>>({});
   let isCodecModalOpen = $state(false);
 
   function isH265Video(filename?: string) {
@@ -556,7 +556,7 @@
       // If duration is known and video has 0 dimensions, video track cannot be decoded (e.g. HEVC in Chromium)
       if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
         logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
-        videoFailures[index] = true;
+        videoFailures[index] = 'codec';
       }
     }
   }
@@ -567,7 +567,7 @@
       logMediaError('video', video.src, file.name, video.error);
 
       if ((file as any)?.is_cloud || file.path?.startsWith('http') || file.path?.startsWith('/cloud_stream/')) {
-        videoFailures[index] = true;
+        videoFailures[index] = 'unavailable';
         return;
       }
       const remote = remoteFileUrl(file);
@@ -576,7 +576,7 @@
         video.src = remote;
         return;
       }
-      videoFailures[index] = true;
+      videoFailures[index] = 'unavailable';
     }
   }
 
@@ -1274,8 +1274,9 @@
     if (!post || !configState.settings.dynamic_accent) return;
 
     let cancelled = false;
+    const cachedAccent = contentState.getPostAccent(service, creatorId, postId);
     const postThumbhash = (post as any)?.preview_thumbhash || (post.extra as any)?.preview_thumbhash || (post.file as any)?.extra?.thumbhash;
-    const thumbColor = thumbHashToAverageColor(postThumbhash);
+    const thumbColor = cachedAccent || thumbHashToAverageColor(postThumbhash);
 
     if (thumbColor) {
       const root = document.documentElement;
@@ -1285,9 +1286,10 @@
       root.style.setProperty('--text-on-accent', getContrastColor(thumbColor));
     }
 
-    if (!thumbColor && heroImageUrl) {
+    if (!cachedAccent && !thumbColor && heroImageUrl) {
       void getAverageColor(heroImageUrl).then((color) => {
         if (!color || cancelled) return;
+        contentState.setPostAccent(service, creatorId, postId, color);
         const root = document.documentElement;
         root.style.setProperty('--accent-primary', color);
         root.style.setProperty('--accent-primary-hover', color);
@@ -2297,15 +2299,19 @@
                       {#if isVid && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
                         <div class="file-placeholder">
                           <IconVideoOff class="placeholder-icon" />
-                          <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
-                          <Button
-                            variant="ghost"
-                            class="placeholder-fix-btn"
-                            onclick={() => isCodecModalOpen = true}
-                          >
-                            <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                            <span>{i18n.t('post.codec_how_to_fix')}</span>
-                          </Button>
+                          {#if videoFailures[index] === 'codec' || (!videoFailures[index] && isH265Video(file?.name) && !hevcSupported)}
+                            <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
+                            <Button
+                              variant="ghost"
+                              class="placeholder-fix-btn"
+                              onclick={() => isCodecModalOpen = true}
+                            >
+                              <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                              <span>{i18n.t('post.codec_how_to_fix')}</span>
+                            </Button>
+                          {:else}
+                            <p class="placeholder-text">{i18n.t('post.cloud_file_unavailable')}</p>
+                          {/if}
                         </div>
                       {:else}
                         {#if isVid}

@@ -941,6 +941,47 @@ impl ContentRepository {
         )))
     }
 
+    pub fn store_thumbnail_data_url(&self, key: &str, data_url: &str) -> Result<PathBuf, String> {
+        let (header, encoded) = data_url
+            .split_once(',')
+            .ok_or("Invalid thumbnail data URL")?;
+        let extension = if header.contains("png") {
+            "png"
+        } else if header.contains("webp") {
+            "webp"
+        } else {
+            "jpg"
+        };
+        let bytes = BASE64_STANDARD.decode(encoded).map_err(|e| e.to_string())?;
+        let dir = content_cache_path().join("thumbnails");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let safe = format!("{}.{}", sanitize(key), extension);
+        let path = dir.join(safe);
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        self.enforce_cache_limit();
+        Ok(path)
+    }
+
+    pub fn thumbnail_data_url(&self, key: &str) -> Result<Option<String>, String> {
+        let dir = content_cache_path().join("thumbnails");
+        for ext in &["webp", "jpg", "png"] {
+            let path = dir.join(format!("{}.{}", sanitize(key), ext));
+            if path.is_file() {
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let mime = if *ext == "webp" {
+                    "image/webp"
+                } else if *ext == "png" {
+                    "image/png"
+                } else {
+                    "image/jpeg"
+                };
+                let encoded = BASE64_STANDARD.encode(bytes);
+                return Ok(Some(format!("data:{mime};base64,{encoded}")));
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn cache_post_preview(
         &self,
         post: &PawchivePost,

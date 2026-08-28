@@ -7,6 +7,7 @@ const PAGE_SIZE = 50;
 
 export interface CachedPost {
   post: PawchivePost | null;
+  accentColor?: string;
   loading: boolean;
   loaded: boolean;
   error: string | null;
@@ -14,6 +15,7 @@ export interface CachedPost {
 
 export interface CachedCreator {
   profile: CreatorProfile | null;
+  accentColor?: string;
   posts: PawchivePost[];
   loading: boolean;
   loadingMore: boolean;
@@ -38,6 +40,30 @@ export function creatorCacheKey(service: string, creatorId: string | number) {
 export class ContentState {
   posts = $state<Record<string, CachedPost>>({});
   creators = $state<Record<string, CachedCreator>>({});
+
+  getPostAccent(service: string, creatorId: string | number, postId: string | number): string | undefined {
+    const key = postCacheKey(service, creatorId, postId);
+    return this.posts[key]?.accentColor;
+  }
+
+  setPostAccent(service: string, creatorId: string | number, postId: string | number, color: string) {
+    if (!color) return;
+    const key = postCacheKey(service, creatorId, postId);
+    const entry = this.getPost(service, creatorId, postId);
+    entry.accentColor = color;
+  }
+
+  getCreatorAccent(service: string, creatorId: string | number): string | undefined {
+    const key = creatorCacheKey(service, creatorId);
+    return this.creators[key]?.accentColor;
+  }
+
+  setCreatorAccent(service: string, creatorId: string | number, color: string) {
+    if (!color) return;
+    const key = creatorCacheKey(service, creatorId);
+    const entry = this.getCreator(service, String(creatorId));
+    entry.accentColor = color;
+  }
 
   seedPost(post: PawchivePost) {
     const key = postCacheKey(post.service, post.user, post.id);

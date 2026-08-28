@@ -23,6 +23,7 @@
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
 
   interface Props {
     item: DownloadItem;
@@ -36,7 +37,11 @@
   let { item, previewUrl, thumbnailUrl, postTitle, onopen, orderedKeys, itemsMap }: Props = $props();
   const ratios = { square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const;
   let busy = $state(false);
+  let lastThumbnailUrl = $state<string | undefined>(undefined);
+  let thumbnailFailed = $state(false);
   let previewFailed = $state(false);
+  let generatedThumbnail = $state<string | undefined>(undefined);
+  let effectiveThumbnail = $derived(!thumbnailFailed && thumbnailUrl ? thumbnailUrl : generatedThumbnail);
   let playMenuOpen = $state(false);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let percent = $derived(item.total_bytes > 0 ? Math.min(100, Math.round(item.downloaded_bytes / item.total_bytes * 100)) : 0);
@@ -46,32 +51,52 @@
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
   let selected = $derived(isSelectionActive && selectionState.isSelected(item.id));
+  let isHovered = $state(false);
+  let showVideo = $state(false);
   let videoEl = $state<HTMLVideoElement | null>(null);
   let playTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function handleMouseEnter() {
-    if (videoEl && mediaKind === 'video' && !previewFailed) {
+    isHovered = true;
+    if (mediaKind === 'video' && !previewFailed && previewUrl) {
       if (playTimeout) clearTimeout(playTimeout);
       playTimeout = setTimeout(() => {
-        if (videoEl) {
-          videoEl.currentTime = 0;
-          videoEl.play().catch(() => {});
+        if (isHovered) {
+          showVideo = true;
         }
-      }, 80);
+      }, 180);
     }
   }
 
   function handleMouseLeave() {
+    isHovered = false;
     if (playTimeout) clearTimeout(playTimeout);
-    if (videoEl && mediaKind === 'video') {
+    showVideo = false;
+    if (videoEl) {
       videoEl.pause();
-      videoEl.currentTime = 0;
     }
   }
 
+  function requestVideoThumbnail() {
+    if (mediaKind !== 'video' || generatedThumbnail || !previewUrl) return;
+    const key = item.media_id || item.id || item.filename;
+    getVideoThumbnail(key, previewUrl).then((thumb) => {
+      if (thumb) {
+        generatedThumbnail = thumb;
+      }
+    });
+  }
+
   $effect(() => {
-    if (previewUrl || thumbnailUrl) {
-      previewFailed = false;
+    if (thumbnailUrl !== lastThumbnailUrl) {
+      lastThumbnailUrl = thumbnailUrl;
+      thumbnailFailed = false;
+    }
+    if (!thumbnailUrl && mediaKind === 'video') {
+      requestVideoThumbnail();
+    }
+    if (previewUrl && mediaKind === 'video' && (!thumbnailUrl || thumbnailFailed)) {
+      requestVideoThumbnail();
     }
   });
 
@@ -212,28 +237,49 @@
     </div>
   {/if}
 
-  {#if thumbnailUrl && !previewFailed}
-    <img class="grid-tile-media" src={thumbnailUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
-  {:else if previewUrl && !previewFailed && mediaKind === 'image'}
-    <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
-  {:else if previewUrl && !previewFailed && mediaKind === 'video'}
-    <video
-      bind:this={videoEl}
+  {#if effectiveThumbnail}
+    <img
       class="grid-tile-media"
-      src={`${previewUrl}#t=0.001`}
-      muted
-      loop
-      playsinline
-      disablepictureinpicture
-      disableremoteplayback
-      preload="none"
+      src={effectiveThumbnail}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onerror={() => {
+        if (!thumbnailFailed && effectiveThumbnail === thumbnailUrl) {
+          thumbnailFailed = true;
+          requestVideoThumbnail();
+        }
+      }}
+    />
+  {:else if previewUrl && !previewFailed && mediaKind === 'image'}
+    <img
+      class="grid-tile-media"
+      src={previewUrl}
+      alt=""
+      loading="lazy"
+      decoding="async"
       onerror={() => previewFailed = true}
-    ></video>
+    />
   {:else}
     <div class="grid-tile-placeholder download-placeholder">
       {#if mediaKind === 'audio'}<IconMusic />{:else if mediaKind === 'video'}<IconVideo />{:else}<IconDocument />{/if}
       {#if extension}<span>{extension}</span>{/if}
     </div>
+  {/if}
+
+  {#if showVideo && mediaKind === 'video' && previewUrl && !previewFailed}
+    <video
+      bind:this={videoEl}
+      class="grid-tile-media grid-tile-hover-video"
+      src={previewUrl}
+      muted
+      loop
+      playsinline
+      disablepictureinpicture
+      disableremoteplayback
+      autoplay
+      onerror={() => { previewFailed = true; showVideo = false; }}
+    ></video>
   {/if}
 
   <div class="grid-tile-shade"></div>
@@ -281,6 +327,7 @@
 </article>
 
 <style>
+  :global(.grid-tile-hover-video) { pointer-events: none !important; }
   .download-placeholder { gap: calc(8px * var(--grid-scale, 1)); color: rgba(255,255,255,.28); }
   .download-placeholder :global(svg) { width: calc(34px * var(--grid-scale, 1)); height: calc(34px * var(--grid-scale, 1)); }
   .download-placeholder span { font-size: calc(9px * var(--grid-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

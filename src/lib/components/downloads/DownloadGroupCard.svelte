@@ -17,12 +17,28 @@
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
 
-  interface Props { items: DownloadItem[]; previewUrl?: string; avatarUrl?: string; title: string; creatorName: string; onopen?: () => void; oncreator?: () => void; }
-  let { items, previewUrl, avatarUrl, title, creatorName, onopen, oncreator }: Props = $props();
+  interface Props {
+    items: DownloadItem[];
+    previewUrl?: string;
+    thumbnailUrl?: string;
+    avatarUrl?: string;
+    title: string;
+    creatorName: string;
+    onopen?: () => void;
+    oncreator?: () => void;
+  }
+  let { items, previewUrl, thumbnailUrl, avatarUrl, title, creatorName, onopen, oncreator }: Props = $props();
   const ratios = { square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const;
   let busy = $state(false);
+  let lastThumbnailUrl = $state<string | undefined>(undefined);
+  let thumbnailFailed = $state(false);
   let previewFailed = $state(false);
+  let generatedThumbnail = $state<string | undefined>(undefined);
+  let effectiveThumbnail = $derived(!thumbnailFailed && thumbnailUrl ? thumbnailUrl : generatedThumbnail);
+  let isHovered = $state(false);
+  let showVideo = $state(false);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let representative = $derived(items[0]);
   let previewExtension = $derived.by(() => {
@@ -46,28 +62,48 @@
   let playTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function handleMouseEnter() {
-    if (videoEl && isVideo && !previewFailed) {
+    isHovered = true;
+    if (isVideo && !previewFailed && previewUrl) {
       if (playTimeout) clearTimeout(playTimeout);
       playTimeout = setTimeout(() => {
-        if (videoEl) {
-          videoEl.currentTime = 0;
-          videoEl.play().catch(() => {});
+        if (isHovered) {
+          showVideo = true;
         }
-      }, 80);
+      }, 180);
     }
   }
 
   function handleMouseLeave() {
+    isHovered = false;
     if (playTimeout) clearTimeout(playTimeout);
-    if (videoEl && isVideo) {
+    showVideo = false;
+    if (videoEl) {
       videoEl.pause();
-      videoEl.currentTime = 0;
+    }
+  }
+
+  function requestVideoThumbnail() {
+    if (!isVideo || generatedThumbnail || !previewUrl) return;
+    const key = representative?.media_id || representative?.id || representative?.filename;
+    if (key) {
+      getVideoThumbnail(key, previewUrl).then((thumb) => {
+        if (thumb) {
+          generatedThumbnail = thumb;
+        }
+      });
     }
   }
 
   $effect(() => {
-    if (previewUrl) {
-      previewFailed = false;
+    if (thumbnailUrl !== lastThumbnailUrl) {
+      lastThumbnailUrl = thumbnailUrl;
+      thumbnailFailed = false;
+    }
+    if (!thumbnailUrl && isVideo) {
+      requestVideoThumbnail();
+    }
+    if (previewUrl && isVideo && (!thumbnailUrl || thumbnailFailed)) {
+      requestVideoThumbnail();
     }
   });
 
@@ -88,23 +124,39 @@
   onmouseleave={handleMouseLeave}
 >
   {#if onopen}<button class="grid-tile-open" type="button" onclick={onopen} aria-label={title}></button>{/if}
-  {#if previewUrl && !previewFailed && isImage}
+  {#if effectiveThumbnail}
+    <img
+      class="grid-tile-media"
+      src={effectiveThumbnail}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onerror={() => {
+        if (!thumbnailFailed && effectiveThumbnail === thumbnailUrl) {
+          thumbnailFailed = true;
+          requestVideoThumbnail();
+        }
+      }}
+    />
+  {:else if previewUrl && !previewFailed && isImage}
     <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
-  {:else if previewUrl && !previewFailed && isVideo}
+  {:else}
+    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else}<IconDocument />{/if}</div>
+  {/if}
+
+  {#if showVideo && isVideo && previewUrl && !previewFailed}
     <video
       bind:this={videoEl}
-      class="grid-tile-media"
-      src={`${previewUrl}#t=0.001`}
+      class="grid-tile-media grid-tile-hover-video"
+      src={previewUrl}
       muted
       loop
       playsinline
       disablepictureinpicture
       disableremoteplayback
-      preload="none"
-      onerror={() => previewFailed = true}
+      autoplay
+      onerror={() => { previewFailed = true; showVideo = false; }}
     ></video>
-  {:else}
-    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else}<IconDocument />{/if}</div>
   {/if}
   <div class="grid-tile-shade"></div>
 
@@ -163,6 +215,7 @@
 </article>
 
 <style>
+  :global(.grid-tile-hover-video) { pointer-events: none !important; }
   .group-placeholder { color: rgba(255,255,255,.25); }
   .group-placeholder :global(svg) { width: calc(38px * var(--grid-scale, 1)); height: calc(38px * var(--grid-scale, 1)); }
   .download-group-tile .grid-tile-title { overflow-wrap: anywhere; word-break: break-word; }

@@ -1154,6 +1154,24 @@ pub async fn fetch_creator_artwork_data_url(
 }
 
 #[tauri::command]
+pub async fn get_video_thumbnail(
+    key: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    state.content.thumbnail_data_url(&key)
+}
+
+#[tauri::command]
+pub async fn store_video_thumbnail(
+    key: String,
+    data_url: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let path = state.content.store_thumbnail_data_url(&key, &data_url)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn search_hash(
     file_hash: String,
     state: State<'_, AppState>,

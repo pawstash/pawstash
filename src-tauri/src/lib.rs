@@ -238,6 +238,8 @@ pub fn run() {
             set_post_favorite,
             set_creator_favorite,
             fetch_creator_artwork_data_url,
+            get_video_thumbnail,
+            store_video_thumbnail,
             search_hash,
             flag_post,
             is_post_flagged,

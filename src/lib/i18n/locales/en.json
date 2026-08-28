@@ -375,6 +375,7 @@
     "codec_alt_player_desc": "Or download the video file and open it in a media player with built-in codecs (VLC, MPC-HC, PotPlayer, or MPV).",
     "codec_copied": "Command copied to clipboard!",
     "unsupported_codec_desc": "H.265 (HEVC) video requires a system codec to play.",
+    "cloud_file_unavailable": "File was deleted or is unavailable from source",
     "video_count": "video",
     "video_load_failed": "Failed to play video",
     "view_preview": "Preview",

@@ -205,6 +205,36 @@
     return convertFileSrc(path);
   }
 
+  function deriveCdnThumbnailUrl(url?: string): string | undefined {
+    if (!url) return undefined;
+    const cleanUrl = url.split(/[?#]/)[0];
+    if (cleanUrl.includes('/data/')) {
+      return cleanUrl
+        .replace('/data/', '/thumbnail/data/')
+        .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, '://img.');
+    }
+    if (cleanUrl.includes('cum.st') || cleanUrl.includes('coomer')) {
+      const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
+      if (match) {
+        return `https://img.cum.st/thumbnail/${match[1]}/preview.webp`;
+      }
+    }
+    return undefined;
+  }
+
+  function itemThumbnailUrl(item: DownloadItem): string | undefined {
+    const cdnThumb = deriveCdnThumbnailUrl(item.url);
+    if (cdnThumb) return cdnThumb;
+
+    const filename = (item.filename || '').toLowerCase();
+    const isImage = /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(filename);
+    if (isImage) {
+      return previewUrl(item);
+    }
+
+    return undefined;
+  }
+
   $effect(() => {
     if (downloadState.filter === 'active' && downloadState.downloads.length > 0 && downloadState.activeDownloadsCount === 0) {
       downloadState.filter = 'all';
@@ -503,7 +533,16 @@
       {#if groupByPosts}
         {#each groupedDownloads as group (group.key)}
           {@const media = previewItem(group.items)}
-          <DownloadGroupCard items={group.items} previewUrl={localPathUrl(media.post_preview_path) || media.post_preview_url || previewUrl(media)} avatarUrl={localPathUrl(media.creator_avatar_path)} title={media.post_title || i18n.t('downloads.unknown_post')} creatorName={media.creator_name} onopen={group.identity ? () => openPost(group.identity) : undefined} oncreator={group.identity ? () => navigationState.openCreator(group.identity!.service, group.identity!.creatorId) : undefined} />
+          <DownloadGroupCard
+            items={group.items}
+            previewUrl={previewUrl(media)}
+            thumbnailUrl={localPathUrl(media.post_preview_path) || media.post_preview_url}
+            avatarUrl={localPathUrl(media.creator_avatar_path)}
+            title={media.post_title || i18n.t('downloads.unknown_post')}
+            creatorName={media.creator_name}
+            onopen={group.identity ? () => openPost(group.identity) : undefined}
+            oncreator={group.identity ? () => navigationState.openCreator(group.identity!.service, group.identity!.creatorId) : undefined}
+          />
         {/each}
       {:else}
         {#each sortedDownloads as item (item.id)}
@@ -511,6 +550,7 @@
           <DownloadItemCard
             {item}
             previewUrl={previewUrl(item)}
+            thumbnailUrl={itemThumbnailUrl(item)}
             postTitle={item.post_title}
             onopen={identity ? (openViewer) => openPost(identity, item.media_id || item.filename || item.url, openViewer) : undefined}
             orderedKeys={downloadKeys}

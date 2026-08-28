@@ -18,6 +18,7 @@
     class?: string;
     scrollKey?: string;
     onrefresh?: () => Promise<void> | void;
+    onscroll?: (top: number) => void;
   }
 
   let {
@@ -27,7 +28,8 @@
     overlay,
     class: extraClass = '',
     scrollKey,
-    onrefresh
+    onrefresh,
+    onscroll
   }: Props = $props();
 
   const scrollContext = $state<ScrollableContext>({ viewport: null });
@@ -73,6 +75,7 @@
         onScroll: (top) => {
           if (scrollKey) navigationState.rememberScroll(scrollKey, top);
           updateScrollState(scrollContext.viewport);
+          onscroll?.(top);
         },
         onReady: (viewport) => {
           scrollContext.viewport = viewport;
