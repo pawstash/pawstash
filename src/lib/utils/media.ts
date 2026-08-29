@@ -1,4 +1,4 @@
-import type { PawchivePost, Attachment } from '$lib/types/pawchive';
+import type { Post, Attachment } from '$lib/types/content';
 import { configState } from '$lib/state/configState.svelte';
 import { providerState } from '$lib/state/providerState.svelte';
 import { thumbHashToUrl } from './thumbhash';
@@ -60,17 +60,21 @@ export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'fil
       return deriveSubdomainOrigin(havenBase, kind);
     }
     const providers = providerState.getProvidersForService(service);
-    if (providers.length > 0) {
+    if (providers && providers.length > 0) {
       const p = providers[0];
       if (kind === 'image') {
         if (p.image_url) return siteOrigin(p.image_url);
-        if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
-        return deriveSubdomainOrigin(p.api_url, 'image');
+        if (configState.settings.image_domain && !configState.settings.image_domain.startsWith('pawchive.pw')) {
+          return siteOrigin(configState.settings.image_domain);
+        }
+        return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'image');
       }
       if (kind === 'file') {
         if (p.file_url) return siteOrigin(p.file_url);
-        if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
-        return deriveSubdomainOrigin(p.api_url, 'file');
+        if (configState.settings.file_domain && !configState.settings.file_domain.startsWith('pawchive.pw')) {
+          return siteOrigin(configState.settings.file_domain);
+        }
+        return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'file');
       }
       if (p.api_url) return siteOrigin(p.api_url);
     }
@@ -81,23 +85,21 @@ export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'fil
     const p = enabled[0];
     if (kind === 'image') {
       if (p.image_url) return siteOrigin(p.image_url);
-      if (configState.settings.image_domain) return siteOrigin(configState.settings.image_domain);
-      return deriveSubdomainOrigin(p.api_url, 'image');
+      return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'image');
     }
     if (kind === 'file') {
       if (p.file_url) return siteOrigin(p.file_url);
-      if (configState.settings.file_domain) return siteOrigin(configState.settings.file_domain);
-      return deriveSubdomainOrigin(p.api_url, 'file');
+      return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'file');
     }
     if (p.api_url) return siteOrigin(p.api_url);
   }
 
   const defaultApi = configState.settings.api_domain || 'pawchive.pw';
   if (kind === 'image') {
-    return siteOrigin(configState.settings.image_domain || deriveSubdomainOrigin(defaultApi, 'image'));
+    return deriveSubdomainOrigin(configState.settings.image_domain || defaultApi, 'image');
   }
   if (kind === 'file') {
-    return siteOrigin(configState.settings.file_domain || deriveSubdomainOrigin(defaultApi, 'file'));
+    return deriveSubdomainOrigin(configState.settings.file_domain || defaultApi, 'file');
   }
   return siteOrigin(defaultApi);
 }
@@ -218,15 +220,21 @@ export function creatorBannerUrl(service: string, creatorId: string, thumbhash?:
 
 export function creatorPageUrl(service: string, creatorId: string): string {
   const origin = getProviderOrigin(service, 'api');
+  if (isOnlyHavenService(service)) {
+    return `${origin}/creators/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
+  }
   return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}`;
 }
 
 export function postPageUrl(service: string, creatorId: string, postId: string): string {
   const origin = getProviderOrigin(service, 'api');
+  if (isOnlyHavenService(service)) {
+    return `${origin}/creators/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}/post/${encodeURIComponent(postId)}`;
+  }
   return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}/post/${encodeURIComponent(postId)}`;
 }
 
-export function postMediaUrl(post: PawchivePost): string | null {
+export function postMediaUrl(post: Post): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
   if (!media?.path) return null;
   return attachmentMediaUrl(media, post.service);
@@ -280,7 +288,15 @@ export function attachmentMediaUrl(file: Attachment, service: string): string {
 
 export function attachmentThumbnailUrl(file: Attachment, service: string): string {
   if (!file?.path) return '';
-  if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
+  if (isAttachmentVideo(file, file.path)) {
+    const thumb = (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
+    if (thumb && typeof thumb === 'string') return thumb;
+    return '';
+  }
+  if (file.path.startsWith('/cloud_stream/')) {
+    return '';
+  }
+  if (file.path.startsWith('http://') || file.path.startsWith('https://')) {
     return file.path;
   }
 
@@ -295,7 +311,7 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
   return `${origin}/thumbnail/data/${key}`;
 }
 
-export function postThumbnailUrl(post: PawchivePost): string | null {
+export function postThumbnailUrl(post: Post): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
   const thumbhash = (media?.extra as any)?.preview_thumbhash || (post.file?.extra as any)?.preview_thumbhash || (post.attachments?.[0]?.extra as any)?.preview_thumbhash;
 
@@ -351,7 +367,7 @@ export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: 
   return `${origin}/thumbnail/data/${sub1}/${sub2}/${card.hash}.${ext}`;
 }
 
-export function postAttachmentCount(post: PawchivePost): number {
+export function postAttachmentCount(post: Post): number {
   return post.attachment_count ?? post.attachments?.length ?? 0;
 }
 
@@ -416,7 +432,7 @@ export function isDocumentUrl(url: string | null): boolean {
   return /\.(epub|pdf|txt)(?:$|\?)/i.test(url);
 }
 
-export function getPostFormats(post: PawchivePost): string[] {
+export function getPostFormats(post: Post): string[] {
   const allFiles: string[] = [];
   if (post.file?.path) allFiles.push(post.file.path.toLowerCase());
   if (post.file?.name) allFiles.push(post.file.name.toLowerCase());
@@ -492,7 +508,7 @@ export function getPostFormats(post: PawchivePost): string[] {
   return formats;
 }
 
-export function matchesPostFormat(post: PawchivePost, format: string): boolean {
+export function matchesPostFormat(post: Post, format: string): boolean {
   if (format === 'all') return true;
   return getPostFormats(post).includes(format);
 }
@@ -503,7 +519,7 @@ export interface DownloadTarget {
   filename: string;
 }
 
-export function getPostDownloadTargets(post: PawchivePost): DownloadTarget[] {
+export function getPostDownloadTargets(post: Post): DownloadTarget[] {
   const targets: DownloadTarget[] = [];
   const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
   const seenPaths = new Set<string>();
@@ -568,4 +584,132 @@ export function getPlatformProfileUrl(service?: string, creatorId?: string, publ
     default:
       return `https://${s}.com/${id}`;
   }
+}
+
+export function getFileExtension(filename?: string): string {
+  if (!filename) return 'FILE';
+  const clean = filename.split('?')[0].split('#')[0];
+  const parts = clean.split('.');
+  if (parts.length <= 1) return 'FILE';
+  const ext = parts.pop()!;
+  return ext.length > 6 ? 'FILE' : ext.toUpperCase();
+}
+
+export function getUnsupportedContainerFormat(filename?: string, url?: string): string | null {
+  const target = (filename || url || '').split('?')[0].split('#')[0].toLowerCase();
+  const match = target.match(/\.(avi|wmv|asf|flv|f4v|rmvb|rm|vob|divx|xvid|m2ts|ts)(?:$|[?#])/i);
+  if (match) {
+    return match[1].toUpperCase();
+  }
+  return null;
+}
+
+export function isH265Video(filename?: string, url?: string): boolean {
+  if (!filename && !url) return false;
+  const target = (filename || url || '').toLowerCase();
+  return /\b(h265|hevc|x265)\b|\.(h265|hevc)(?:$|[?#])/i.test(target);
+}
+
+export type MediaErrorPreset = 'unsupported_format' | 'unsupported_codec' | 'unavailable' | 'network' | 'decode' | 'custom';
+
+export interface MediaFailureState {
+  preset: MediaErrorPreset;
+  format?: string;
+  message?: string;
+}
+
+export function diagnoseVideoFailure(
+  file?: Attachment | null,
+  videoEl?: HTMLVideoElement | null,
+  options?: { isLocal?: boolean }
+): MediaFailureState {
+  const name = file?.name || '';
+  const src = videoEl?.src || file?.path || '';
+  const mediaErr = videoEl?.error;
+
+  const isLocal = options?.isLocal ?? Boolean(
+    ((src.startsWith('http://127.0.0.1') || src.startsWith('http://localhost')) && !src.includes('cloud_stream')) ||
+    src.startsWith('file:') ||
+    src.startsWith('tauri:') ||
+    src.startsWith('asset:') ||
+    (!src.startsWith('http://') && !src.startsWith('https://'))
+  );
+
+  const unsupported = getUnsupportedContainerFormat(name, src);
+  if (unsupported) {
+    return {
+      preset: 'unsupported_format',
+      format: unsupported,
+      message: mediaErr?.message || undefined
+    };
+  }
+
+  if (isH265Video(name, src)) {
+    return {
+      preset: 'unsupported_codec',
+      format: 'H.265 / HEVC',
+      message: mediaErr?.message || undefined
+    };
+  }
+
+  if (mediaErr) {
+    // 1: MEDIA_ERR_ABORTED, 2: MEDIA_ERR_NETWORK, 3: MEDIA_ERR_DECODE, 4: MEDIA_ERR_SRC_NOT_SUPPORTED
+    if (mediaErr.code === 2) {
+      return {
+        preset: 'network',
+        message: mediaErr.message || undefined
+      };
+    }
+    if (mediaErr.code === 3) {
+      return {
+        preset: 'decode',
+        message: mediaErr.message || undefined
+      };
+    }
+    if (mediaErr.code === 4) {
+      if (isLocal) {
+        const ext = getFileExtension(name);
+        return {
+          preset: 'unsupported_format',
+          format: ext !== 'FILE' ? ext : undefined,
+          message: mediaErr.message || undefined
+        };
+      }
+      if (mediaErr.message && (mediaErr.message.includes('404') || mediaErr.message.includes('410') || mediaErr.message.includes('Not Found'))) {
+        return {
+          preset: 'unavailable',
+          message: mediaErr.message
+        };
+      }
+    }
+    if (mediaErr.message && mediaErr.message.trim().length > 0) {
+      return {
+        preset: 'custom',
+        message: mediaErr.message
+      };
+    }
+  }
+
+  // Fallback for local files: if local video fails to play, it's decode or format
+  if (isLocal) {
+    return {
+      preset: 'decode',
+      message: mediaErr?.message || undefined
+    };
+  }
+
+  // If container format is a known non-native web format fallback
+  const ext = getFileExtension(name);
+  if (['AVI', 'WMV', 'FLV', 'MKV', 'MOV', 'M4V', 'TS'].includes(ext)) {
+    return {
+      preset: 'unsupported_format',
+      format: ext,
+      message: mediaErr?.message || undefined
+    };
+  }
+
+  return {
+    preset: 'custom',
+    message: mediaErr?.message || undefined
+  };
 }

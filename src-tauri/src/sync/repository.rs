@@ -977,8 +977,9 @@ impl SyncRepository {
             }
             "post" => {
                 let rec: PostRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                let post: crate::api::models::PawchivePost =
-                    serde_json::from_str(&rec.snapshot_json).map_err(|e| e.to_string())?;
+                let post: crate::api::models::Post =
+                    crate::api::models::Post::from_json_str(&rec.snapshot_json)
+                        .map_err(|e| e.to_string())?;
                 tx.execute(
                     "INSERT INTO creators(service,creator_id,name,snapshot_json)
                      VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))
@@ -1081,9 +1082,7 @@ impl SyncRepository {
             "fav_post" => {
                 let rec: FavoritePostRecord =
                     serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                if let Ok(post) =
-                    serde_json::from_str::<crate::api::models::PawchivePost>(&rec.snapshot_json)
-                {
+                if let Ok(post) = crate::api::models::Post::from_json_str(&rec.snapshot_json) {
                     tx.execute(
                         "INSERT INTO creators(service,creator_id,name,snapshot_json)
                          VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))

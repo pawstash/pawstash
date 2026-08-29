@@ -1,4 +1,4 @@
-import type { PawchivePost, Creator } from '$lib/types/pawchive';
+import type { Post, Creator } from '$lib/types/content';
 import type { FilterMap, TriStateFilter } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
 import { apiFetchPopularPosts, apiFetchRecentPosts, apiSearchHash, apiFetchPost } from '$lib/utils/ipc';
@@ -13,7 +13,7 @@ export type FeedMode = 'recent' | 'popular';
 export type PopularPeriod = 'day' | 'week' | 'month';
 
 interface FeedBucket {
-  posts: PawchivePost[];
+  posts: Post[];
   offset: number;
   hasMore: boolean;
   loaded: boolean;
@@ -192,7 +192,7 @@ export class FeedState {
             ...(hashResult?.discord_posts || [])
           ];
           if (allTargets.length > 0) {
-            const matchedPosts: PawchivePost[] = [];
+            const matchedPosts: Post[] = [];
             for (const target of allTargets) {
               const svc = target.service;
               const usr = target.user;

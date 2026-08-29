@@ -96,9 +96,7 @@ async fn serve_media_handler(
     };
 
     let path = PathBuf::from(&path_str);
-    let canonical = tokio::fs::canonicalize(&path)
-        .await
-        .unwrap_or_else(|_| path.clone());
+    let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
 
     if !path.is_file() && !canonical.is_file() {
         tracing::warn!("Local media file not found: {:?}", path);
@@ -111,20 +109,23 @@ async fn serve_media_handler(
     let allowed = true;
 
     #[cfg(not(target_os = "android"))]
-    let allowed = _state.allowed_roots.is_empty()
-        || _state.allowed_roots.iter().any(|root| {
-            if target.starts_with(root) {
-                return true;
+    let allowed = {
+        let mut allowed_roots = _state.allowed_roots.clone();
+        if let Ok(settings) = _state.config_manager.load() {
+            let user_dir = PathBuf::from(&settings.download_dir);
+            if !allowed_roots.contains(&user_dir) {
+                allowed_roots.push(user_dir);
             }
-            if let Ok(can_root) = std::fs::canonicalize(root) {
-                if target.starts_with(&can_root) {
-                    return true;
-                }
-            }
-            false
-        });
+        }
+        allowed_roots.is_empty()
+            || allowed_roots.iter().any(|root| {
+                let clean_root = dunce::canonicalize(root).unwrap_or_else(|_| root.clone());
+                target.starts_with(&clean_root) || target.starts_with(root)
+            })
+    };
 
     if !allowed {
+        tracing::warn!("Local media access denied for target: {:?}", target);
         return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
     }
 
@@ -397,6 +398,13 @@ async fn serve_mega_stream_handler(
     let res_headers = response.headers_mut();
     res_headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
     res_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+    res_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        "GET, HEAD, OPTIONS".parse().unwrap(),
+    );
+    res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
+    res_headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, "*".parse().unwrap());
     if chunk_size > 0 {
         res_headers.insert(
             header::CONTENT_LENGTH,
@@ -479,6 +487,22 @@ async fn serve_cloud_proxy_stream_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut target_url = params.url.clone();
+    if let Ok(mut u) = reqwest::Url::parse(&target_url) {
+        let host = u.host_str().unwrap_or("").to_lowercase();
+        let path = u.path();
+        if host == "pawchive.pw"
+            && (path.starts_with("/data/") || path.starts_with("/thumbnail/data/"))
+        {
+            let prefix = if path.starts_with("/thumbnail/") {
+                "img"
+            } else {
+                "file"
+            };
+            let _ = u.set_host(Some(&format!("{prefix}.pawchive.pw")));
+            target_url = u.to_string();
+        }
+    }
+
     if target_url.contains("dropbox.com") {
         if let Ok(mut u) = reqwest::Url::parse(&target_url) {
             let query: Vec<(String, String)> = u
@@ -526,6 +550,10 @@ async fn serve_cloud_proxy_stream_handler(
             status,
             target_url
         );
+        return Err((
+            status,
+            format!("Upstream media server returned error: {status}"),
+        ));
     }
     let upstream_headers = upstream.headers().clone();
     let body = Body::from_stream(upstream.bytes_stream());

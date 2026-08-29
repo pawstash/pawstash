@@ -1,12 +1,12 @@
 <script module lang="ts">
   const globalCloudFolderCache = new Map<string, import('$lib/types/cloud').CloudFolderResult>();
-  const globalPostCloudNodes = new Map<string, import('$lib/types/pawchive').Attachment[]>();
+  const globalPostCloudNodes = new Map<string, import('$lib/types/content').Attachment[]>();
   const globalProbedSizes = new Map<string, number>();
 </script>
 
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { contentState, postCacheKey, creatorCacheKey, type CachedPost } from '$lib/state/contentState.svelte';
+  import { contentState, postCacheKey, creatorCacheKey, normalizePostId, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -14,19 +14,21 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder, apiStartDownload } from '$lib/utils/ipc';
-  import type { Attachment, Comment, PawchivePost } from '$lib/types/pawchive';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
+  import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl, diagnoseVideoFailure, getUnsupportedContainerFormat, isH265Video, getFileExtension, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
+  import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
@@ -51,6 +53,8 @@
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconPause from '~icons/fluent/pause-24-regular';
   import IconPlay from '~icons/fluent/play-24-regular';
+  import IconPlayFilled from '~icons/fluent/play-24-filled';
+  import IconMusicFilled from '~icons/fluent/music-note-2-24-filled';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -61,6 +65,7 @@
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconEye from '~icons/fluent/eye-24-regular';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import IconChevronUp from '~icons/fluent/chevron-up-24-regular';
@@ -135,7 +140,7 @@
   let post = $derived.by(() => {
     if (selectedRevId !== null) {
       const found = postRevisions.find((r) => r.revision_id === selectedRevId);
-      if (found) return ((found as any).post || found) as PawchivePost;
+      if (found) return ((found as any).post || found) as Post;
     }
     return rawPost;
   });
@@ -152,21 +157,24 @@
 
   let currentPostIndexInCreator = $derived.by(() => {
     if (creatorPosts.length === 0) return -1;
-    return creatorPosts.findIndex((p) => String(p.id) === String(postId));
+    const currentId = normalizePostId(postId);
+    return creatorPosts.findIndex((p) => normalizePostId(p.id) === currentId);
   });
 
   let effectivePrevId = $derived.by(() => {
-    if (post?.prev) return String(post.prev);
+    const fromPost = normalizePostId(post?.prev);
+    if (fromPost) return fromPost;
     if (currentPostIndexInCreator > 0) {
-      return String(creatorPosts[currentPostIndexInCreator - 1].id);
+      return normalizePostId(creatorPosts[currentPostIndexInCreator - 1].id);
     }
     return '';
   });
 
   let effectiveNextId = $derived.by(() => {
-    if (post?.next) return String(post.next);
+    const fromPost = normalizePostId(post?.next);
+    if (fromPost) return fromPost;
     if (currentPostIndexInCreator >= 0 && currentPostIndexInCreator < creatorPosts.length - 1) {
-      return String(creatorPosts[currentPostIndexInCreator + 1].id);
+      return normalizePostId(creatorPosts[currentPostIndexInCreator + 1].id);
     }
     return '';
   });
@@ -282,10 +290,11 @@
 
     let started = 0;
     for (const node of targetNodes) {
-      const port = mediaPort ?? 0;
-      const streamUrl = node.stream_url?.startsWith('/cloud_stream/') && port > 0
-        ? `http://127.0.0.1:${port}${node.stream_url}`
-        : (node.download_url || '');
+      const port = serverPortState.port || 0;
+      const raw = node.download_url || node.stream_url || '';
+      const streamUrl = raw.startsWith('/cloud_stream/') && port > 0
+        ? `http://127.0.0.1:${port}${raw}`
+        : raw;
       if (!streamUrl) continue;
       try {
         await apiStartDownload(targetPost, node.id, streamUrl, node.name);
@@ -362,15 +371,10 @@
             }
             cloudFolderResults.set(url, res);
 
-            const root = res.nodes.find((n) => n.is_folder && !n.parent_id);
-            const rootId = root ? root.id : null;
+            const fileNodes = res.nodes.filter((n) => !n.is_folder);
+            const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
 
-            let topNodes = res.nodes.filter((n) => (rootId ? n.parent_id === rootId : !n.parent_id));
-            if (topNodes.length === 0) {
-              topNodes = res.nodes;
-            }
-
-            for (const node of topNodes) {
+            for (const node of nodesToDisplay) {
               if (node.is_folder) {
                 const childrenCount = res.nodes.filter((n) => n.parent_id === node.id).length;
                 allCloudNodes.push({
@@ -421,29 +425,15 @@
   function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
     if (!a || !b) return false;
     if (a === b) return true;
-    if (a.path && b.path && a.path === b.path) return true;
-    if (a.name && b.name && a.name === b.name) return true;
 
     const aNode = (a as any).cloud_node_id;
     const bNode = (b as any).cloud_node_id;
-    if (aNode && bNode && aNode === bNode) return true;
+    if (aNode && bNode) return aNode === bNode;
     if (aNode && b.path && (b.path === aNode || b.path.endsWith(aNode))) return true;
     if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
 
-    const aPath = decodeURIComponent(a.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
-    const bPath = decodeURIComponent(b.path || '').toLowerCase().split('?')[0].split('#')[0].replace(/\\/g, '/');
-    const aName = (a.name || '').toLowerCase();
-    const bName = (b.name || '').toLowerCase();
-    const aBase = aPath.split('/').pop() || aName;
-    const bBase = bPath.split('/').pop() || bName;
-
-    if (aBase && bBase && aBase.length >= 4 && aBase === bBase) return true;
-    if (aName && bName && aName.length >= 3 && aName === bName) return true;
-
-    if (aName && aName.length >= 4 && (bBase.endsWith(aName) || bName.endsWith(aName) || bBase.includes(aName))) return true;
-    if (bName && bName.length >= 4 && (aBase.endsWith(bName) || aName.endsWith(bName) || aBase.includes(bName))) return true;
-    if (aBase && aBase.length >= 6 && (bPath.includes(aBase) || bBase.includes(aBase))) return true;
-    if (bBase && bBase.length >= 6 && (aPath.includes(bBase) || aBase.includes(bBase))) return true;
+    if (a.path && b.path && a.path === b.path) return true;
+    if (a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) return true;
 
     return false;
   }
@@ -499,9 +489,9 @@
       d.final_path
     );
     for (const d of postDownloads) {
-      const port = mediaPort ?? 0;
+      const port = serverPortState.port || 0;
       const encoded = d.final_path!.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : d.url;
+      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : convertFileSrc(d.final_path!);
       const downloadAtt = {
         name: d.filename,
         path: streamUrl,
@@ -541,14 +531,8 @@
   let isOverflowing = $derived(contentHeight > MAX_CONTENT_HEIGHT);
 
   let hevcSupported = $state(true);
-  let videoFailures = $state<Record<number, 'codec' | 'unavailable'>>({});
+  let videoFailures = $state<Record<number, MediaFailureState>>({});
   let isCodecModalOpen = $state(false);
-
-  function isH265Video(filename?: string) {
-    if (!filename) return false;
-    const name = filename.toLowerCase();
-    return /\b(h265|hevc|x265)\b|\.(h265|hevc)$/i.test(name);
-  }
 
   function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
@@ -556,7 +540,10 @@
       // If duration is known and video has 0 dimensions, video track cannot be decoded (e.g. HEVC in Chromium)
       if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
         logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
-        videoFailures[index] = 'codec';
+        videoFailures[index] = {
+          preset: 'unsupported_codec',
+          format: isH265Video(file.name) ? 'H.265 / HEVC' : undefined
+        };
       }
     }
   }
@@ -566,17 +553,17 @@
       const video = e.currentTarget as HTMLVideoElement;
       logMediaError('video', video.src, file.name, video.error);
 
-      if ((file as any)?.is_cloud || file.path?.startsWith('http') || file.path?.startsWith('/cloud_stream/')) {
-        videoFailures[index] = 'unavailable';
-        return;
-      }
       const remote = remoteFileUrl(file);
-      if (remote && video.src !== remote) {
+      if (remote && video.src !== remote && !video.src.includes('cloud_stream')) {
         logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
         video.src = remote;
         return;
       }
-      videoFailures[index] = 'unavailable';
+
+      const downloaded = attachmentDownload(file);
+      videoFailures[index] = diagnoseVideoFailure(file, video, {
+        isLocal: Boolean(downloaded && downloaded.status === 'completed')
+      });
     }
   }
 
@@ -813,7 +800,8 @@
       html: (file as any)?.html,
       downloadStatus: job?.status,
       downloadedBytes: job?.downloaded_bytes,
-      totalBytes: job?.total_bytes
+      totalBytes: job?.total_bytes,
+      downloadedPath: job?.final_path
     };
   }));
 
@@ -921,9 +909,9 @@
     });
 
     if (downloadedMatch && downloadedMatch.status === 'completed' && downloadedMatch.final_path) {
-      const port = mediaPort ?? 0;
+      const port = serverPortState.port || 0;
       const encoded = downloadedMatch.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : downloadedMatch.url;
+      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : convertFileSrc(downloadedMatch.final_path);
       return {
         name: downloadedMatch.filename,
         path: streamUrl,
@@ -1048,14 +1036,6 @@
     await download(file, Math.max(0, fileIndex));
   }
 
-  function getFileExtension(filename?: string) {
-    if (!filename) return 'FILE';
-    const parts = filename.split('.');
-    if (parts.length <= 1) return 'FILE';
-    const ext = parts.pop()!;
-    return ext.length > 5 ? 'FILE' : ext.toUpperCase();
-  }
-  
   let saved = $derived(post ? libraryState.isSaved(post) : false);
   let saving = $derived(post ? libraryState.isPending(post) : false);
   let stashes = $derived(libraryState.allStashes);
@@ -1084,11 +1064,37 @@
 
   let isFavorited = $state(false);
   let favoritingPending = $state(false);
-  let mediaPort = $state<number | null>(null);
   let creatorAvatar = $state('');
   let creatorAvatarFailed = $state(false);
   let deletingDownloadId = $state<string | null>(null);
   let downloadingAll = $state(false);
+  let activeVideoIndexes = $state<Set<number>>(new Set());
+  let activeAudioIndexes = $state<Set<number>>(new Set());
+  let videoThumbnails = $state<Record<number, string>>({});
+
+  $effect(() => {
+    const currentMedia = media;
+    const downloads = downloadState.downloads;
+    const port = serverPortState.port;
+
+    for (let i = 0; i < currentMedia.length; i++) {
+      const file = currentMedia[i];
+      if (!file) continue;
+      const url = fileUrl(file);
+      if (!isAttachmentVideo(file, url)) continue;
+      if (videoThumbnails[i]) continue;
+
+      const localJob = attachmentDownload(file);
+      if (localJob && localJob.status === 'completed' && localJob.final_path && url) {
+        const key = localJob.media_id || localJob.id || localJob.filename || file.path || file.name || `vid_${i}`;
+        getVideoThumbnail(key, url).then((thumb) => {
+          if (thumb) {
+            videoThumbnails = { ...videoThumbnails, [i]: thumb };
+          }
+        });
+      }
+    }
+  });
   let totalMediaBytes = $derived.by(() => {
     if (media.length === 0) return 0;
 
@@ -1214,7 +1220,7 @@
 
   onMount(() => {
     void downloadState.init();
-    void apiGetAxumPort().then((port) => (mediaPort = port)).catch(() => (mediaPort = null));
+    void serverPortState.ensurePort();
 
     try {
       const v = document.createElement('video');
@@ -1246,8 +1252,9 @@
     return new Promise((resolve) => {
       const img = new Image();
       let effectiveUrl = url;
-      if (mediaPort && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
-        effectiveUrl = `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(url)}`;
+      const port = serverPortState.port || 0;
+      if (port > 0 && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
+        effectiveUrl = `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(url)}`;
       }
       img.crossOrigin = 'Anonymous';
       img.onload = () => {
@@ -1346,6 +1353,8 @@
   }
 
   function fileUrl(file: { path?: string; server?: string; name?: string; cloud_node_id?: string }) {
+    const port = serverPortState.port || 0;
+
     // 1. Check if the file is already downloaded to local disk
     const localJob = attachmentDownload(file);
     const localPath = (localJob && localJob.status === 'completed' && localJob.final_path)
@@ -1353,16 +1362,19 @@
       : '';
 
     if (localPath) {
-      if (mediaPort) {
+      if (port > 0) {
         const encoded = localPath.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+        return `http://127.0.0.1:${port}/media/${encoded}`;
       }
       return convertFileSrc(localPath);
     }
 
     // 2. Cloud streaming via local Axum proxy
-    if (file.path?.startsWith('/cloud_stream/') && mediaPort) {
-      return `http://127.0.0.1:${mediaPort}${file.path}`;
+    if (file.path?.startsWith('/cloud_stream/')) {
+      if (port > 0) {
+        return `http://127.0.0.1:${port}${file.path}`;
+      }
+      return '';
     }
 
     // 3. Absolute http / https URL - proxy cloud URLs through Axum so Android WebView plays without TLS/CORS issues
@@ -1379,13 +1391,13 @@
         }
       }
       if (
-        mediaPort &&
+        port > 0 &&
         (targetPath.includes('dropbox.com') ||
           targetPath.includes('pixeldrain.com') ||
           targetPath.includes('drive.google.com') ||
           targetPath.includes('dropboxusercontent.com'))
       ) {
-        return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
+        return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
       }
       return targetPath;
     }
@@ -1395,11 +1407,11 @@
     if (!remoteUrl) return '';
 
     if (
-      mediaPort &&
+      port > 0 &&
       (isAttachmentVideo(file as Attachment, remoteUrl) ||
         isAttachmentAudio(file as Attachment, remoteUrl))
     ) {
-      return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(remoteUrl)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
+      return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(remoteUrl)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
     }
 
     return remoteUrl;
@@ -1487,30 +1499,55 @@
     }
   }
 
+  function resolveAttachmentDownloadUrl(file: { path?: string; server?: string; name?: string; is_cloud?: boolean; cloud_folder_result?: any; cloud_node_id?: string }): string {
+    const port = serverPortState.port || 0;
+    let targetUrl = file.path || '';
+
+    if (file.is_cloud && file.cloud_folder_result) {
+      const matchingNode = file.cloud_folder_result.nodes?.find((n: any) => n.id === file.cloud_node_id || n.name === file.name);
+      if (matchingNode) {
+        if (matchingNode.stream_url?.startsWith('/cloud_stream/') && port > 0) {
+          return `http://127.0.0.1:${port}${matchingNode.stream_url}`;
+        }
+        if (matchingNode.download_url) {
+          targetUrl = matchingNode.download_url;
+        } else if (matchingNode.stream_url) {
+          targetUrl = matchingNode.stream_url;
+        }
+      }
+    }
+
+    if (targetUrl.startsWith('/cloud_stream/') && port > 0) {
+      return `http://127.0.0.1:${port}${targetUrl}`;
+    }
+
+    if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
+      if (targetUrl.includes('dropbox.com')) {
+        try {
+          const u = new URL(targetPathSafe(targetUrl));
+          u.searchParams.delete('raw');
+          u.searchParams.set('dl', '1');
+          return u.toString();
+        } catch {
+          // ignore
+        }
+      }
+      return targetUrl;
+    }
+
+    return remoteFileUrl(file as Attachment);
+  }
+
+  function targetPathSafe(url: string): string {
+    return url;
+  }
+
   async function download(file: { path?: string; server?: string; name?: string; is_cloud?: boolean; cloud_folder_result?: any; cloud_node_id?: string }, index: number) {
     if (!file.path) return;
     try {
       if (!post) return;
       const targetName = file.name || `${postId}_${index + 1}`;
-      let targetUrl = file.path;
-      if (file.is_cloud && file.cloud_folder_result) {
-        const matchingNode = file.cloud_folder_result.nodes?.find((n: any) => n.id === file.cloud_node_id || n.name === file.name);
-        if (matchingNode?.download_url) {
-          targetUrl = matchingNode.download_url;
-        }
-      } else if (!targetUrl.startsWith('http')) {
-        targetUrl = remoteFileUrl(file as Attachment);
-      }
-      if (targetUrl.includes('dropbox.com')) {
-        try {
-          const u = new URL(targetUrl);
-          u.searchParams.delete('raw');
-          u.searchParams.set('dl', '1');
-          targetUrl = u.toString();
-        } catch {
-          // ignore
-        }
-      }
+      const targetUrl = resolveAttachmentDownloadUrl(file);
       await downloadState.start(post, file.path, targetUrl, targetName);
       notify.success(i18n.t('feed.download_started'), targetName);
     } catch (error) {
@@ -1523,6 +1560,15 @@
       await apiShowInFolder(item.final_path);
     } catch (error) {
       notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', error);
+    }
+  }
+
+  async function openFileExternally(item?: DownloadItem | null) {
+    if (!item?.final_path) return;
+    try {
+      await apiOpenDownloadFile(item.final_path);
+    } catch (error) {
+      notify.error(i18n.t('downloads.open_file_failed') || 'Failed to open file', error);
     }
   }
 
@@ -1559,9 +1605,10 @@
     downloadingAll = true;
     try {
       const results = await Promise.allSettled(
-        pendingMedia.map((file, index) =>
-          downloadState.start(post!, file.path!, remoteFileUrl(file), file.name || `${postId}_${index + 1}`)
-        )
+        pendingMedia.map((file, index) => {
+          const targetUrl = resolveAttachmentDownloadUrl(file);
+          return downloadState.start(post!, file.path!, targetUrl, file.name || `${postId}_${index + 1}`);
+        })
       );
       const started = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - started;
@@ -1660,13 +1707,6 @@
     if (postId) {
       void loadComments();
     }
-  });
-
-  $effect(() => {
-    const previousId = post?.prev;
-    const nextId = post?.next;
-    if (previousId) void contentState.loadPost(service, creatorId, previousId);
-    if (nextId) void contentState.loadPost(service, creatorId, nextId);
   });
 
   let rootComments = $derived.by(() => {
@@ -2173,7 +2213,7 @@
                       {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                         <!-- svelte-ignore a11y_media_has_caption -->
                         <video
-                          src={embedAttachment ? fileUrl(embedAttachment) : (mediaPort ? `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
+                          src={embedAttachment ? fileUrl(embedAttachment) : (serverPortState.port > 0 ? `http://127.0.0.1:${serverPortState.port}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
                           controls
                           playsinline
                           preload="none"
@@ -2230,6 +2270,7 @@
                   {@const isDeferred = file?.deferred === true || (!file?.path && Boolean(file?.name))}
                   {@const url = file?.path ? fileUrl(file) : ''}
                   {@const isCloud = (file as any)?.is_cloud === true}
+                  {@const downloaded = attachmentDownload(file)}
                   <div class="media-item" class:is-deferred={isDeferred} class:is-folder-item={isCloudFolder}>
                     {#if isCloudFolder}
                       {@const fRes = (file as any).cloud_folder_result}
@@ -2286,20 +2327,17 @@
                       </div>
                     {:else if isAttachmentVideo(file, url) || isAttachmentImage(file, url)}
                       {@const isVid = isAttachmentVideo(file, url)}
-                      {@const effSize = getEffectiveFileSize(file)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
                           <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
-                        {#if effSize > 0}
-                          <span class="media-filesize">({formatBytes(effSize)})</span>
-                        {/if}
                       </div>
-                      {#if isVid && (videoFailures[index] || (isH265Video(file?.name) && !hevcSupported))}
-                        <div class="file-placeholder">
+                      {#if isVid && (videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported))}
+                        {@const failure = videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : null)}
+                        <div class="file-placeholder is-error-placeholder">
                           <IconVideoOff class="placeholder-icon" />
-                          {#if videoFailures[index] === 'codec' || (!videoFailures[index] && isH265Video(file?.name) && !hevcSupported)}
+                          {#if failure?.preset === 'unsupported_codec'}
                             <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
                             <Button
                               variant="ghost"
@@ -2309,26 +2347,111 @@
                               <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
                               <span>{i18n.t('post.codec_how_to_fix')}</span>
                             </Button>
-                          {:else}
+                          {:else if failure?.preset === 'unsupported_format'}
+                            <p class="placeholder-text">
+                              {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(file?.name) })}
+                            </p>
+                            {#if downloaded?.final_path}
+                              <Button
+                                variant="ghost"
+                                class="placeholder-fix-btn"
+                                onclick={() => void openFileExternally(downloaded)}
+                              >
+                                <IconPlay class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                                <span>{i18n.t('post.open_in_player')}</span>
+                              </Button>
+                            {:else}
+                              <p class="placeholder-subtext">{i18n.t('post.unsupported_format_hint')}</p>
+                            {/if}
+                          {:else if failure?.preset === 'network'}
+                            <p class="placeholder-text">{i18n.t('post.network_stream_error')}</p>
+                            <Button
+                              variant="ghost"
+                              class="placeholder-fix-btn"
+                              onclick={() => {
+                                delete videoFailures[index];
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                            >
+                              <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                            </Button>
+                          {:else if failure?.preset === 'decode'}
+                            <p class="placeholder-text">{i18n.t('post.decode_error')}</p>
+                            {#if failure.message}
+                              <p class="placeholder-subtext font-mono text-[11px] opacity-75">{failure.message}</p>
+                            {/if}
+                            {#if downloaded?.final_path}
+                              <Button
+                                variant="ghost"
+                                class="placeholder-fix-btn"
+                                onclick={() => void openFileExternally(downloaded)}
+                              >
+                                <IconPlay class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                                <span>{i18n.t('post.open_in_player')}</span>
+                              </Button>
+                            {/if}
+                          {:else if failure?.preset === 'unavailable'}
                             <p class="placeholder-text">{i18n.t('post.cloud_file_unavailable')}</p>
+                          {:else}
+                            <p class="placeholder-text">{failure?.message || i18n.t('post.video_load_failed') || 'Failed to play video'}</p>
                           {/if}
                         </div>
                       {:else}
                         {#if isVid}
-                          <!-- svelte-ignore a11y_media_has_caption -->
-                          <video
-                            src={url}
-                            poster={attachmentThumbnailUrl(file, service)}
-                            controls
-                            playsinline
-                            preload="metadata"
-                            use:panicCapture
-                            onkeydown={handleGlobalPanicKey}
-                            onloadedmetadata={(e) => handleVideoLoadedMetadata(e, file, index)}
-                            onplaying={(e) => handleVideoLoadedMetadata(e, file, index)}
-                            onerror={(e) => handleVideoError(e, file, index)}
-                            onplay={handleVideoPlay}
-                          ></video>
+                          {@const thumbUrl = videoThumbnails[index] || attachmentThumbnailUrl(file, service)}
+                          {#if activeVideoIndexes.has(index)}
+                            <!-- svelte-ignore a11y_media_has_caption -->
+                            <video
+                              src={url}
+                              poster={thumbUrl}
+                              controls
+                              autoplay
+                              playsinline
+                              preload="auto"
+                              use:panicCapture
+                              onkeydown={handleGlobalPanicKey}
+                              onloadedmetadata={(e) => handleVideoLoadedMetadata(e, file, index)}
+                              onplaying={(e) => handleVideoLoadedMetadata(e, file, index)}
+                              onerror={(e) => handleVideoError(e, file, index)}
+                              onplay={handleVideoPlay}
+                            ></video>
+                          {:else if thumbUrl}
+                            <button
+                              class="media-open-surface video-thumbnail-surface"
+                              type="button"
+                              onclick={() => {
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                              aria-label="Play video"
+                            >
+                              <img
+                                src={thumbUrl}
+                                alt={file?.name || post.title}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <div class="video-play-overlay">
+                                <div class="play-btn-circle">
+                                  <IconPlayFilled class="w-6 h-6 ml-0.5 text-white" />
+                                </div>
+                              </div>
+                            </button>
+                          {:else}
+                            <button
+                              class="file-placeholder media-open-surface"
+                              type="button"
+                              onclick={() => {
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                              aria-label="Play video"
+                            >
+                              <div class="play-btn-circle">
+                                <IconPlayFilled class="w-6 h-6 ml-0.5 text-white" />
+                              </div>
+                              <p class="placeholder-text">{getFileExtension(file?.name).toUpperCase() || 'VIDEO'}</p>
+                            </button>
+                          {/if}
                           <button
                             class="media-viewer-open-btn"
                             type="button"
@@ -2360,22 +2483,60 @@
                         {/if}
                       {/if}
                       {@render mediaDownloadAction(file!, index)}
-                    {:else}
-                      {@const ext = getFileExtension(file?.name).toUpperCase()}
-                      {@const effSize = getEffectiveFileSize(file)}
-                      {@const sizeStr = effSize > 0 ? formatBytes(effSize) : ''}
+                    {:else if isAttachmentAudio(file, url)}
+                      {@const ext = getFileExtension(file?.name).toUpperCase() || 'AUDIO'}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
                           <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
-                        {#if effSize > 0}
-                          <span class="media-filesize">({formatBytes(effSize)})</span>
+                      </div>
+                      {#if activeAudioIndexes.has(index)}
+                        <div class="audio-player-wrapper">
+                          <IconMusicFilled class="placeholder-icon video-play-accent mb-2" />
+                          <audio
+                            src={url}
+                            controls
+                            autoplay
+                            preload="auto"
+                            use:panicCapture
+                            onplay={handleVideoPlay}
+                          ></audio>
+                        </div>
+                      {:else}
+                        <button
+                          class="file-placeholder media-open-surface"
+                          type="button"
+                          onclick={() => {
+                            activeAudioIndexes = new Set(activeAudioIndexes).add(index);
+                          }}
+                          aria-label="Play audio"
+                        >
+                          <div class="play-btn-circle">
+                            <IconMusicFilled class="w-6 h-6 text-white" />
+                          </div>
+                          <p class="placeholder-text">{ext}</p>
+                        </button>
+                      {/if}
+                      <button
+                        class="media-viewer-open-btn"
+                        type="button"
+                        onclick={() => openMediaViewer(file!, filteredMedia)}
+                        use:tooltip={i18n.t('post.viewer_open')}
+                        aria-label={i18n.t('post.viewer_open')}
+                      ><IconEye /></button>
+                      {@render mediaDownloadAction(file!, index)}
+                    {:else}
+                      {@const ext = getFileExtension(file?.name).toUpperCase() || 'FILE'}
+                      <div class="media-header">
+                        <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
+                        {#if isCloud && (file as any).cloud_provider}
+                          <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                       </div>
                       <button class="file-placeholder media-open-surface" type="button" onclick={() => openMediaViewer(file!, filteredMedia)} aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
                         <IconDocument class="placeholder-icon" />
-                        <p class="placeholder-text">{sizeStr ? `${ext} • ${sizeStr}` : ext}</p>
+                        <p class="placeholder-text">{ext}</p>
                       </button>
                       {@render mediaDownloadAction(file!, index)}
                     {/if}
@@ -2964,9 +3125,79 @@
     min-height: 240px;
     max-height: 520px;
     object-fit: contain;
-    border-radius: 0;
+    border-radius: var(--radius-md, 10px);
     background: transparent;
     align-self: center;
+  }
+
+  .audio-player-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 240px;
+    max-height: 520px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+  }
+
+  .audio-player-wrapper audio {
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .file-placeholder :global(.placeholder-icon.video-play-accent) {
+    color: var(--accent-primary, #6366f1);
+    opacity: 0.85;
+  }
+
+  .file-placeholder:hover :global(.placeholder-icon.video-play-accent) {
+    color: var(--accent-primary, #6366f1);
+    opacity: 1;
+    transform: scale(1.12);
+  }
+
+  .video-thumbnail-surface {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    border-radius: var(--radius-md, 10px);
+    overflow: hidden;
+  }
+
+  .video-play-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .play-btn-circle {
+    width: 54px;
+    height: 54px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: none;
+    outline: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   }
 
   :global(.placeholder-fix-btn) {
@@ -2987,6 +3218,16 @@
     text-align: center;
     opacity: 0.8;
     transition: color var(--duration-fast) var(--ease-expo), opacity var(--duration-fast) var(--ease-expo);
+  }
+
+  .placeholder-subtext {
+    margin: 2px auto 0;
+    font-size: 11.5px;
+    color: var(--text-muted, var(--text-secondary));
+    max-width: 300px;
+    line-height: 1.4;
+    text-align: center;
+    opacity: 0.7;
   }
 
   .file-placeholder,

@@ -51,6 +51,7 @@ ctr = "0.9"
 rand = "0.8"
 async-stream = "0.3"
 bytes = "1.0"
+dunce = "1.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }

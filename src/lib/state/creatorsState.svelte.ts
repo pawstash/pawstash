@@ -1,6 +1,6 @@
 import { apiFetchCreators } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
-import type { Creator } from '$lib/types/pawchive';
+import type { Creator } from '$lib/types/content';
 import type { FilterMap, TriStateFilter } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
 import { configState } from './configState.svelte';

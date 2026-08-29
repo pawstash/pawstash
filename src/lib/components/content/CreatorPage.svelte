@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { contentState, creatorCacheKey, type CachedCreator } from '$lib/state/contentState.svelte';
+  import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
@@ -37,7 +38,7 @@
   import { parseTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import { logger } from '$lib/utils/logger';
   import type { DownloadScope, InitialImport } from '$lib/types/subscription';
-  import type { PawchivePost, CreatorProfile, Announcement, Fancard } from '$lib/types/pawchive';
+  import type { Post, CreatorProfile, Announcement, Fancard } from '$lib/types/content';
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -112,7 +113,7 @@
   const savedState = navigationState.getViewState<{
     postSearchQuery?: string;
     postSearchOpen?: boolean;
-    postSearchResults?: PawchivePost[];
+    postSearchResults?: Post[];
     formatFilters?: FilterMap;
     onlyWithAttachments?: boolean;
     activeTab?: 'posts' | 'similar' | 'links' | 'announcements' | 'fancards';
@@ -156,7 +157,7 @@
 
   let postSearchOpen = $state(savedState?.postSearchOpen ?? Boolean(savedState?.postSearchQuery));
   let postSearchQuery = $state(savedState?.postSearchQuery ?? '');
-  let postSearchResults = $state<PawchivePost[]>(savedState?.postSearchResults ?? []);
+  let postSearchResults = $state<Post[]>(savedState?.postSearchResults ?? []);
   let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
@@ -207,7 +208,16 @@
     });
   });
 
-  let creatorName = $derived(typeof entry.profile?.name === 'string' ? entry.profile.name : creatorId);
+  let creatorName = $derived.by<string>(() => {
+    if (typeof entry.profile?.name === 'string' && entry.profile.name !== creatorId) {
+      return entry.profile.name;
+    }
+    const fromMap = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
+    if (fromMap && fromMap !== creatorId) {
+      return fromMap;
+    }
+    return (typeof entry.profile?.name === 'string' && entry.profile.name) || String(creatorId);
+  });
   let cachedAvatarUrl = $state<string | null>(null);
   let cachedBannerUrl = $state<string | null>(null);
   let avatarThumbhash = $derived((entry.profile?.extra as any)?.avatar_thumbhash);
@@ -300,7 +310,7 @@
       );
 
       if (normalizedPostSearch.length >= 2 && postSearchResults.length > 0) {
-        const map = new Map<string, PawchivePost>();
+        const map = new Map<string, Post>();
         for (const p of localMatches) map.set(`${p.service}:${p.user}:${p.id}`, p);
         for (const p of postSearchResults) map.set(`${p.service}:${p.user}:${p.id}`, p);
         posts = Array.from(map.values());
@@ -461,11 +471,38 @@
     }).catch(() => {});
   }
 
-  onMount(() => {
-    void contentState.loadCreator(service, creatorId);
-    void apiFetchCreatorArtworkDataUrl(service, creatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {});
-    void apiFetchCreatorArtworkDataUrl(service, creatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {});
-    void loadExtraData();
+  let lastLoadedCreatorKey = '';
+  $effect(() => {
+    const currentService = service;
+    const currentCreatorId = creatorId;
+    const currentKey = `${currentService}:${currentCreatorId}`;
+    if (currentService && currentCreatorId) {
+      if (lastLoadedCreatorKey !== currentKey) {
+        lastLoadedCreatorKey = currentKey;
+        cachedAvatarUrl = null;
+        cachedBannerUrl = null;
+        avatarFailed = false;
+        bannerFailed = false;
+        similarCreators = [];
+        creatorLinks = [];
+        announcements = [];
+        fancards = [];
+        apiCreatorTags = [];
+      }
+      untrack(() => {
+        void contentState.loadCreator(currentService, currentCreatorId);
+        void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {});
+        void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {});
+        void loadExtraData();
+        void checkFavoriteStatus();
+      });
+    }
+  });
+
+  $effect(() => {
+    if (creatorName === creatorId) {
+      void creatorsState.load();
+    }
   });
 
   async function refreshCreator() {
@@ -481,12 +518,6 @@
       notify.error(i18n.t('feed.refresh_failed') || 'Failed to refresh', error);
     }
   }
-
-  $effect(() => {
-    if (service && creatorId) {
-      void checkFavoriteStatus();
-    }
-  });
 
   function getAverageColor(url: string): Promise<string> {
     return new Promise((resolve) => {
@@ -568,11 +599,8 @@
 
   async function checkFavoriteStatus() {
     try {
-      const favorites = await accountState.fetchFavorites('creator');
-      isFavorited = favorites.some((favorite) =>
-        String(favorite.id).toLowerCase() === creatorId.toLowerCase() &&
-        String(favorite.service ?? '').toLowerCase() === service.toLowerCase()
-      );
+      await accountState.fetchFavorites('creator');
+      isFavorited = accountState.isCreatorFavorite(service, creatorId);
     } catch (error) {
       logger.error(`Failed to check creator favorite status for ${service}:${creatorId}`, error);
     }
@@ -726,7 +754,7 @@
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selectedCount = $derived(selectionState.count);
 
-  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
+  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
   let stashes = $derived(libraryState.allStashes);
   let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
@@ -756,7 +784,7 @@
   }
 
   async function handleBatchToggleStash(collectionId: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !collectionId) return;
     const isAllIn = batchSelectedStashes.includes(collectionId);
     try {
@@ -777,7 +805,7 @@
   }
 
   async function handleBatchCreateAndAddToStash(name: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !name.trim()) return;
     try {
       const newStash = await libraryState.createStash(name.trim());
@@ -791,7 +819,7 @@
   }
 
   async function batchSaveToLibrary() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {
@@ -808,7 +836,7 @@
   }
 
   async function batchDownloadPosts() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     let count = 0;
     try {
@@ -830,7 +858,7 @@
   }
 
   async function batchFavoritePosts(isFav: boolean) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {

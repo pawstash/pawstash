@@ -111,13 +111,18 @@ class ProviderState {
     await this.saveProviders(list);
   }
 
-  getProvidersForService(service: string): ProviderConfig[] {
+  getProvidersForService(service?: string): ProviderConfig[] {
+    if (!service) return this.providers.filter((p) => p.enabled);
     const s = service.toLowerCase();
     const matches = this.providers
       .filter((p) => p.enabled && (p.services.length === 0 || p.services.some((srv) => srv.toLowerCase() === s)))
       .sort((a, b) => a.priority - b.priority);
     if (matches.length > 0) return matches;
     return this.providers.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
+  }
+
+  getProviderById(id: string): ProviderConfig | undefined {
+    return this.providers.find((p) => p.id === id);
   }
 
   async loadPostRevisions(service: string, creatorId: string, postId: string): Promise<PostRevisionData[]> {

@@ -14,6 +14,7 @@
     downloadStatus?: 'queued' | 'resolving' | 'downloading' | 'paused' | 'verifying' | 'completed' | 'failed' | 'cancelled' | 'missing';
     downloadedBytes?: number;
     totalBytes?: number;
+    downloadedPath?: string;
   }
 </script>
 
@@ -27,6 +28,8 @@
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import { logMediaError } from '$lib/utils/logger';
+  import { diagnoseVideoFailure, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
+  import { apiOpenDownloadFile } from '$lib/utils/ipc';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -41,6 +44,8 @@
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
+  import IconVideoOff from '~icons/fluent/video-off-24-regular';
+  import IconPlay from '~icons/fluent/play-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
 
   interface Props {
@@ -84,6 +89,7 @@
   let controlsTimer: ReturnType<typeof setTimeout> | undefined;
   let closing = false;
   let hasAppliedInitialTime = false;
+  let videoErrors = $state<Record<number, MediaFailureState>>({});
 
   function handleVideoMetadata(e: Event) {
     const video = e.currentTarget as HTMLVideoElement;
@@ -577,6 +583,55 @@
               {@html current.html}
             </div>
           </div>
+        {:else if current.kind === 'video' && (videoErrors[index] || getUnsupportedContainerFormat(current?.name, current?.url))}
+          {@const failure = videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined }}
+          <div
+            class="viewer-file-state"
+            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
+            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+          >
+            <IconVideoOff class="w-12 h-12 text-white/50 mb-2" />
+            <strong class="text-white text-base font-semibold">{current.name}</strong>
+            {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
+            {#if failure.preset === 'unsupported_format'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">
+                {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(current.name) })}
+              </p>
+              {#if currentDownloaded && current?.downloadedPath}
+                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                  <IconPlay class="w-4 h-4 mr-1.5" />
+                  <span>{i18n.t('post.open_in_player')}</span>
+                </Button>
+              {:else}
+                <p class="text-white/50 text-xs mt-1">{i18n.t('post.unsupported_format_hint')}</p>
+              {/if}
+            {:else if failure.preset === 'unsupported_codec'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
+              {#if currentDownloaded && current?.downloadedPath}
+                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                  <IconPlay class="w-4 h-4 mr-1.5" />
+                  <span>{i18n.t('post.open_in_player')}</span>
+                </Button>
+              {/if}
+            {:else if failure.preset === 'network'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.network_stream_error')}</p>
+            {:else if failure.preset === 'decode'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.decode_error')}</p>
+              {#if failure.message}
+                <p class="text-white/50 font-mono text-xs mt-1">{failure.message}</p>
+              {/if}
+              {#if currentDownloaded && current?.downloadedPath}
+                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                  <IconPlay class="w-4 h-4 mr-1.5" />
+                  <span>{i18n.t('post.open_in_player')}</span>
+                </Button>
+              {/if}
+            {:else if failure.preset === 'unavailable'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
+            {:else}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{failure.message || i18n.t('post.video_load_failed')}</p>
+            {/if}
+          </div>
         {:else if current.kind === 'video'}
           <!-- svelte-ignore a11y_media_has_caption -->
           <video
@@ -595,6 +650,9 @@
             onerror={(e) => {
               const el = e.currentTarget as HTMLVideoElement;
               logMediaError('video', el.src, current.name, el.error);
+              videoErrors[index] = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
+                isLocal: currentDownloaded
+              });
             }}
             onloadedmetadata={handleVideoMetadata}
             ontimeupdate={handleVideoTimeUpdate}

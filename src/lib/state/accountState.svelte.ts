@@ -1,4 +1,4 @@
-import type { AccountSession, Creator, Favorite, PawchivePost } from '$lib/types/pawchive';
+import type { AccountSession, Creator, Favorite, Post } from '$lib/types/content';
 import { apiGetAccountSession, apiLoginAccount, apiLogoutAccount, apiFetchAccountFavorites } from '$lib/utils/ipc';
 
 class AccountState {
@@ -71,26 +71,26 @@ class AccountState {
     const s = service.toLowerCase();
     const c = String(creatorId).toLowerCase();
     const p = String(postId).toLowerCase();
-    return this.favoritePosts.some(
-      (f) =>
-        f.service?.toLowerCase() === s &&
-        String(f.user ?? f.user_id ?? '').toLowerCase() === c &&
-        String(f.id ?? '').toLowerCase() === p
-    );
+    return this.favoritePosts.some((f: any) => {
+      const fService = String(f.service ?? '').toLowerCase();
+      const fUser = String(f.user ?? f.user_id ?? f.creator_id ?? f.extra?.user ?? f.extra?.user_id ?? '').toLowerCase();
+      const fId = String(f.id ?? f.post_id ?? '').toLowerCase();
+      return fService === s && fUser === c && fId === p;
+    });
   }
 
   isCreatorFavorite(service: string, creatorId: string): boolean {
     if (!this.favoriteCreators) return false;
     const s = service.toLowerCase();
     const c = String(creatorId).toLowerCase();
-    return this.favoriteCreators.some(
-      (f) =>
-        f.service?.toLowerCase() === s &&
-        String(f.id ?? f.user ?? f.user_id ?? '').toLowerCase() === c
-    );
+    return this.favoriteCreators.some((f: any) => {
+      const fService = String(f.service ?? '').toLowerCase();
+      const fId = String(f.id ?? f.user ?? f.user_id ?? f.creator_id ?? f.extra?.id ?? '').toLowerCase();
+      return fService === s && fId === c;
+    });
   }
 
-  addPostFavoriteOptimistic(post: PawchivePost | Favorite) {
+  addPostFavoriteOptimistic(post: Post | Favorite) {
     const nowIso = new Date().toISOString();
     if (!this.favoritePosts) {
       this.favoritePosts = [{ ...post, faved_seq: 1, faved_at: nowIso } as Favorite];

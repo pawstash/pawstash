@@ -148,6 +148,21 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
+    if (host_matches(&host, "cum.st") || host_matches(&host, "coomer.su"))
+        && segments.len() >= 5
+        && segments[0] == "creators"
+        && segments[3] == "post"
+    {
+        let service = clean_segment(segments[1])?;
+        let creator_id = clean_segment(segments[2])?;
+        let post_id = clean_segment(segments[4])?;
+        return Some(ExternalPostLink {
+            service,
+            post_id,
+            creator_hint: Some(creator_id),
+        });
+    }
+
     if (host_matches(&host, "discord.com") || host_matches(&host, "discordapp.com"))
         && segments.len() >= 4
         && segments[0] == "channels"
@@ -225,6 +240,18 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
         && matches!(segments[1], "user" | "server" | "channel")
     {
         let service = clean_segment(segments[0])?;
+        let creator_id = clean_segment(segments[2])?;
+        return Some(ExternalCreatorLink {
+            service,
+            creator_hint: creator_id,
+        });
+    }
+
+    if (host_matches(&host, "cum.st") || host_matches(&host, "coomer.su"))
+        && segments.len() >= 3
+        && segments[0] == "creators"
+    {
+        let service = clean_segment(segments[1])?;
         let creator_id = clean_segment(segments[2])?;
         return Some(ExternalCreatorLink {
             service,

@@ -177,6 +177,8 @@ struct OnlyHavenAttachment {
     #[serde(rename = "previewThumbhash", default)]
     preview_thumbhash: Option<String>,
     #[serde(default)]
+    variants: Option<Vec<Value>>,
+    #[serde(default)]
     path: Option<String>,
     #[serde(default)]
     name: Option<String>,
@@ -241,8 +243,20 @@ struct OnlyHavenPostRow {
     extra: HashMap<String, Value>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum OnlyHavenSinglePostResponse {
+    Wrapped {
+        post: OnlyHavenPostRow,
+        #[serde(default)]
+        attachments: Option<Vec<OnlyHavenAttachment>>,
+    },
+    Array(Vec<OnlyHavenPostRow>),
+    Direct(OnlyHavenPostRow),
+}
+
 impl OnlyHavenPostRow {
-    fn into_pawchive_post(self, default_user: &str, provider_id: &str) -> PawchivePost {
+    fn into_post(self, default_user: &str, provider_id: &str) -> Post {
         let user = self.creator_id.unwrap_or_else(|| default_user.to_string());
         let attachments: Vec<Attachment> = self
             .attachments
@@ -276,6 +290,9 @@ impl OnlyHavenPostRow {
                 }
                 if let Some(m) = a.mime_type {
                     extra.insert("mime_type".to_string(), Value::String(m));
+                }
+                if let Some(v) = a.variants {
+                    extra.insert("variants".to_string(), Value::Array(v));
                 }
                 extra.insert(
                     "provider_id".to_string(),
@@ -329,7 +346,7 @@ impl OnlyHavenPostRow {
             Value::String(provider_id.to_string()),
         );
 
-        PawchivePost {
+        Post {
             id: self.id,
             user,
             service: self.service,
@@ -557,7 +574,7 @@ impl SourceProvider for OnlyHavenProvider {
         creator_id: &str,
         offset: u32,
         query: Option<&str>,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let mut path = format!(
             "/api/v1/{}/user/{}/posts?n=50&o={offset}",
             urlencoding::encode(service),
@@ -572,7 +589,7 @@ impl SourceProvider for OnlyHavenProvider {
         let provider_id = self.id().to_string();
         Ok(rows
             .into_iter()
-            .map(|r| r.into_pawchive_post(creator_id, &provider_id))
+            .map(|r| r.into_post(creator_id, &provider_id))
             .collect())
     }
 
@@ -581,7 +598,7 @@ impl SourceProvider for OnlyHavenProvider {
         service: &str,
         creator_id: &str,
         post_id: &str,
-    ) -> Result<Option<PawchivePost>, String> {
+    ) -> Result<Option<Post>, String> {
         let path = format!(
             "/api/v1/{}/user/{}/post/{}",
             urlencoding::encode(service),
@@ -589,8 +606,23 @@ impl SourceProvider for OnlyHavenProvider {
             urlencoding::encode(post_id)
         );
 
-        match self.request::<OnlyHavenPostRow>(&path).await {
-            Ok(row) => Ok(Some(row.into_pawchive_post(creator_id, self.id()))),
+        match self.request::<OnlyHavenSinglePostResponse>(&path).await {
+            Ok(OnlyHavenSinglePostResponse::Wrapped {
+                mut post,
+                attachments,
+            }) => {
+                if post.attachments.is_none() && attachments.is_some() {
+                    post.attachments = attachments;
+                }
+                Ok(Some(post.into_post(creator_id, self.id())))
+            }
+            Ok(OnlyHavenSinglePostResponse::Array(rows)) => Ok(rows
+                .into_iter()
+                .next()
+                .map(|r| r.into_post(creator_id, self.id()))),
+            Ok(OnlyHavenSinglePostResponse::Direct(row)) => {
+                Ok(Some(row.into_post(creator_id, self.id())))
+            }
             Err(e) if e.contains("404") => Ok(None),
             Err(e) => Err(e),
         }
@@ -609,7 +641,7 @@ impl SourceProvider for OnlyHavenProvider {
         &self,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let mut path = format!("/api/v1/posts?n=50&o={offset}");
         if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
             path.push_str(&format!("&q={}", urlencoding::encode(q.trim())));
@@ -620,7 +652,7 @@ impl SourceProvider for OnlyHavenProvider {
         let provider_id = self.id().to_string();
         Ok(rows
             .into_iter()
-            .map(|r| r.into_pawchive_post("", &provider_id))
+            .map(|r| r.into_post("", &provider_id))
             .collect())
     }
 
@@ -629,14 +661,14 @@ impl SourceProvider for OnlyHavenProvider {
         _period: &str,
         _date: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let path = format!("/api/v1/posts?n=50&o={offset}&sort=popular");
         let res: OnlyHavenListResponse<OnlyHavenPostRow> = self.request(&path).await?;
         let rows = res.posts.unwrap_or_default();
         let provider_id = self.id().to_string();
         Ok(rows
             .into_iter()
-            .map(|r| r.into_pawchive_post("", &provider_id))
+            .map(|r| r.into_post("", &provider_id))
             .collect())
     }
 
@@ -682,19 +714,33 @@ impl SourceProvider for OnlyHavenProvider {
     }
 
     fn resolve_media_url(&self, file_path: &str, _server: Option<&str>) -> String {
+        let conf = self.config.read().unwrap();
         let key = file_path
             .trim_start_matches('/')
             .trim_start_matches("data/")
             .trim_start_matches('/');
-        format!("https://e1.cum.st/media/{key}/original.jpg")
+        let base = conf
+            .file_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "file"));
+        format!("{base}/media/{key}/original.jpg")
     }
 
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
+        let conf = self.config.read().unwrap();
         let key = thumb_path
             .trim_start_matches('/')
             .trim_start_matches("data/")
             .trim_start_matches('/');
-        format!("https://img.cum.st/thumbnail/{key}/preview.webp")
+        let base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "img"));
+        format!("{base}/thumbnail/{key}/preview.webp")
     }
 
     async fn fetch_creator_artwork_data_url(

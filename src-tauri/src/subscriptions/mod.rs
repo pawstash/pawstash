@@ -1,4 +1,4 @@
-use crate::api::models::{Attachment, PawchivePost};
+use crate::api::models::{Attachment, Post};
 use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
 use crate::db::content::ContentRepository;
@@ -157,16 +157,11 @@ impl SubscriptionManager {
         self.repository.mark_success(id)
     }
 
-    fn post_identity(post: &PawchivePost) -> String {
+    fn post_identity(post: &Post) -> String {
         format!("{}:{}:{}", post.service, post.user, post.id)
     }
 
-    async fn enqueue_media(
-        self: &Arc<Self>,
-        post: &PawchivePost,
-        scope: &str,
-        _settings: &AppSettings,
-    ) {
+    async fn enqueue_media(self: &Arc<Self>, post: &Post, scope: &str, _settings: &AppSettings) {
         let mut files: Vec<&Attachment> = Vec::new();
         if let Some(file) = post.file.as_ref().filter(|file| file.path.is_some()) {
             files.push(file);

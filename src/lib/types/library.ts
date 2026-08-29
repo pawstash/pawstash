@@ -1,4 +1,4 @@
-import type { PawchivePost } from './pawchive';
+import type { Post } from './content';
 
 export interface LibraryCollection {
   id: string;
@@ -22,6 +22,6 @@ export interface LibrarySaveResult {
 }
 
 export interface LibraryPage {
-  posts: PawchivePost[];
+  posts: Post[];
   hasMore: boolean;
 }

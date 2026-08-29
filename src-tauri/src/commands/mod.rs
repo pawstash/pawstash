@@ -411,7 +411,7 @@ pub async fn fetch_posts(
     user_id: String,
     offset: u32,
     state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+) -> Result<Vec<Post>, String> {
     let list_key = format!("creator:{service}:{user_id}:");
     match state
         .provider_manager
@@ -438,7 +438,7 @@ pub async fn fetch_recent_posts(
     query: Option<String>,
     offset: u32,
     state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+) -> Result<Vec<Post>, String> {
     let list_key = format!("recent:{}", query.as_deref().unwrap_or(""));
     match state
         .provider_manager
@@ -469,7 +469,7 @@ pub async fn fetch_popular_posts(
     date: Option<String>,
     offset: u32,
     state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+) -> Result<Vec<Post>, String> {
     let list_key = format!("popular:{period}:{}", date.as_deref().unwrap_or(""));
     match state
         .provider_manager
@@ -498,7 +498,7 @@ pub async fn fetch_creator_posts(
     query: Option<String>,
     offset: u32,
     state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+) -> Result<Vec<Post>, String> {
     let list_key = format!(
         "creator:{service}:{creator_id}:{}",
         query.as_deref().unwrap_or("")
@@ -555,10 +555,15 @@ pub async fn fetch_creator_profile(
             state.content.save_creator(&profile)?;
             Ok(profile)
         }
-        Err(error) => state
-            .content
-            .get_creator(&service, &creator_id)?
-            .ok_or(error),
+        Err(error) => {
+            if let Ok(Some(cached)) = state.content.get_creator(&service, &creator_id) {
+                return Ok(cached);
+            }
+            state
+                .content
+                .get_creator(&service, &creator_id)?
+                .ok_or(error)
+        }
     }
 }
 
@@ -569,7 +574,7 @@ pub async fn fetch_announcements(
     state: State<'_, AppState>,
 ) -> Result<Vec<Announcement>, String> {
     match state
-        .pawchive_client
+        .provider_manager
         .fetch_announcements(&service, &creator_id)
         .await
     {
@@ -691,7 +696,7 @@ pub async fn fetch_post(
     creator_id: String,
     post_id: String,
     state: State<'_, AppState>,
-) -> Result<PawchivePost, String> {
+) -> Result<Post, String> {
     match state
         .provider_manager
         .fetch_post(&service, &creator_id, &post_id)
@@ -733,7 +738,7 @@ pub async fn get_cached_post(
     creator_id: String,
     post_id: String,
     state: State<'_, AppState>,
-) -> Result<Option<PawchivePost>, String> {
+) -> Result<Option<Post>, String> {
     state.content.get_post(&service, &creator_id, &post_id)
 }
 
@@ -909,24 +914,101 @@ pub async fn fetch_account_favorites(
             // Pin remote favorites locally so they persist offline too
             for fav in &remote_items {
                 if kind == "post" {
-                    if let Ok(post) = serde_json::from_value::<PawchivePost>(
-                        serde_json::to_value(fav).unwrap_or_default(),
-                    ) {
+                    let user_id = fav
+                        .extra
+                        .get("user")
+                        .or_else(|| fav.extra.get("user_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let title = fav
+                        .name
+                        .as_deref()
+                        .or_else(|| fav.extra.get("title").and_then(|v| v.as_str()))
+                        .unwrap_or("");
+                    let srv = fav.service.as_deref().unwrap_or("");
+                    if !user_id.is_empty() && !srv.is_empty() {
+                        let mut post = Post {
+                            id: fav.id.clone(),
+                            user: user_id.to_string(),
+                            service: srv.to_string(),
+                            title: title.to_string(),
+                            content: None,
+                            substring: None,
+                            published: fav.indexed.clone(),
+                            added: fav.last_imported.clone(),
+                            edited: fav.updated.clone(),
+                            embed: None,
+                            shared_file: None,
+                            attachments: None,
+                            file: None,
+                            poll: None,
+                            captions: None,
+                            tags: None,
+                            origin: None,
+                            preview_state: None,
+                            has_full: None,
+                            detail_fetched: None,
+                            next: None,
+                            prev: None,
+                            favorite_count: None,
+                            attachment_count: None,
+                            extra: fav.extra.clone(),
+                        };
+                        post.clean_extra();
                         let _ = state.content.pin_post(&post, "favorite", &account);
                     }
-                } else if let Ok(creator) =
-                    serde_json::from_value::<Creator>(serde_json::to_value(fav).unwrap_or_default())
-                {
-                    let _ = state.content.save_creators(std::slice::from_ref(&creator));
-                    let _ = state.content.set_pin(
-                        "creator",
-                        &creator.service,
-                        &creator.id,
-                        None,
-                        "favorite",
-                        &account,
-                        true,
-                    );
+                } else {
+                    let srv = fav.service.as_deref().unwrap_or("");
+                    let raw_name = fav
+                        .name
+                        .as_deref()
+                        .filter(|n| !n.trim().is_empty() && *n != fav.id);
+                    let mut resolved_name = raw_name.map(str::to_string);
+                    if resolved_name.is_none() {
+                        if let Ok(Some(existing)) = state.content.get_creator(srv, &fav.id) {
+                            if !existing.name.is_empty() && existing.name != fav.id {
+                                resolved_name = Some(existing.name);
+                            }
+                        }
+                    }
+                    if !srv.is_empty() {
+                        let name_to_save = resolved_name.clone().unwrap_or_else(|| fav.id.clone());
+                        let mut extra = fav.extra.clone();
+                        let known_keys = [
+                            "id",
+                            "name",
+                            "service",
+                            "public_id",
+                            "relation_id",
+                            "indexed",
+                            "updated",
+                            "kemono_favorited",
+                            "ever_imported",
+                            "extra",
+                        ];
+                        for k in &known_keys {
+                            extra.remove(*k);
+                        }
+                        let existing = state.content.get_creator(srv, &fav.id).ok().flatten();
+                        if existing.is_none() || resolved_name.is_some() {
+                            let profile = CreatorProfile {
+                                id: fav.id.clone(),
+                                name: name_to_save,
+                                service: srv.to_string(),
+                                public_id: None,
+                                relation_id: None,
+                                indexed: fav.indexed.clone().map(serde_json::Value::String),
+                                updated: fav.updated.clone().map(serde_json::Value::String),
+                                kemono_favorited: None,
+                                ever_imported: None,
+                                extra,
+                            };
+                            let _ = state.content.save_creator(&profile);
+                        }
+                        let _ = state
+                            .content
+                            .set_pin("creator", srv, &fav.id, None, "favorite", &account, true);
+                    }
                 }
             }
 
@@ -946,9 +1028,24 @@ pub async fn fetch_account_favorites(
                 let srv = item.service.as_deref().unwrap_or("").to_lowercase();
                 let id = item.id.to_lowercase();
                 if seen_keys.insert((srv.clone(), id.clone())) {
-                    if let Some(local_entry) = local_map.get(&(srv, id)) {
+                    if let Some(local_entry) = local_map.get(&(srv.clone(), id.clone())) {
                         if let Some(faved_at) = local_entry.extra.get("faved_at") {
                             item.extra.insert("faved_at".to_string(), faved_at.clone());
+                        }
+                        if (item.name.is_none() || item.name.as_deref() == Some(&item.id))
+                            && local_entry.name.is_some()
+                            && local_entry.name.as_deref() != Some(&local_entry.id)
+                        {
+                            item.name = local_entry.name.clone();
+                        }
+                    }
+                    if kind == "artist"
+                        && (item.name.is_none() || item.name.as_deref() == Some(&item.id))
+                    {
+                        if let Ok(Some(cached)) = state.content.get_creator(&srv, &id) {
+                            if !cached.name.is_empty() && cached.name != id {
+                                item.name = Some(cached.name);
+                            }
                         }
                     }
                     merged.push(item);
@@ -1221,11 +1318,18 @@ pub async fn fetch_post_revisions(
         .await
     {
         Ok(items) if !items.is_empty() => {
+            let provider_id = state
+                .provider_manager
+                .get_providers_for_service(&service)
+                .await
+                .first()
+                .map(|p| p.id().to_string())
+                .unwrap_or_else(|| "pawchive".to_string());
             let _ = state.content.save_post_revisions(
                 &service,
                 &creator_id,
                 &post_id,
-                "pawchive",
+                &provider_id,
                 &items,
             );
             Ok(items)
@@ -1275,10 +1379,7 @@ pub async fn get_pawchive_app_version(state: State<'_, AppState>) -> Result<Stri
 }
 
 #[tauri::command]
-pub async fn search_posts(
-    query: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+pub async fn search_posts(query: String, state: State<'_, AppState>) -> Result<Vec<Post>, String> {
     state.content.search_posts(&query)
 }
 
@@ -1367,7 +1468,7 @@ pub fn list_post_collections(
 
 #[tauri::command]
 pub fn save_library_post(
-    post: PawchivePost,
+    post: Post,
     collection_id: Option<String>,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1410,7 +1511,7 @@ pub fn list_library_posts(
     offset: u32,
     limit: u32,
     state: State<'_, AppState>,
-) -> Result<Vec<PawchivePost>, String> {
+) -> Result<Vec<Post>, String> {
     state
         .library
         .list_posts(collection_id.as_deref(), offset, limit)
@@ -1418,7 +1519,7 @@ pub fn list_library_posts(
 
 #[tauri::command]
 pub async fn start_download(
-    post: PawchivePost,
+    post: Post,
     media_id: String,
     url: String,
     filename: String,
@@ -1427,11 +1528,23 @@ pub async fn start_download(
 ) -> Result<DownloadJob, String> {
     let settings = state.config_manager.load()?;
     state.content.pin_post(&post, "download", "")?;
-    if let Ok(profile) = state
-        .pawchive_client
+    if let Ok(creator) = state
+        .provider_manager
         .fetch_creator_profile(&post.service, &post.user)
         .await
     {
+        let profile = CreatorProfile {
+            id: creator.id,
+            name: creator.name,
+            service: creator.service,
+            public_id: creator.public_id,
+            relation_id: creator.relation_id,
+            indexed: creator.indexed.map(serde_json::Value::from),
+            updated: creator.updated.map(serde_json::Value::from),
+            kemono_favorited: creator.kemono_favorited,
+            ever_imported: creator.ever_imported,
+            extra: creator.extra,
+        };
         let _ = state.content.save_creator(&profile);
     }
     for kind in ["avatar", "banner"] {
@@ -1441,7 +1554,7 @@ pub async fn start_download(
             .is_none()
         {
             if let Ok(data) = state
-                .pawchive_client
+                .provider_manager
                 .fetch_creator_artwork_data_url(&post.service, &post.user, kind)
                 .await
             {
@@ -1575,6 +1688,13 @@ pub async fn start_download(
         let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
     }
 
+    let port = state.axum_port.load(Ordering::Acquire);
+    let download_url = if (url.starts_with("/cloud_stream/") || url.starts_with('/')) && port > 0 {
+        format!("http://127.0.0.1:{port}{url}")
+    } else {
+        url
+    };
+
     state.download_manager.enqueue(
         post.service,
         post.user,
@@ -1583,7 +1703,7 @@ pub async fn start_download(
         Some(post.title),
         post.published,
         media_id,
-        url,
+        download_url,
         filename,
         index,
     )
@@ -1599,11 +1719,12 @@ pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, St
         format!("https://{}", settings.image_domain)
     };
     for job in &mut jobs {
-        let Some(post) = state
+        let post = match state
             .content
-            .get_post(&job.service, &job.creator_id, &job.post_id)?
-        else {
-            continue;
+            .get_post(&job.service, &job.creator_id, &job.post_id)
+        {
+            Ok(Some(p)) => p,
+            _ => continue,
         };
         let path = post
             .file

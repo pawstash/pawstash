@@ -9,7 +9,7 @@ import {
   apiRetryDownload,
   apiStartDownload
 } from '$lib/utils/ipc';
-import type { PawchivePost } from '$lib/types/pawchive';
+import type { Post } from '$lib/types/content';
 
 export type DownloadFilter = 'active' | 'completed' | 'all';
 
@@ -87,7 +87,7 @@ export class DownloadState {
     }
   }
 
-  async start(post: PawchivePost, mediaId: string, url: string, filename: string) {
+  async start(post: Post, mediaId: string, url: string, filename: string) {
     const item = await apiStartDownload(post, mediaId, url, filename);
     if (!this.downloads.some((download) => download.id === item.id)) {
       this.upsert(item);

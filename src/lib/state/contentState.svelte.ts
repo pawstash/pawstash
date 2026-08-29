@@ -1,4 +1,4 @@
-import type { CreatorProfile, PawchivePost } from '$lib/types/pawchive';
+import type { CreatorProfile, Post } from '$lib/types/content';
 import { apiFetchCreatorPosts, apiFetchCreatorProfile, apiFetchPost, apiGetCachedPost } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 import { creatorsState } from '$lib/state/creatorsState.svelte';
@@ -6,7 +6,7 @@ import { creatorsState } from '$lib/state/creatorsState.svelte';
 const PAGE_SIZE = 50;
 
 export interface CachedPost {
-  post: PawchivePost | null;
+  post: Post | null;
   accentColor?: string;
   loading: boolean;
   loaded: boolean;
@@ -16,7 +16,7 @@ export interface CachedPost {
 export interface CachedCreator {
   profile: CreatorProfile | null;
   accentColor?: string;
-  posts: PawchivePost[];
+  posts: Post[];
   loading: boolean;
   loadingMore: boolean;
   loaded: boolean;
@@ -29,8 +29,25 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function postCacheKey(service: string, creatorId: string | number, postId: string | number) {
-  return `${String(service || '').toLowerCase()}:${String(creatorId || '').toLowerCase()}:${String(postId || '')}`;
+export function normalizePostId(postId: unknown): string {
+  if (postId === null || postId === undefined) return '';
+  if (typeof postId === 'string' || typeof postId === 'number') {
+    const s = String(postId).trim();
+    return s === '[object Object]' ? '' : s;
+  }
+  if (typeof postId === 'object') {
+    const obj = postId as Record<string, unknown>;
+    const candidate = obj.id ?? obj.post_id ?? obj.postId;
+    if (candidate !== null && candidate !== undefined) {
+      return normalizePostId(candidate);
+    }
+  }
+  return '';
+}
+
+export function postCacheKey(service: string, creatorId: string | number, postId: unknown) {
+  const normId = normalizePostId(postId);
+  return `${String(service || '').toLowerCase()}:${String(creatorId || '').toLowerCase()}:${normId}`;
 }
 
 export function creatorCacheKey(service: string, creatorId: string | number) {
@@ -50,7 +67,10 @@ export class ContentState {
     if (!color) return;
     const key = postCacheKey(service, creatorId, postId);
     const entry = this.getPost(service, creatorId, postId);
-    entry.accentColor = color;
+    this.posts[key] = {
+      ...entry,
+      accentColor: color
+    };
   }
 
   getCreatorAccent(service: string, creatorId: string | number): string | undefined {
@@ -62,32 +82,48 @@ export class ContentState {
     if (!color) return;
     const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, String(creatorId));
-    entry.accentColor = color;
+    this.creators[key] = {
+      ...entry,
+      accentColor: color
+    };
   }
 
-  seedPost(post: PawchivePost) {
+  seedPost(post: Post) {
+    this.setPost(post);
+  }
+
+  setPost(post: Post) {
+    if (!post?.id || !post?.service || !post?.user) return;
     const key = postCacheKey(post.service, post.user, post.id);
     const existing = this.posts[key];
-    if (!existing) {
-      this.posts[key] = { post, loading: false, loaded: post.detail_fetched === true, error: null };
-    } else if (!existing.loaded) {
-      this.posts[key] = {
-        ...existing,
-        post: { ...(existing.post || {}), ...post }
-      };
+    this.posts[key] = {
+      ...(existing || {}),
+      post,
+      loaded: post.detail_fetched === true,
+      loading: false,
+      error: null
+    };
+  }
+
+  setPosts(posts: Post[]) {
+    for (const post of posts) {
+      this.setPost(post);
     }
   }
 
-  getPost(service: string, creatorId: string | number, postId: string | number) {
+  getPost(service: string, creatorId: string | number, postId: unknown) {
     const key = postCacheKey(service, creatorId, postId);
     this.posts[key] ??= { post: null, loading: false, loaded: false, error: null };
     return this.posts[key];
   }
 
-  async loadPost(service: string, creatorId: string | number, postId: string | number, force = false) {
+  async loadPost(service: string, creatorId: string | number, rawPostId: unknown, force = false) {
+    const postId = normalizePostId(rawPostId);
+    if (!postId || !service || !creatorId) return;
+
     const key = postCacheKey(service, creatorId, postId);
     const entry = this.getPost(service, creatorId, postId);
-    if (!force && entry.loaded && entry.post?.detail_fetched) return;
+    if (!force && ((entry.loaded && entry.post?.detail_fetched) || entry.loading || entry.error)) return;
     if (entry.loading) return;
 
     if (!entry.post) {
@@ -135,7 +171,7 @@ export class ContentState {
         this.posts[key] = {
           post: null,
           loading: false,
-          loaded: false,
+          loaded: true,
           error: errorMessage(error)
         };
         logger.error(`Failed to load post ${service}:${creatorId}:${postId}`, error);
@@ -164,128 +200,162 @@ export class ContentState {
   }
 
   async loadCreator(service: string, creatorId: string) {
+    const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, creatorId);
     if (entry.loaded || entry.loading) return;
-    entry.loading = true;
-    entry.error = null;
+
+    const cachedName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
+    const profile = entry.profile && entry.profile.name !== creatorId ? entry.profile : {
+      id: creatorId,
+      name: cachedName || entry.profile?.name || creatorId,
+      service,
+      public_id: undefined,
+      relation_id: undefined,
+      indexed: undefined,
+      updated: undefined,
+      kemono_favorited: 0,
+      ever_imported: false,
+      extra: {}
+    };
+
+    this.creators[key] = {
+      ...entry,
+      profile,
+      loading: true,
+      error: null
+    };
+
     try {
-      const [profileResult, postsResult] = await Promise.allSettled([
-        apiFetchCreatorProfile(service, creatorId),
-        apiFetchCreatorPosts(service, creatorId, undefined, 0)
-      ]);
-
-      if (profileResult.status === 'fulfilled') {
-        entry.profile = profileResult.value;
-      } else {
-        logger.warn(`Could not fetch dedicated profile for ${service}:${creatorId}, using fallback metadata`, profileResult.reason);
-        const cachedName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
-        entry.profile = {
-          id: creatorId,
-          name: cachedName || creatorId,
-          service,
-          public_id: undefined,
-          relation_id: undefined,
-          indexed: undefined,
-          updated: undefined,
-          kemono_favorited: 0,
-          ever_imported: false,
-          extra: {}
-        };
-      }
-
-      if (postsResult.status === 'fulfilled') {
-        entry.posts = postsResult.value;
-        entry.offset = PAGE_SIZE;
-        entry.hasMore = postsResult.value.length === PAGE_SIZE;
-        entry.loaded = true;
-        logger.info(`[Content] Loaded ${postsResult.value.length} posts for ${service}:${creatorId}`);
-
-        if (entry.profile && entry.profile.name === creatorId && postsResult.value.length > 0) {
-          const firstPostUser = postsResult.value[0].user;
-          if (firstPostUser && firstPostUser !== creatorId) {
-            entry.profile.name = firstPostUser;
-          }
+      void apiFetchCreatorProfile(service, creatorId).then((p) => {
+        if (p && p.name && p.name !== creatorId) {
+          const cur = this.creators[key] ?? entry;
+          this.creators[key] = {
+            ...cur,
+            profile: p
+          };
         }
-      } else {
-        logger.error(`Failed to load posts for creator ${service}:${creatorId}`, postsResult.reason);
-        if (entry.posts.length === 0) {
-          throw postsResult.reason;
+      }).catch(() => {});
+
+      const posts = await apiFetchCreatorPosts(service, creatorId, undefined, 0);
+      const cur = this.creators[key] ?? entry;
+      let finalProfile = cur.profile || profile;
+
+      if (finalProfile && (finalProfile.name === creatorId || !finalProfile.name)) {
+        const foundName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
+        if (foundName && foundName !== creatorId) {
+          finalProfile = { ...finalProfile, name: foundName };
+        } else {
+          void creatorsState.load().then(() => {
+            const resolved = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
+            if (resolved) {
+              const live = this.creators[key];
+              if (live?.profile && (live.profile.name === creatorId || !live.profile.name)) {
+                this.creators[key] = {
+                  ...live,
+                  profile: { ...live.profile, name: resolved }
+                };
+              }
+            }
+          });
         }
       }
+
+      this.creators[key] = {
+        ...cur,
+        profile: finalProfile,
+        posts,
+        offset: PAGE_SIZE,
+        hasMore: posts.length === PAGE_SIZE,
+        loaded: true,
+        loading: false,
+        error: null
+      };
+      logger.info(`[Content] Loaded ${posts.length} posts for ${service}:${creatorId}`);
     } catch (error) {
-      entry.error = errorMessage(error);
+      const cur = this.creators[key] ?? entry;
+      this.creators[key] = {
+        ...cur,
+        loading: false,
+        error: errorMessage(error)
+      };
       logger.error(`Error loading creator ${service}:${creatorId}`, error);
-    } finally {
-      entry.loading = false;
     }
   }
 
   async refreshCreator(service: string, creatorId: string) {
+    const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, creatorId);
     if (entry.loading) return;
-    entry.loading = true;
-    entry.error = null;
-    try {
-      const [profileResult, postsResult] = await Promise.allSettled([
-        apiFetchCreatorProfile(service, creatorId),
-        apiFetchCreatorPosts(service, creatorId, undefined, 0)
-      ]);
 
-      if (profileResult.status === 'fulfilled') {
-        entry.profile = profileResult.value;
-      } else {
-        logger.warn(`Could not refresh dedicated profile for ${service}:${creatorId}, preserving metadata`, profileResult.reason);
-        if (!entry.profile) {
-          const cachedName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
-          entry.profile = {
-            id: creatorId,
-            name: cachedName || creatorId,
-            service,
-            public_id: undefined,
-            relation_id: undefined,
-            indexed: undefined,
-            updated: undefined,
-            kemono_favorited: 0,
-            ever_imported: false,
-            extra: {}
+    this.creators[key] = {
+      ...entry,
+      loading: true,
+      error: null
+    };
+
+    try {
+      void apiFetchCreatorProfile(service, creatorId).then((p) => {
+        if (p && p.name && p.name !== creatorId) {
+          const cur = this.creators[key] ?? entry;
+          this.creators[key] = {
+            ...cur,
+            profile: p
           };
         }
-      }
+      }).catch(() => {});
 
-      if (postsResult.status === 'fulfilled') {
-        entry.posts = postsResult.value;
-        entry.offset = PAGE_SIZE;
-        entry.hasMore = postsResult.value.length === PAGE_SIZE;
-        entry.loaded = true;
-      } else {
-        logger.error(`Failed to refresh posts for creator ${service}:${creatorId}`, postsResult.reason);
-        if (entry.posts.length === 0) {
-          throw postsResult.reason;
-        }
-      }
+      const posts = await apiFetchCreatorPosts(service, creatorId, undefined, 0);
+      const cur = this.creators[key] ?? entry;
+      this.creators[key] = {
+        ...cur,
+        posts,
+        offset: PAGE_SIZE,
+        hasMore: posts.length === PAGE_SIZE,
+        loaded: true,
+        loading: false,
+        error: null
+      };
+      logger.info(`[Content] Refreshed ${posts.length} posts for ${service}:${creatorId}`);
     } catch (error) {
-      entry.error = errorMessage(error);
+      const cur = this.creators[key] ?? entry;
+      this.creators[key] = {
+        ...cur,
+        loading: false,
+        error: errorMessage(error)
+      };
       logger.error(`Error refreshing creator ${service}:${creatorId}`, error);
-    } finally {
-      entry.loading = false;
     }
   }
 
   async loadMoreCreatorPosts(service: string, creatorId: string) {
+    const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, creatorId);
     if (entry.loadingMore || !entry.hasMore) return;
-    entry.loadingMore = true;
-    entry.error = null;
+
+    this.creators[key] = {
+      ...entry,
+      loadingMore: true,
+      error: null
+    };
+
     try {
       const posts = await apiFetchCreatorPosts(service, creatorId, undefined, entry.offset);
-      entry.posts = [...entry.posts, ...posts];
-      entry.offset += PAGE_SIZE;
-      entry.hasMore = posts.length === PAGE_SIZE;
+      const cur = this.creators[key] ?? entry;
+      this.creators[key] = {
+        ...cur,
+        posts: [...cur.posts, ...posts],
+        offset: cur.offset + PAGE_SIZE,
+        hasMore: posts.length === PAGE_SIZE,
+        loadingMore: false
+      };
     } catch (error) {
-      entry.error = errorMessage(error);
+      const cur = this.creators[key] ?? entry;
+      this.creators[key] = {
+        ...cur,
+        loadingMore: false,
+        error: errorMessage(error)
+      };
       logger.error(`Failed to load more posts for creator ${service}:${creatorId} at offset ${entry.offset}`, error);
-    } finally {
-      entry.loadingMore = false;
     }
   }
 }

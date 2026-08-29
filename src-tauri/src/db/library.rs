@@ -1,4 +1,4 @@
-use crate::api::models::PawchivePost;
+use crate::api::models::Post;
 #[cfg(test)]
 use crate::db::storage::prepare_connection;
 use crate::db::storage::{open_database, INBOX_COLLECTION_ID};
@@ -213,7 +213,7 @@ impl LibraryRepository {
 
     pub fn save_post(
         &self,
-        post: &PawchivePost,
+        post: &Post,
         collection_id: Option<&str>,
     ) -> Result<LibrarySaveResult, String> {
         let collection = collection_id.unwrap_or(INBOX_COLLECTION_ID);
@@ -288,7 +288,7 @@ impl LibraryRepository {
         collection_id: Option<&str>,
         offset: u32,
         limit: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let c = self.connection.lock().map_err(|e| e.to_string())?;
         let (sql, args_collection) = if collection_id.is_some() {
             ("SELECT p.snapshot_json,cp.added_at FROM collection_posts cp JOIN posts p USING(service,creator_id,post_id) WHERE cp.collection_id=?1 ORDER BY cp.added_at DESC LIMIT ?2 OFFSET ?3",collection_id)
@@ -305,8 +305,7 @@ impl LibraryRepository {
                 .map_err(|e| e.to_string())?;
             for row in rows {
                 let (snapshot, library_added_at) = row.map_err(|e| e.to_string())?;
-                let mut post: PawchivePost =
-                    serde_json::from_str(&snapshot).map_err(|e| e.to_string())?;
+                let mut post: Post = Post::from_json_str(&snapshot).map_err(|e| e.to_string())?;
                 post.extra.insert(
                     "library_added_at".into(),
                     serde_json::Value::String(library_added_at),
@@ -321,8 +320,7 @@ impl LibraryRepository {
                 .map_err(|e| e.to_string())?;
             for row in rows {
                 let (snapshot, library_added_at) = row.map_err(|e| e.to_string())?;
-                let mut post: PawchivePost =
-                    serde_json::from_str(&snapshot).map_err(|e| e.to_string())?;
+                let mut post: Post = Post::from_json_str(&snapshot).map_err(|e| e.to_string())?;
                 post.extra.insert(
                     "library_added_at".into(),
                     serde_json::Value::String(library_added_at),
@@ -337,7 +335,7 @@ impl LibraryRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn post() -> PawchivePost {
+    fn post() -> Post {
         serde_json::from_value(serde_json::json!({"id":"p","user":"c","service":"s","title":"t"}))
             .unwrap()
     }

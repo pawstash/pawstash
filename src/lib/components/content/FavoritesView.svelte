@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import { apiFetchCreatorArtworkDataUrl, apiSaveSettings } from '$lib/utils/ipc';
   import { creatorAvatarUrl } from '$lib/utils/media';
-  import type { Creator, Favorite, PawchivePost } from '$lib/types/pawchive';
+  import type { Creator, Favorite, Post } from '$lib/types/content';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
@@ -78,7 +79,7 @@
     ((activeTab === 'posts' && selectionState.scope === 'posts') ||
      (activeTab === 'creators' && selectionState.scope === 'creators'))
   );
-  let selectedPosts = $derived(activeTab === 'posts' && isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
+  let selectedPosts = $derived(activeTab === 'posts' && isSelectionActive ? selectionState.getItems<Post>() : []);
   let stashes = $derived(libraryState.allStashes);
   let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
@@ -101,7 +102,7 @@
   });
 
   async function handleBatchToggleStash(collectionId: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !collectionId) return;
     const isAllIn = batchSelectedStashes.includes(collectionId);
     try {
@@ -122,7 +123,7 @@
   }
 
   async function handleBatchCreateAndAddToStash(name: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !name.trim()) return;
     try {
       const newStash = await libraryState.createStash(name.trim());
@@ -249,7 +250,7 @@
   let targetCardWidth = $derived(Math.round(baseCardWidth * scale));
   let ratio = $derived(({ square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const)[configState.settings.grid_aspect_ratio]);
 
-  function mapFavoritePost(favorite: Favorite, index = 0): PawchivePost {
+  function mapFavoritePost(favorite: Favorite, index = 0): Post {
     return {
       ...favorite,
       id: String(favorite.id ?? ''),
@@ -257,8 +258,8 @@
       service: String(favorite.service ?? ''),
       title: String(favorite.title ?? favorite.name ?? ''),
       content: String(favorite.content ?? ''),
-      file: favorite.file as PawchivePost['file'],
-      attachments: favorite.attachments as PawchivePost['attachments'],
+      file: favorite.file as Post['file'],
+      attachments: favorite.attachments as Post['attachments'],
       added: String(favorite.added ?? favorite.indexed ?? ''),
       published: String(favorite.published ?? favorite.updated ?? ''),
       favorite_count: Number(favorite.favorite_count ?? 0),
@@ -276,10 +277,15 @@
   }
 
   function mapFavoriteCreator(favorite: Favorite): Creator {
+    const favId = String(favorite.id ?? favorite.user ?? favorite.user_id ?? '');
+    const favService = String(favorite.service ?? '');
+    const cachedName = creatorsState.creatorsMap.get(`${favService.toLowerCase()}:${favId.toLowerCase()}`);
+    const rawName = String(favorite.name ?? '');
+    const name = (rawName && rawName !== favId) ? rawName : (cachedName || favId);
     return {
-      id: String(favorite.id ?? favorite.user ?? favorite.user_id ?? ''),
-      name: String(favorite.name ?? favorite.id ?? ''),
-      service: String(favorite.service ?? ''),
+      id: favId,
+      name,
+      service: favService,
       public_id: favorite.public_id == null ? undefined : String(favorite.public_id),
       relation_id: favorite.relation_id == null ? undefined : String(favorite.relation_id),
       updated: timestampSeconds(favorite.updated),
@@ -291,6 +297,10 @@
   }
 
   $effect(() => {
+    void creatorsState.load();
+  });
+
+  $effect(() => {
     for (const creator of creators) {
       const key = `${creator.service}:${creator.id}`;
       if (avatarUrls[key]) continue;
@@ -300,7 +310,7 @@
     }
   });
 
-  function favoriteOrder(item: PawchivePost | Creator) {
+  function favoriteOrder(item: Post | Creator) {
     const favedAt = (item as any).faved_at || (item as any).created_at || (item as any).faved_date;
     if (favedAt) {
       const parsed = dateOrder(favedAt);
@@ -325,7 +335,7 @@
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
-  function sortPosts(items: PawchivePost[], sort: string) {
+  function sortPosts(items: Post[], sort: string) {
     return [...items].sort((left, right) => {
       if (sort === 'favorite_desc') return favoriteOrder(right) - favoriteOrder(left);
       if (sort === 'favorite_asc') return favoriteOrder(left) - favoriteOrder(right);
@@ -426,7 +436,7 @@
   }
 
   async function batchSaveToLibrary() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {
@@ -443,7 +453,7 @@
   }
 
   async function batchDownloadPosts() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     let count = 0;
     try {
@@ -465,7 +475,7 @@
   }
 
   async function batchUnfavoritePosts() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {

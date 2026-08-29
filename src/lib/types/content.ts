@@ -6,7 +6,7 @@ export interface Attachment {
   [key: string]: unknown;
 }
 
-export interface PawchivePost {
+export interface Post {
   id: string;
   user: string;
   service: string;
@@ -128,7 +128,7 @@ export interface FileSearchResult {
   discord_posts: FileSearchPost[];
 }
 
-export interface PostRevision extends PawchivePost {
+export interface PostRevision extends Post {
   revision_id: number;
 }
 

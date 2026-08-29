@@ -1,4 +1,4 @@
-use crate::api::models::{Creator, CreatorProfile, Favorite, PawchivePost, PostRevision};
+use crate::api::models::{Creator, CreatorProfile, Favorite, Post, PostRevision};
 use crate::db::storage::{content_cache_path, open_database};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -348,26 +348,28 @@ impl ContentRepository {
             .map(|paths| paths.into_iter().map(PathBuf::from).collect())
     }
 
-    pub fn save_posts(&self, posts: &[PawchivePost]) -> Result<(), String> {
+    pub fn save_posts(&self, posts: &[Post]) -> Result<(), String> {
         let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
         let tx = connection.transaction().map_err(|e| e.to_string())?;
         for post in posts {
+            let mut clean_post = post.clone();
+            clean_post.clean_extra();
             tx.execute(
                 "INSERT INTO creators(service, creator_id, name, snapshot_json)
                  VALUES(?1, ?2, ?2, json_object('id', ?2, 'name', ?2, 'service', ?1))
                  ON CONFLICT(service, creator_id) DO NOTHING",
-                params![post.service, post.user],
+                params![clean_post.service, clean_post.user],
             )
             .map_err(|e| e.to_string())?;
-            let snapshot = serde_json::to_string(post).map_err(|e| e.to_string())?;
+            let snapshot = serde_json::to_string(&clean_post).map_err(|e| e.to_string())?;
             tx.execute(
                 "INSERT INTO posts(service, creator_id, post_id, title, content, published_at, snapshot_json, last_checked_at)
                  VALUES(?1,?2,?3,?4,?5,?6,?7,CURRENT_TIMESTAMP)
                  ON CONFLICT(service, creator_id, post_id) DO UPDATE SET
-                   title=excluded.title, content=excluded.content, published_at=excluded.published_at,
-                   snapshot_json=excluded.snapshot_json, remote_state='active',
-                   cached_at=CURRENT_TIMESTAMP, last_checked_at=CURRENT_TIMESTAMP",
-                params![post.service, post.user, post.id, post.title, post.content, post.published, snapshot],
+                    title=excluded.title, content=excluded.content, published_at=excluded.published_at,
+                    snapshot_json=excluded.snapshot_json, remote_state='active',
+                    cached_at=CURRENT_TIMESTAMP, last_checked_at=CURRENT_TIMESTAMP",
+                params![clean_post.service, clean_post.user, clean_post.id, clean_post.title, clean_post.content, clean_post.published, snapshot],
             ).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())
@@ -378,7 +380,7 @@ impl ContentRepository {
         service: &str,
         creator_id: &str,
         post_id: &str,
-    ) -> Result<Option<PawchivePost>, String> {
+    ) -> Result<Option<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let row: Option<(String,Option<String>)> = connection
             .query_row(
@@ -389,7 +391,7 @@ impl ContentRepository {
             .optional()
             .map_err(|e| e.to_string())?;
         row.map(|(value, preview)| {
-            let mut post: PawchivePost = serde_json::from_str(&value).map_err(|e| e.to_string())?;
+            let mut post: Post = Post::from_json_str(&value).map_err(|e| e.to_string())?;
             if let Some(path) = preview {
                 post.extra
                     .insert("local_preview_path".into(), serde_json::Value::String(path));
@@ -448,7 +450,7 @@ impl ContentRepository {
         creator_id: &str,
         offset: u32,
         limit: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let mut statement = connection
             .prepare(
@@ -463,12 +465,12 @@ impl ContentRepository {
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
+                .and_then(|json| Post::from_json_str(&json))
         })
         .collect()
     }
 
-    pub fn search_posts(&self, query: &str) -> Result<Vec<PawchivePost>, String> {
+    pub fn search_posts(&self, query: &str) -> Result<Vec<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let pattern = format!("%{query}%");
         let mut statement = connection.prepare(
@@ -479,12 +481,12 @@ impl ContentRepository {
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
+                .and_then(|json| Post::from_json_str(&json))
         })
         .collect()
     }
 
-    pub fn list_recent_posts(&self, offset: u32, limit: u32) -> Result<Vec<PawchivePost>, String> {
+    pub fn list_recent_posts(&self, offset: u32, limit: u32) -> Result<Vec<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let mut statement = connection.prepare("SELECT snapshot_json FROM posts ORDER BY published_at DESC, post_id DESC LIMIT ?1 OFFSET ?2").map_err(|e| e.to_string())?;
         let rows = statement
@@ -492,7 +494,7 @@ impl ContentRepository {
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
+                .and_then(|json| Post::from_json_str(&json))
         })
         .collect()
     }
@@ -501,7 +503,7 @@ impl ContentRepository {
         &self,
         list_key: &str,
         offset: u32,
-        posts: &[PawchivePost],
+        posts: &[Post],
     ) -> Result<(), String> {
         self.save_posts(posts)?;
         let identities: Vec<(&str, &str, &str)> = posts
@@ -521,7 +523,7 @@ impl ContentRepository {
         Ok(())
     }
 
-    pub fn load_post_list(&self, list_key: &str, offset: u32) -> Result<Vec<PawchivePost>, String> {
+    pub fn load_post_list(&self, list_key: &str, offset: u32) -> Result<Vec<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let json: Option<String> = connection
             .query_row(
@@ -547,8 +549,7 @@ impl ContentRepository {
                 .optional()
                 .map_err(|e| e.to_string())?;
             if let Some((snapshot, preview)) = row {
-                let mut post: PawchivePost =
-                    serde_json::from_str(&snapshot).map_err(|e| e.to_string())?;
+                let mut post: Post = Post::from_json_str(&snapshot).map_err(|e| e.to_string())?;
                 if let Some(path) = preview {
                     post.extra
                         .insert("local_preview_path".into(), serde_json::Value::String(path));
@@ -656,34 +657,33 @@ impl ContentRepository {
             .query_map(params![service, creator_id, post_id], |row| {
                 let revision_id: i64 = row.get(0)?;
                 let json: String = row.get(1)?;
-                let post: PawchivePost =
-                    serde_json::from_str(&json).unwrap_or_else(|_| PawchivePost {
-                        id: post_id.to_string(),
-                        user: creator_id.to_string(),
-                        service: service.to_string(),
-                        title: String::new(),
-                        content: None,
-                        substring: None,
-                        published: None,
-                        added: None,
-                        edited: None,
-                        embed: None,
-                        shared_file: None,
-                        attachments: None,
-                        file: None,
-                        poll: None,
-                        captions: None,
-                        tags: None,
-                        origin: None,
-                        preview_state: None,
-                        has_full: None,
-                        detail_fetched: None,
-                        next: None,
-                        prev: None,
-                        favorite_count: None,
-                        attachment_count: None,
-                        extra: Default::default(),
-                    });
+                let post: Post = Post::from_json_str(&json).unwrap_or_else(|_| Post {
+                    id: post_id.to_string(),
+                    user: creator_id.to_string(),
+                    service: service.to_string(),
+                    title: String::new(),
+                    content: None,
+                    substring: None,
+                    published: None,
+                    added: None,
+                    edited: None,
+                    embed: None,
+                    shared_file: None,
+                    attachments: None,
+                    file: None,
+                    poll: None,
+                    captions: None,
+                    tags: None,
+                    origin: None,
+                    preview_state: None,
+                    has_full: None,
+                    detail_fetched: None,
+                    next: None,
+                    prev: None,
+                    favorite_count: None,
+                    attachment_count: None,
+                    extra: Default::default(),
+                });
                 Ok(PostRevision { revision_id, post })
             })
             .map_err(|e| e.to_string())?;
@@ -765,12 +765,7 @@ impl ContentRepository {
             .transpose()
     }
 
-    pub fn pin_post(
-        &self,
-        post: &PawchivePost,
-        reason: &str,
-        account_id: &str,
-    ) -> Result<(), String> {
+    pub fn pin_post(&self, post: &Post, reason: &str, account_id: &str) -> Result<(), String> {
         self.save_posts(std::slice::from_ref(post))?;
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         connection.execute(
@@ -982,11 +977,7 @@ impl ContentRepository {
         Ok(None)
     }
 
-    pub async fn cache_post_preview(
-        &self,
-        post: &PawchivePost,
-        url: &str,
-    ) -> Result<PathBuf, String> {
+    pub async fn cache_post_preview(&self, post: &Post, url: &str) -> Result<PathBuf, String> {
         let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("Preview HTTP {}", response.status()));
@@ -1188,7 +1179,7 @@ mod tests {
     #[test]
     fn test_list_favorites_attaches_faved_at() {
         let repo = ContentRepository::new(512).unwrap();
-        let post: PawchivePost = serde_json::from_str(
+        let post: Post = serde_json::from_str(
             r#"{
                 "id": "100",
                 "user": "creator_a",

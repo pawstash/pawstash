@@ -1,4 +1,4 @@
-import type { PawchivePost } from '$lib/types/pawchive';
+import type { Post } from '$lib/types/content';
 import type { LibraryCollection } from '$lib/types/library';
 import { i18n } from '$lib/i18n';
 import {
@@ -20,13 +20,13 @@ import { logger } from '$lib/utils/logger';
 
 const PAGE_SIZE = 50;
 
-export function libraryPostKey(post: Pick<PawchivePost, 'service' | 'user' | 'id'>) {
+export function libraryPostKey(post: Pick<Post, 'service' | 'user' | 'id'>) {
   return `${(post.service || '').toLowerCase()}:${post.user}:${post.id}`;
 }
 
 export class LibraryState {
   collections = $state<LibraryCollection[]>([]);
-  posts = $state<PawchivePost[]>([]);
+  posts = $state<Post[]>([]);
   selectedCollectionId = $state<string | null>(null);
   loading = $state(false);
   collectionsLoading = $state(false);
@@ -64,15 +64,15 @@ export class LibraryState {
       : null;
   }
 
-  isSaved(post: Pick<PawchivePost, 'service' | 'user' | 'id'>) {
+  isSaved(post: Pick<Post, 'service' | 'user' | 'id'>) {
     return this.savedKeys.has(libraryPostKey(post));
   }
 
-  isPending(post: Pick<PawchivePost, 'service' | 'user' | 'id'>) {
+  isPending(post: Pick<Post, 'service' | 'user' | 'id'>) {
     return this.pendingKeys.has(libraryPostKey(post));
   }
 
-  getPostStashes(post: Pick<PawchivePost, 'service' | 'user' | 'id'>): string[] {
+  getPostStashes(post: Pick<Post, 'service' | 'user' | 'id'>): string[] {
     const key = libraryPostKey(post);
     const ids = this.postStashes[key];
     if (!ids || ids.length === 0) return [];
@@ -80,7 +80,7 @@ export class LibraryState {
     return ids.filter((id) => validCollections.has(id));
   }
 
-  getCustomPostStashes(post: Pick<PawchivePost, 'service' | 'user' | 'id'>): string[] {
+  getCustomPostStashes(post: Pick<Post, 'service' | 'user' | 'id'>): string[] {
     const key = libraryPostKey(post);
     const ids = this.postStashes[key];
     if (!ids || ids.length === 0) return [];
@@ -88,13 +88,13 @@ export class LibraryState {
     return ids.filter((id) => validStashes.has(id));
   }
 
-  getPostStashNames(post: Pick<PawchivePost, 'service' | 'user' | 'id'>): string[] {
+  getPostStashNames(post: Pick<Post, 'service' | 'user' | 'id'>): string[] {
     const stashIds = this.getPostStashes(post);
     const stashMap = new Map(this.collections.map((c) => [c.id, this.getStashDisplayName(c)]));
     return stashIds.map((id) => stashMap.get(id)).filter((name): name is string => Boolean(name));
   }
 
-  async loadPostStashes(post: Pick<PawchivePost, 'service' | 'user' | 'id'>): Promise<string[]> {
+  async loadPostStashes(post: Pick<Post, 'service' | 'user' | 'id'>): Promise<string[]> {
     const key = libraryPostKey(post);
     try {
       const collectionIds = await apiListPostCollections(post.service, post.user, post.id);
@@ -201,7 +201,7 @@ export class LibraryState {
     return this.load(false);
   }
 
-  async save(post: PawchivePost, collectionId?: string) {
+  async save(post: Post, collectionId?: string) {
     const key = libraryPostKey(post);
     if (this.pendingKeys.has(key)) return;
     this.pendingKeys = new Set(this.pendingKeys).add(key);
@@ -226,7 +226,7 @@ export class LibraryState {
     }
   }
 
-  async remove(post: Pick<PawchivePost, 'service' | 'user' | 'id'>) {
+  async remove(post: Pick<Post, 'service' | 'user' | 'id'>) {
     const key = libraryPostKey(post);
     if (this.pendingKeys.has(key)) return;
     this.pendingKeys = new Set(this.pendingKeys).add(key);
@@ -245,7 +245,7 @@ export class LibraryState {
     }
   }
 
-  toggle(post: PawchivePost) {
+  toggle(post: Post) {
     return this.isSaved(post) ? this.remove(post) : this.save(post);
   }
 
@@ -296,7 +296,7 @@ export class LibraryState {
     return clearedCount;
   }
 
-  async removeFromStash(collectionId: string, post: Pick<PawchivePost, 'service' | 'user' | 'id'>) {
+  async removeFromStash(collectionId: string, post: Pick<Post, 'service' | 'user' | 'id'>) {
     const key = libraryPostKey(post);
     const removed = await apiRemoveLibraryPostFromStash(collectionId, post.service, post.user, post.id);
     if (!removed) return false;

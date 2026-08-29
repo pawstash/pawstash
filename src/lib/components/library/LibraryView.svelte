@@ -6,7 +6,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import type { PawchivePost } from '$lib/types/pawchive';
+  import type { Post } from '$lib/types/content';
   import { parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -72,7 +72,7 @@
   let searchQuery = $state(savedState?.searchQuery ?? '');
   let input = $state<HTMLInputElement>();
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
-  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
+  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
   let stashes = $derived(libraryState.allStashes);
   let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
@@ -95,7 +95,7 @@
   });
 
   async function handleBatchToggleStash(collectionId: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !collectionId) return;
     const isAllIn = batchSelectedStashes.includes(collectionId);
     try {
@@ -116,7 +116,7 @@
   }
 
   async function handleBatchCreateAndAddToStash(name: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !name.trim()) return;
     try {
       const newStash = await libraryState.createStash(name.trim());
@@ -142,7 +142,7 @@
   }
 
   async function batchRemoveFromThisStash() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     const stashId = libraryState.selectedCollectionId;
     if (items.length === 0 || !stashId) return;
     try {
@@ -160,7 +160,7 @@
   }
 
   async function batchDeleteFromLibrary() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {
@@ -177,7 +177,7 @@
   }
 
   async function batchDownloadPosts() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     let count = 0;
     try {
@@ -360,7 +360,7 @@
     { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
   ];
 
-  function isPostDownloaded(post: PawchivePost): boolean {
+  function isPostDownloaded(post: Post): boolean {
     const file = post.file as any;
     const attachments = (post.attachments as any[]) || [];
     

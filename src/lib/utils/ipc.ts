@@ -20,10 +20,10 @@ import type {
   Favorite,
   FavoriteType,
   FileSearchResult,
-  PawchivePost,
+  Post,
   PostRevision,
   ResolvedPostLink
-} from '$lib/types/pawchive';
+} from '$lib/types/content';
 
 export const apiGetAxumPort = () => invoke<number>('get_axum_port');
 export const apiCheckAria2c = () => invoke<boolean>('check_aria2c_installed');
@@ -68,23 +68,23 @@ export const apiLogoutAccount = () => invoke<AccountSession>('logout_account');
 export const apiFetchCreators = () => invoke<Creator[]>('fetch_creators');
 
 export const apiFetchPosts = (service: string, userId: string, offset = 0) =>
-  invoke<PawchivePost[]>('fetch_posts', { service, userId, offset });
+  invoke<Post[]>('fetch_posts', { service, userId, offset });
 
 export const apiFetchRecentPosts = (query?: string, offset = 0) =>
-  invoke<PawchivePost[]>('fetch_recent_posts', { query, offset });
+  invoke<Post[]>('fetch_recent_posts', { query, offset });
 
 export const apiFetchPopularPosts = (
   period: 'day' | 'week' | 'month' = 'day',
   date?: string,
   offset = 0
-) => invoke<PawchivePost[]>('fetch_popular_posts', { period, date, offset });
+) => invoke<Post[]>('fetch_popular_posts', { period, date, offset });
 
 export const apiFetchCreatorPosts = (
   service: string,
   creatorId: string,
   query?: string,
   offset = 0
-) => invoke<PawchivePost[]>('fetch_creator_posts', { service, creatorId, query, offset });
+) => invoke<Post[]>('fetch_creator_posts', { service, creatorId, query, offset });
 
 export const apiFetchCreatorProfile = (service: string, creatorId: string) =>
   invoke<CreatorProfile>('fetch_creator_profile', { service, creatorId });
@@ -102,10 +102,10 @@ export const apiFetchSimilarCreators = (service: string, creatorId: string) =>
   invoke<CreatorProfile[]>('fetch_similar_creators', { service, creatorId });
 
 export const apiFetchPost = (service: string, creatorId: string, postId: string) =>
-  invoke<PawchivePost>('fetch_post', { service, creatorId, postId });
+  invoke<Post>('fetch_post', { service, creatorId, postId });
 
 export const apiGetCachedPost = (service: string, creatorId: string, postId: string) =>
-  invoke<PawchivePost | null>('get_cached_post', { service, creatorId, postId });
+  invoke<Post | null>('get_cached_post', { service, creatorId, postId });
 
 export const apiResolveExternalPostLink = (
   url: string,
@@ -161,7 +161,7 @@ export const apiGetPawchiveAppVersion = () =>
   invoke<string>('get_pawchive_app_version');
 
 export const apiSearchPosts = (query: string) =>
-  invoke<PawchivePost[]>('search_posts', { query });
+  invoke<Post[]>('search_posts', { query });
 
 export const apiListLibraryCollections = () =>
   invoke<LibraryCollection[]>('list_library_collections');
@@ -192,7 +192,7 @@ export const apiRemoveLibraryPostFromStash = (
 export const apiListPostCollections = (service: string, creatorId: string, postId: string) =>
   invoke<string[]>('list_post_collections', { service, creatorId, postId });
 
-export const apiSaveLibraryPost = (post: PawchivePost, collectionId?: string) =>
+export const apiSaveLibraryPost = (post: Post, collectionId?: string) =>
   invoke<LibrarySaveResult>('save_library_post', { post, collectionId });
 
 export const apiRemoveLibraryPost = (service: string, creatorId: string, postId: string) =>
@@ -212,9 +212,9 @@ export const apiListPostStashMemberships = () =>
   invoke<PostStashMembership[]>('list_post_stash_memberships');
 
 export const apiListLibraryPosts = (collectionId?: string, offset = 0, limit = 50) =>
-  invoke<PawchivePost[]>('list_library_posts', { collectionId, offset, limit });
+  invoke<Post[]>('list_library_posts', { collectionId, offset, limit });
 
-export const apiStartDownload = (post: PawchivePost, mediaId: string, url: string, filename: string) =>
+export const apiStartDownload = (post: Post, mediaId: string, url: string, filename: string) =>
   invoke<DownloadItem>('start_download', { post, mediaId, url, filename });
 
 export const apiProbeDownloadSize = (url: string) =>

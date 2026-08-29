@@ -264,13 +264,29 @@ impl ProviderManager {
         Ok(Vec::new())
     }
 
+    pub async fn fetch_announcements(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<Announcement>, String> {
+        let candidates = self.get_providers_for_service(service).await;
+        for provider in candidates {
+            if let Ok(items) = provider.fetch_announcements(service, creator_id).await {
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
     pub async fn fetch_posts(
         &self,
         service: &str,
         creator_id: &str,
         offset: u32,
         query: Option<&str>,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let candidates = self.get_providers_for_service(service).await;
         if candidates.is_empty() {
             return Err(format!("No provider configured for service '{service}'"));
@@ -318,7 +334,7 @@ impl ProviderManager {
             .collect();
 
         let results = join_all(tasks).await;
-        let snapshots: Vec<(String, PawchivePost)> = results.into_iter().flatten().collect();
+        let snapshots: Vec<(String, Post)> = results.into_iter().flatten().collect();
 
         if snapshots.is_empty() {
             return Ok(None);
@@ -351,7 +367,7 @@ impl ProviderManager {
         &self,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let enabled = self.get_all_enabled_providers().await;
         if enabled.is_empty() {
             return Err("No enabled providers configured".to_string());
@@ -366,7 +382,7 @@ impl ProviderManager {
             .collect();
 
         let results = join_all(tasks).await;
-        let mut all_posts: Vec<PawchivePost> = Vec::new();
+        let mut all_posts: Vec<Post> = Vec::new();
         let mut any_success = false;
         let mut last_error = String::new();
 
@@ -416,7 +432,7 @@ impl ProviderManager {
         period: &str,
         date: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let enabled = self.get_all_enabled_providers().await;
         if enabled.is_empty() {
             return Err("No enabled providers configured".to_string());
@@ -431,7 +447,7 @@ impl ProviderManager {
             .collect();
 
         let results = join_all(tasks).await;
-        let mut all_posts: Vec<PawchivePost> = Vec::new();
+        let mut all_posts: Vec<Post> = Vec::new();
         let mut any_success = false;
         let mut last_error = String::new();
 
@@ -497,12 +513,28 @@ impl ProviderManager {
             }
         }
         let enabled = self.get_all_enabled_providers().await;
+        let mut all_favorites = Vec::new();
+        let mut seen_keys = HashSet::new();
+        let mut any_success = false;
+
         for provider in enabled {
             if let Ok(favs) = provider.fetch_account_favorites(favorite_type).await {
-                return Ok(favs);
+                any_success = true;
+                for fav in favs {
+                    let srv = fav.service.as_deref().unwrap_or("").to_lowercase();
+                    let id = fav.id.to_lowercase();
+                    if seen_keys.insert((srv, id)) {
+                        all_favorites.push(fav);
+                    }
+                }
             }
         }
-        Err("No provider available for favorites".to_string())
+
+        if any_success {
+            Ok(all_favorites)
+        } else {
+            Err("No provider available for favorites".to_string())
+        }
     }
 
     pub async fn set_creator_favorite(
@@ -512,15 +544,25 @@ impl ProviderManager {
         favorite: bool,
     ) -> Result<ApiActionResult, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut any_success = false;
         for provider in candidates {
             if let Ok(res) = provider
                 .set_creator_favorite(service, creator_id, favorite)
                 .await
             {
-                return Ok(res);
+                if res.success {
+                    any_success = true;
+                }
             }
         }
-        Err("Failed to favorite creator".to_string())
+        if any_success {
+            Ok(ApiActionResult {
+                status: 200,
+                success: true,
+            })
+        } else {
+            Err("Failed to favorite creator".to_string())
+        }
     }
 
     pub async fn set_post_favorite(
@@ -531,15 +573,25 @@ impl ProviderManager {
         favorite: bool,
     ) -> Result<ApiActionResult, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut any_success = false;
         for provider in candidates {
             if let Ok(res) = provider
                 .set_post_favorite(service, creator_id, post_id, favorite)
                 .await
             {
-                return Ok(res);
+                if res.success {
+                    any_success = true;
+                }
             }
         }
-        Err("Failed to favorite post".to_string())
+        if any_success {
+            Ok(ApiActionResult {
+                status: 200,
+                success: true,
+            })
+        } else {
+            Err("Failed to favorite post".to_string())
+        }
     }
 
     pub async fn resolve_media_url(

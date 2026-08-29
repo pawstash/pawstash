@@ -1,4 +1,4 @@
-import type { PawchivePost } from './pawchive';
+import type { Post } from './content';
 
 export interface ProviderConfig {
   id: string;
@@ -42,6 +42,6 @@ export interface PostRevisionData {
   poll?: any;
   captions?: any;
   tags?: any;
-  post?: PawchivePost;
+  post?: Post;
   [key: string]: unknown;
 }

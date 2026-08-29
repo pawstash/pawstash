@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import type { ResolvedPostLink } from '$lib/types/pawchive';
+  import type { ResolvedPostLink } from '$lib/types/content';
   import { apiResolveExternalPostLink } from '$lib/utils/ipc';
 
   const ALLOWED_TAGS = new Set([

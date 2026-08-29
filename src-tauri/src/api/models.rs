@@ -13,7 +13,7 @@ pub struct Attachment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PawchivePost {
+pub struct Post {
     #[serde(deserialize_with = "deserialize_flexible_id")]
     pub id: String,
     #[serde(deserialize_with = "deserialize_flexible_id")]
@@ -58,6 +58,219 @@ pub struct PawchivePost {
     pub attachment_count: Option<u64>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl Post {
+    pub fn clean_extra(&mut self) {
+        let known_keys = [
+            "id",
+            "user",
+            "service",
+            "title",
+            "content",
+            "substring",
+            "published",
+            "added",
+            "edited",
+            "embed",
+            "shared_file",
+            "attachments",
+            "file",
+            "poll",
+            "captions",
+            "tags",
+            "origin",
+            "preview_state",
+            "has_full",
+            "detail_fetched",
+            "next",
+            "prev",
+            "favorite_count",
+            "favs",
+            "favorites",
+            "fav_count",
+            "attachment_count",
+            "extra",
+        ];
+        for k in &known_keys {
+            self.extra.remove(*k);
+        }
+    }
+
+    pub fn from_json_str(json_str: &str) -> Result<Self, String> {
+        match serde_json::from_str::<Post>(json_str) {
+            Ok(mut post) => {
+                post.clean_extra();
+                Ok(post)
+            }
+            Err(_) => {
+                let mut val: serde_json::Value =
+                    serde_json::from_str(json_str).map_err(|e| e.to_string())?;
+                if let Some(obj) = val.as_object_mut() {
+                    let id = obj
+                        .get("id")
+                        .and_then(|v| {
+                            if v.is_string() {
+                                v.as_str().map(|s| s.to_string())
+                            } else {
+                                v.as_i64().map(|n| n.to_string())
+                            }
+                        })
+                        .unwrap_or_default();
+                    let user = obj
+                        .get("user")
+                        .and_then(|v| {
+                            if v.is_string() {
+                                v.as_str().map(|s| s.to_string())
+                            } else {
+                                v.as_i64().map(|n| n.to_string())
+                            }
+                        })
+                        .unwrap_or_default();
+                    let service = obj
+                        .get("service")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let title = obj
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let content = obj
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let substring = obj
+                        .get("substring")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let published = obj.get("published").and_then(|v| {
+                        if v.is_string() {
+                            v.as_str().map(|s| s.to_string())
+                        } else {
+                            v.as_i64().map(|n| n.to_string())
+                        }
+                    });
+                    let added = obj.get("added").and_then(|v| {
+                        if v.is_string() {
+                            v.as_str().map(|s| s.to_string())
+                        } else {
+                            v.as_i64().map(|n| n.to_string())
+                        }
+                    });
+                    let edited = obj.get("edited").and_then(|v| {
+                        if v.is_string() {
+                            v.as_str().map(|s| s.to_string())
+                        } else {
+                            v.as_i64().map(|n| n.to_string())
+                        }
+                    });
+                    let embed = obj.get("embed").cloned();
+                    let shared_file = obj.get("shared_file").and_then(|v| v.as_bool());
+                    let attachments = obj
+                        .get("attachments")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    let file = obj
+                        .get("file")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    let poll = obj.get("poll").cloned();
+                    let captions = obj.get("captions").cloned();
+                    let tags = obj.get("tags").cloned();
+                    let origin = obj
+                        .get("origin")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let preview_state = obj
+                        .get("preview_state")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let has_full = obj.get("has_full").and_then(|v| v.as_bool());
+                    let detail_fetched = obj.get("detail_fetched").and_then(|v| v.as_bool());
+                    let next = obj
+                        .get("next")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let prev = obj
+                        .get("prev")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let favorite_count = obj
+                        .get("favorite_count")
+                        .or_else(|| obj.get("favs"))
+                        .or_else(|| obj.get("favorites"))
+                        .and_then(|v| v.as_u64());
+                    let attachment_count = obj.get("attachment_count").and_then(|v| v.as_u64());
+
+                    let known_keys = [
+                        "id",
+                        "user",
+                        "service",
+                        "title",
+                        "content",
+                        "substring",
+                        "published",
+                        "added",
+                        "edited",
+                        "embed",
+                        "shared_file",
+                        "attachments",
+                        "file",
+                        "poll",
+                        "captions",
+                        "tags",
+                        "origin",
+                        "preview_state",
+                        "has_full",
+                        "detail_fetched",
+                        "next",
+                        "prev",
+                        "favorite_count",
+                        "favs",
+                        "favorites",
+                        "fav_count",
+                        "attachment_count",
+                        "extra",
+                    ];
+                    for k in &known_keys {
+                        obj.remove(*k);
+                    }
+                    let extra: HashMap<String, serde_json::Value> =
+                        obj.clone().into_iter().collect();
+
+                    Ok(Post {
+                        id,
+                        user,
+                        service,
+                        title,
+                        content,
+                        substring,
+                        published,
+                        added,
+                        edited,
+                        embed,
+                        shared_file,
+                        attachments,
+                        file,
+                        poll,
+                        captions,
+                        tags,
+                        origin,
+                        preview_state,
+                        has_full,
+                        detail_fetched,
+                        next,
+                        prev,
+                        favorite_count,
+                        attachment_count,
+                        extra,
+                    })
+                } else {
+                    Err("JSON is not an object".to_string())
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,7 +503,7 @@ pub struct FileSearchResult {
 pub struct PostRevision {
     pub revision_id: i64,
     #[serde(flatten)]
-    pub post: PawchivePost,
+    pub post: Post,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,7 +559,7 @@ mod tests {
 
     #[test]
     fn compact_recent_post_is_supported() {
-        let post: PawchivePost = serde_json::from_str(
+        let post: Post = serde_json::from_str(
             r#"{
                 "id":"12408586","user":"6377826","service":"fanbox",
                 "title":"post","substring":"preview","published":"2026-08-11T19:26:15",
@@ -399,5 +612,21 @@ mod tests {
         assert_eq!(revs.len(), 1);
         assert_eq!(revs[0].revision_id, 19576);
         assert_eq!(revs[0].post.id, "149912585");
+    }
+
+    #[test]
+    fn duplicate_keys_in_json_are_safely_handled() {
+        let json_with_duplicates = r#"{
+            "id": "123",
+            "user": "456",
+            "service": "patreon",
+            "title": "Title",
+            "edited": "2026-08-28T22:00:00",
+            "edited": "2026-08-28T22:00:00"
+        }"#;
+        let post = Post::from_json_str(json_with_duplicates).unwrap();
+        assert_eq!(post.id, "123");
+        assert_eq!(post.user, "456");
+        assert_eq!(post.edited.as_deref(), Some("2026-08-28T22:00:00"));
     }
 }

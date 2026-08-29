@@ -7,7 +7,8 @@
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { i18n } from '$lib/i18n';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { apiGetAxumPort, apiOpenDownloadsFolder, apiSaveSettings } from '$lib/utils/ipc';
+  import { apiOpenDownloadsFolder, apiSaveSettings } from '$lib/utils/ipc';
+  import { serverPortState } from '$lib/state/serverPort.svelte';
   import type { DownloadItem } from '$lib/types/download';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -71,7 +72,6 @@
     formatFilters?: FilterMap;
   }>(navigationState.entryKey);
 
-  let mediaPort = $state<number | null>(null);
   let groupByPosts = $state(savedState?.groupByPosts ?? false);
   let sortBy = $state<DownloadSort>(savedState?.sortBy ?? 'newest');
   let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
@@ -186,10 +186,11 @@
 
   function previewUrl(item?: DownloadItem) {
     if (!item) return undefined;
+    const port = serverPortState.port || 0;
     if (item.status === 'completed' && item.final_path) {
-      if (mediaPort) {
+      if (port > 0) {
         const path = item.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${mediaPort}/media/${path}`;
+        return `http://127.0.0.1:${port}/media/${path}`;
       }
       return convertFileSrc(item.final_path);
     }
@@ -198,9 +199,10 @@
 
   function localPathUrl(path?: string) {
     if (!path) return undefined;
-    if (mediaPort) {
+    const port = serverPortState.port || 0;
+    if (port > 0) {
       const encoded = path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+      return `http://127.0.0.1:${port}/media/${encoded}`;
     }
     return convertFileSrc(path);
   }
@@ -250,7 +252,7 @@
   onMount(() => {
     void downloadState.init().catch((error) => downloadState.error = String(error));
     void libraryState.init();
-    void apiGetAxumPort().then((port) => mediaPort = port).catch(() => mediaPort = null);
+    void serverPortState.ensurePort();
 
     return () => {
       if (scaleTimer) clearTimeout(scaleTimer);

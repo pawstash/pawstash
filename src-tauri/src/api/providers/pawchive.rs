@@ -7,7 +7,7 @@ use crate::smart_links::{
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::header::{
-    HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE, USER_AGENT,
+    HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE, USER_AGENT,
 };
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use scraper::{Html, Selector};
@@ -116,9 +116,21 @@ impl PawchiveClient {
     }
 
     fn build_client(settings: &AppSettings) -> Result<Client, String> {
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("Too many redirects");
+            }
+            let next_url = attempt.url();
+            let path = next_url.path();
+            if path.contains("/account/login") || path.contains("/login") || path == "/account" {
+                return attempt.stop();
+            }
+            attempt.follow()
+        });
+
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(45))
-            .redirect(reqwest::redirect::Policy::limited(10))
+            .redirect(redirect_policy)
             .gzip(true);
 
         match settings.proxy_mode {
@@ -163,6 +175,10 @@ impl PawchiveClient {
         headers.insert(
             USER_AGENT,
             HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Pawstash/0.1.0"),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/plain, */*"),
         );
         if let Some(cookie) = Self::cookie_header(&settings.session_cookie) {
             headers.insert(COOKIE, cookie);
@@ -344,40 +360,71 @@ impl PawchiveClient {
     ) -> Result<T, String> {
         let response = self.send(method.clone(), path, query).await?;
         let status = response.status();
-        if !status.is_success() {
-            let settings = self.settings.read().await.clone();
-            if !settings.session_cookie.trim().is_empty()
-                && (status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN)
+        let settings = self.settings.read().await.clone();
+        let is_auth = !settings.session_cookie.trim().is_empty();
+
+        let is_auth_error = status == StatusCode::UNAUTHORIZED
+            || status == StatusCode::FORBIDDEN
+            || status.is_redirection();
+
+        if is_auth && is_auth_error {
+            let guest_settings = AppSettings {
+                session_cookie: String::new(),
+                ..settings.clone()
+            };
+            let client = self.client.read().await.clone();
+            let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
+            if let Ok(guest_resp) = client
+                .request(method.clone(), url)
+                .headers(Self::build_headers(&guest_settings))
+                .query(query)
+                .send()
+                .await
             {
-                let guest_settings = AppSettings {
-                    session_cookie: String::new(),
-                    ..settings
-                };
-                let client = self.client.read().await.clone();
-                let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
-                if let Ok(guest_resp) = client
-                    .request(method, url)
-                    .headers(Self::build_headers(&guest_settings))
-                    .query(query)
-                    .send()
-                    .await
-                {
-                    if guest_resp.status().is_success() {
-                        return guest_resp
-                            .json::<T>()
-                            .await
-                            .map_err(|e| format!("Invalid Pawchive response: {e}"));
+                if guest_resp.status().is_success() {
+                    let guest_body = guest_resp.text().await.unwrap_or_default();
+                    if let Ok(data) = serde_json::from_str::<T>(&guest_body) {
+                        return Ok(data);
                     }
                 }
             }
+        }
 
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(format!("Pawchive API HTTP {status}: {}", body.trim()));
         }
-        response
-            .json::<T>()
-            .await
-            .map_err(|e| format!("Invalid Pawchive response: {e}"))
+
+        let body = response.text().await.map_err(|e| e.to_string())?;
+
+        match serde_json::from_str::<T>(&body) {
+            Ok(data) => Ok(data),
+            Err(err) => {
+                if is_auth {
+                    let guest_settings = AppSettings {
+                        session_cookie: String::new(),
+                        ..settings
+                    };
+                    let client = self.client.read().await.clone();
+                    let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
+                    if let Ok(guest_resp) = client
+                        .request(method, url)
+                        .headers(Self::build_headers(&guest_settings))
+                        .query(query)
+                        .send()
+                        .await
+                    {
+                        if guest_resp.status().is_success() {
+                            let guest_body = guest_resp.text().await.unwrap_or_default();
+                            if let Ok(data) = serde_json::from_str::<T>(&guest_body) {
+                                return Ok(data);
+                            }
+                        }
+                    }
+                }
+                Err(format!("Invalid Pawchive response: {err}"))
+            }
+        }
     }
 
     async fn action(&self, method: Method, path: &str) -> Result<ApiActionResult, String> {
@@ -575,7 +622,7 @@ impl PawchiveClient {
         &self,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let params = self.list_params(query, offset).await?;
         self.json(Method::GET, "/posts", &params).await
     }
@@ -585,7 +632,7 @@ impl PawchiveClient {
         period: &str,
         date: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         if !offset.is_multiple_of(50) {
             return Err("Pawchive offset must be a multiple of 50".to_string());
         }
@@ -622,7 +669,7 @@ impl PawchiveClient {
         Self::parse_popular_posts(&html)
     }
 
-    fn parse_popular_posts(html: &str) -> Result<Vec<PawchivePost>, String> {
+    fn parse_popular_posts(html: &str) -> Result<Vec<Post>, String> {
         let document = Html::parse_document(html);
         let card_selector = Selector::parse("article.post-card").map_err(|e| e.to_string())?;
         let title_selector = Selector::parse(".post-card__header").map_err(|e| e.to_string())?;
@@ -677,7 +724,7 @@ impl PawchiveClient {
                     })
                 });
 
-                Ok(PawchivePost {
+                Ok(Post {
                     id,
                     user,
                     service,
@@ -727,7 +774,7 @@ impl PawchiveClient {
         creator_id: &str,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         let path = format!(
             "/{}/user/{}",
             Self::segment(service),
@@ -889,7 +936,7 @@ impl PawchiveClient {
         service: &str,
         creator_id: &str,
         post_id: &str,
-    ) -> Result<PawchivePost, String> {
+    ) -> Result<Post, String> {
         let path = format!(
             "/{}/user/{}/post/{}",
             Self::segment(service),
@@ -1248,13 +1295,21 @@ impl SourceProvider for PawchiveProvider {
         self.client.fetch_creator_tags(service, creator_id).await
     }
 
+    async fn fetch_announcements(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Vec<Announcement>, String> {
+        self.client.fetch_announcements(service, creator_id).await
+    }
+
     async fn fetch_posts(
         &self,
         service: &str,
         creator_id: &str,
         offset: u32,
         query: Option<&str>,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         self.client
             .fetch_creator_posts(service, creator_id, query, offset)
             .await
@@ -1265,7 +1320,7 @@ impl SourceProvider for PawchiveProvider {
         service: &str,
         creator_id: &str,
         post_id: &str,
-    ) -> Result<Option<PawchivePost>, String> {
+    ) -> Result<Option<Post>, String> {
         match self.client.fetch_post(service, creator_id, post_id).await {
             Ok(post) => Ok(Some(post)),
             Err(e) if e.contains("404") => Ok(None),
@@ -1288,7 +1343,7 @@ impl SourceProvider for PawchiveProvider {
         &self,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         self.client.fetch_recent_posts(query, offset).await
     }
 
@@ -1297,7 +1352,7 @@ impl SourceProvider for PawchiveProvider {
         period: &str,
         date: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String> {
+    ) -> Result<Vec<Post>, String> {
         self.client.fetch_popular_posts(period, date, offset).await
     }
 
@@ -1574,6 +1629,30 @@ mod tests {
         );
         assert_eq!(
             provider.resolve_thumbnail_url("ab/cd/thumb.jpg"),
+            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
+        );
+
+        let fallback_conf = ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: None,
+            image_url: None,
+            session_cookie: String::new(),
+            username: String::new(),
+            services: vec![],
+            is_custom: false,
+            priority: 1,
+        };
+        let fallback_provider = PawchiveProvider::new(fallback_conf).unwrap();
+        assert_eq!(
+            fallback_provider.resolve_media_url("/data/ab/cd/video.mp4", None),
+            "https://file.pawchive.pw/data/ab/cd/video.mp4"
+        );
+        assert_eq!(
+            fallback_provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
             "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
         );
     }

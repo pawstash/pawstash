@@ -1,10 +1,10 @@
-use crate::api::models::{Attachment, PawchivePost, PostRevision};
+use crate::api::models::{Attachment, Post, PostRevision};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciledPost {
-    pub post: PawchivePost,
+    pub post: Post,
     pub revisions: Vec<PostRevision>,
     pub available_providers: Vec<String>,
     pub attachment_sources: HashMap<String, Vec<String>>,
@@ -57,7 +57,7 @@ fn chrono_parse_timestamp(s: &str) -> Result<i64, ()> {
     Err(())
 }
 
-fn score_snapshot(post: &PawchivePost) -> (i64, i64, usize, bool) {
+fn score_snapshot(post: &Post) -> (i64, i64, usize, bool) {
     let edited_ts = parse_timestamp(post.edited.as_deref());
     let added_ts = parse_timestamp(post.added.as_deref());
     let att_count = post.attachments.as_ref().map(|a| a.len()).unwrap_or(0)
@@ -66,7 +66,7 @@ fn score_snapshot(post: &PawchivePost) -> (i64, i64, usize, bool) {
     (edited_ts, added_ts, att_count, has_full)
 }
 
-pub fn reconcile_post_snapshots(snapshots: Vec<(String, PawchivePost)>) -> Option<ReconciledPost> {
+pub fn reconcile_post_snapshots(snapshots: Vec<(String, Post)>) -> Option<ReconciledPost> {
     if snapshots.is_empty() {
         return None;
     }
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn reconciles_newer_edited_snapshot() {
-        let post_old = PawchivePost {
+        let post_old = Post {
             id: "1".into(),
             user: "user".into(),
             service: "patreon".into(),
@@ -201,7 +201,7 @@ mod tests {
             extra: HashMap::new(),
         };
 
-        let post_new = PawchivePost {
+        let post_new = Post {
             id: "1".into(),
             user: "user".into(),
             service: "patreon".into(),

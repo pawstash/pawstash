@@ -25,7 +25,7 @@
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { notify } from '$lib/utils/toast';
-  import type { PawchivePost } from '$lib/types/pawchive';
+  import type { Post } from '$lib/types/content';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -51,7 +51,7 @@
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
-  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<PawchivePost>() : []);
+  let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
   let stashes = $derived(libraryState.allStashes);
   let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
 
@@ -74,7 +74,7 @@
   });
 
   async function handleBatchToggleStash(collectionId: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !collectionId) return;
     const isAllIn = batchSelectedStashes.includes(collectionId);
     try {
@@ -95,7 +95,7 @@
   }
 
   async function handleBatchCreateAndAddToStash(name: string) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0 || !name.trim()) return;
     try {
       const newStash = await libraryState.createStash(name.trim());
@@ -116,7 +116,7 @@
   }
 
   async function batchSaveToLibrary() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {
@@ -133,7 +133,7 @@
   }
 
   async function batchDownloadPosts() {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     let count = 0;
     try {
@@ -155,7 +155,7 @@
   }
 
   async function batchFavoritePosts(isFav: boolean) {
-    const items = selectionState.getItems<PawchivePost>();
+    const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
     try {
       for (const post of items) {

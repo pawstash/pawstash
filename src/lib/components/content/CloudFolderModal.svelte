@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
-  import type { PawchivePost } from '$lib/types/pawchive';
+  import type { Post } from '$lib/types/content';
   import { formatBytes } from '$lib/utils/formatters';
   import { i18n } from '$lib/i18n/i18nState.svelte';
-  import { apiStartDownload, apiGetAxumPort } from '$lib/utils/ipc';
+  import { apiStartDownload } from '$lib/utils/ipc';
+  import { serverPortState } from '$lib/state/serverPort.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { toast } from 'svelte-sonner';
@@ -29,20 +30,19 @@
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
 
   let {
-    folder = null,
+    folder,
     initialFolderId = null,
     post = null,
-    open = false,
+    open,
     onclose
   }: {
     folder: CloudFolderResult | null;
     initialFolderId?: string | null;
-    post?: PawchivePost | null;
+    post?: Post | null;
     open: boolean;
     onclose: () => void;
   } = $props();
 
-  let mediaPort = $state(0);
   let selectedIds = $state<Set<string>>(new Set());
 
   // Folder navigation history
@@ -52,12 +52,8 @@
   // Media previewer state
   let previewIndex = $state<number | null>(null);
 
-  onMount(async () => {
-    try {
-      mediaPort = await apiGetAxumPort();
-    } catch {
-      // ignore
-    }
+  onMount(() => {
+    void serverPortState.ensurePort();
   });
 
   function getEffectiveStartFolder(nodes: CloudNode[], targetId?: string | null): { id: string | null; name: string } {
@@ -230,39 +226,42 @@
 
   function resolveStreamUrl(node: CloudNode): string {
     const localJob = getNodeDownloadJob(node);
+    const port = serverPortState.port || 0;
     if (localJob?.status === 'completed' && localJob.final_path) {
-      if (mediaPort > 0) {
+      if (port > 0) {
         const encoded = localJob.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${mediaPort}/media/${encoded}`;
+        return `http://127.0.0.1:${port}/media/${encoded}`;
       }
       return convertFileSrc(localJob.final_path);
     }
 
-    if (node.stream_url?.startsWith('/cloud_stream/') && mediaPort > 0) {
-      return `http://127.0.0.1:${mediaPort}${node.stream_url}`;
+    if (node.stream_url?.startsWith('/cloud_stream/') && port > 0) {
+      return `http://127.0.0.1:${port}${node.stream_url}`;
     }
-    if (node.download_url?.startsWith('/cloud_stream/') && mediaPort > 0) {
-      return `http://127.0.0.1:${mediaPort}${node.download_url}`;
+    if (node.download_url?.startsWith('/cloud_stream/') && port > 0) {
+      return `http://127.0.0.1:${port}${node.download_url}`;
     }
     const rawUrl = node.stream_url || node.download_url || '';
     if (
-      mediaPort > 0 &&
+      port > 0 &&
       rawUrl &&
       (rawUrl.includes('dropbox.com') ||
         rawUrl.includes('pixeldrain.com') ||
         rawUrl.includes('drive.google.com') ||
         rawUrl.includes('dropboxusercontent.com'))
     ) {
-      return `http://127.0.0.1:${mediaPort}/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`;
+      return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`;
     }
     return rawUrl;
   }
 
   function resolveDownloadUrl(node: CloudNode): string {
-    if (node.download_url?.startsWith('/cloud_stream/') && mediaPort > 0) {
-      return `http://127.0.0.1:${mediaPort}${node.download_url}`;
+    const raw = node.download_url || node.stream_url || '';
+    const port = serverPortState.port || 0;
+    if (raw.startsWith('/cloud_stream/') && port > 0) {
+      return `http://127.0.0.1:${port}${raw}`;
     }
-    return node.download_url || node.stream_url || '';
+    return raw;
   }
 
   let currentItems = $derived.by(() => {
@@ -408,7 +407,7 @@
     }
   }
 
-  function getDownloadPost(): PawchivePost {
+  function getDownloadPost(): Post {
     if (post) return post;
     return {
       id: folder?.title || 'cloud_download',

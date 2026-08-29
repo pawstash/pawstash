@@ -94,19 +94,26 @@ pub trait SourceProvider: Send + Sync {
     ) -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
+    async fn fetch_announcements(
+        &self,
+        _service: &str,
+        _creator_id: &str,
+    ) -> Result<Vec<Announcement>, String> {
+        Ok(Vec::new())
+    }
     async fn fetch_posts(
         &self,
         service: &str,
         creator_id: &str,
         offset: u32,
         query: Option<&str>,
-    ) -> Result<Vec<PawchivePost>, String>;
+    ) -> Result<Vec<Post>, String>;
     async fn fetch_post(
         &self,
         service: &str,
         creator_id: &str,
         post_id: &str,
-    ) -> Result<Option<PawchivePost>, String>;
+    ) -> Result<Option<Post>, String>;
     async fn fetch_post_revisions(
         &self,
         service: &str,
@@ -117,13 +124,13 @@ pub trait SourceProvider: Send + Sync {
         &self,
         query: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String>;
+    ) -> Result<Vec<Post>, String>;
     async fn fetch_popular_posts(
         &self,
         period: &str,
         date: Option<&str>,
         offset: u32,
-    ) -> Result<Vec<PawchivePost>, String>;
+    ) -> Result<Vec<Post>, String>;
     async fn fetch_post_comments(
         &self,
         service: &str,

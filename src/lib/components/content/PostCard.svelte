@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PawchivePost } from '$lib/types/pawchive';
+  import type { Post } from '$lib/types/content';
   import type { LibraryCollection } from '$lib/types/library';
   import { configState } from '$lib/state/configState.svelte';
   import { contentState } from '$lib/state/contentState.svelte';
@@ -28,10 +28,10 @@
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
   interface Props {
-    post: PawchivePost;
+    post: Post;
     showCreator?: boolean;
     orderedKeys?: string[];
-    itemsMap?: Map<string, PawchivePost>;
+    itemsMap?: Map<string, Post>;
   }
 
   let { post, showCreator = true, orderedKeys, itemsMap }: Props = $props();

@@ -5,7 +5,7 @@
 <script lang="ts">
   import { getContext, onDestroy } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
-  import type { PawchivePost } from '$lib/types/pawchive';
+  import type { Post } from '$lib/types/content';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { apiSaveSettings } from '$lib/utils/ipc';
@@ -16,7 +16,7 @@
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
   interface Props {
-    posts: PawchivePost[];
+    posts: Post[];
     loading?: boolean;
     hasMore?: boolean;
     onLoadMore?: () => void | Promise<void>;
