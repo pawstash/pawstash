@@ -610,7 +610,7 @@ export function isH265Video(filename?: string, url?: string): boolean {
   return /\b(h265|hevc|x265)\b|\.(h265|hevc)(?:$|[?#])/i.test(target);
 }
 
-export type MediaErrorPreset = 'unsupported_format' | 'unsupported_codec' | 'unavailable' | 'network' | 'decode' | 'custom';
+export type MediaErrorPreset = 'unsupported_format' | 'unsupported_codec' | 'unavailable' | 'unarchived' | 'network' | 'decode' | 'custom';
 
 export interface MediaFailureState {
   preset: MediaErrorPreset;
@@ -621,8 +621,14 @@ export interface MediaFailureState {
 export function diagnoseVideoFailure(
   file?: Attachment | null,
   videoEl?: HTMLVideoElement | null,
-  options?: { isLocal?: boolean }
+  options?: { isLocal?: boolean; isUnarchived?: boolean }
 ): MediaFailureState {
+  if (options?.isUnarchived) {
+    return {
+      preset: 'unarchived',
+      message: videoEl?.error?.message || undefined
+    };
+  }
   const name = file?.name || '';
   const src = videoEl?.src || file?.path || '';
   const mediaErr = videoEl?.error;
@@ -675,12 +681,11 @@ export function diagnoseVideoFailure(
           message: mediaErr.message || undefined
         };
       }
-      if (mediaErr.message && (mediaErr.message.includes('404') || mediaErr.message.includes('410') || mediaErr.message.includes('Not Found'))) {
-        return {
-          preset: 'unavailable',
-          message: mediaErr.message
-        };
-      }
+      // For remote web streams (MP4/WebM/HLS etc.), code 4 with empty/upstream error means 404/403/unavailable on source
+      return {
+        preset: 'unavailable',
+        message: mediaErr.message || undefined
+      };
     }
     if (mediaErr.message && mediaErr.message.trim().length > 0) {
       return {
@@ -709,7 +714,7 @@ export function diagnoseVideoFailure(
   }
 
   return {
-    preset: 'custom',
+    preset: 'unavailable',
     message: mediaErr?.message || undefined
   };
 }

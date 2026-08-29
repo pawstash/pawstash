@@ -15,6 +15,8 @@
     downloadedBytes?: number;
     totalBytes?: number;
     downloadedPath?: string;
+    isUnavailable?: boolean;
+    isUnarchived?: boolean;
   }
 </script>
 
@@ -583,8 +585,8 @@
               {@html current.html}
             </div>
           </div>
-        {:else if current.kind === 'video' && (videoErrors[index] || getUnsupportedContainerFormat(current?.name, current?.url))}
-          {@const failure = videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined }}
+        {:else if current.kind === 'video' && (current.isUnarchived || current.isUnavailable || videoErrors[index] || getUnsupportedContainerFormat(current?.name, current?.url))}
+          {@const failure = current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined })}
           <div
             class="viewer-file-state"
             class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
@@ -626,6 +628,8 @@
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
               {/if}
+            {:else if failure.preset === 'unarchived'}
+              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
             {:else if failure.preset === 'unavailable'}
               <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
             {:else}

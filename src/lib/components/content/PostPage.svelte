@@ -21,7 +21,7 @@
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl, diagnoseVideoFailure, getUnsupportedContainerFormat, isH265Video, getFileExtension, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
@@ -540,10 +540,7 @@
       // If duration is known and video has 0 dimensions, video track cannot be decoded (e.g. HEVC in Chromium)
       if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
         logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
-        videoFailures[index] = {
-          preset: 'unsupported_codec',
-          format: isH265Video(file.name) ? 'H.265 / HEVC' : undefined
-        };
+        videoFailures[index] = { preset: 'unsupported_codec', format: 'H.265 / HEVC' };
       }
     }
   }
@@ -553,18 +550,28 @@
       const video = e.currentTarget as HTMLVideoElement;
       logMediaError('video', video.src, file.name, video.error);
 
-      const remote = remoteFileUrl(file);
-      if (remote && video.src !== remote && !video.src.includes('cloud_stream')) {
-        logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
-        video.src = remote;
-        return;
+      const job = attachmentDownload(file);
+      const isDownloaded = Boolean(job?.final_path && job.status === 'completed');
+
+      if (!isDownloaded) {
+        const remote = remoteFileUrl(file);
+        if (remote && video.src !== remote && !video.src.includes('cloud_stream')) {
+          logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
+          video.src = remote;
+          return;
+        }
       }
 
-      const downloaded = attachmentDownload(file);
       videoFailures[index] = diagnoseVideoFailure(file, video, {
-        isLocal: Boolean(downloaded && downloaded.status === 'completed')
+        isLocal: isDownloaded,
+        isUnarchived: Boolean(post?.has_full === false && !isDownloaded && (file as any)?.is_cloud !== true)
       });
     }
+  }
+
+  function openFileExternally(item?: DownloadItem | null) {
+    if (!item?.final_path) return;
+    void apiOpenDownloadFile(item.final_path);
   }
 
   function isHtmlContentEmpty(html?: string) {
@@ -788,6 +795,7 @@
     const job = attachmentDownload(file);
     const width = typeof file.width === 'number' && file.width > 0 ? file.width : undefined;
     const height = typeof file.height === 'number' && file.height > 0 ? file.height : undefined;
+    const isUnarchived = Boolean(post?.has_full === false && !job?.final_path && (file as any)?.is_cloud !== true);
     return {
       id: file.path || `${file.name || 'media'}:${itemIndex}`,
       url,
@@ -801,7 +809,8 @@
       downloadStatus: job?.status,
       downloadedBytes: job?.downloaded_bytes,
       totalBytes: job?.total_bytes,
-      downloadedPath: job?.final_path
+      downloadedPath: job?.final_path,
+      isUnarchived
     };
   }));
 
@@ -816,7 +825,16 @@
     });
   }
 
-  function openMediaViewer(file: Attachment, source: Attachment[] = filteredMedia, originVideoEl?: HTMLVideoElement | null) {
+  let activeGalleryItems = $derived.by((): Attachment[] => {
+    const items: Attachment[] = [];
+    if (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch && embedAttachment) {
+      items.push(embedAttachment);
+    }
+    items.push(...filteredMedia);
+    return items;
+  });
+
+  function openMediaViewer(file: Attachment, source: Attachment[] = activeGalleryItems, originVideoEl?: HTMLVideoElement | null) {
     let time = 0;
     if (originVideoEl && !originVideoEl.paused) {
       time = originVideoEl.currentTime || 0;
@@ -836,43 +854,19 @@
 
     viewerInitialTime = time;
 
-    let allSource = embedAttachment && !source.some((s) => s.path === embedAttachment!.path)
-      ? [embedAttachment, ...source]
-      : [...source];
-
-    if ((file as any)?.cloud_folder_result) {
-      const fRes = (file as any).cloud_folder_result as CloudFolderResult;
-      const cloudFiles = fRes.nodes.filter((n) => !n.is_folder).map((n) => {
-        return {
-          name: n.name,
-          path: n.stream_url || n.download_url || `cloud:${fRes.provider}:${n.id}`,
-          size: n.size,
-          server: '',
-          is_cloud: true,
-          cloud_provider: fRes.provider,
-          cloud_node_id: n.id,
-          cloud_folder_title: fRes.title,
-          cloud_folder_result: fRes
-        } as Attachment;
-      });
-      for (const cf of cloudFiles) {
-        if (!allSource.some((s) => s.path === cf.path || (s.name && cf.name && s.name === cf.name))) {
-          allSource.push(cf);
-        }
-      }
-    }
-
-    const sourceItems = allSource
+    const sourceList = source && source.length > 0 ? source : [file];
+    const sourceItems = sourceList
       .filter((item): item is Attachment => Boolean(item?.path || (item as any)?.html))
       .filter((item, itemIndex, list) => list.findIndex((candidate) => isSameAttachment(candidate, item)) === itemIndex);
 
-    if (post?.file?.path && !sourceItems.some((s) => isSameAttachment(s, post?.file))) {
-      sourceItems.push(post.file);
+    let nextIndex = sourceItems.findIndex((item) => isSameAttachment(item, file));
+    if (nextIndex < 0) {
+      sourceItems.unshift(file);
+      nextIndex = 0;
     }
 
-    const nextIndex = sourceItems.findIndex((item) => isSameAttachment(item, file));
-    viewerFiles = nextIndex >= 0 ? sourceItems : [file, ...sourceItems];
-    viewerIndex = nextIndex >= 0 ? nextIndex : 0;
+    viewerFiles = sourceItems;
+    viewerIndex = nextIndex;
   }
 
   let initialViewerHandled = $state(false);
@@ -1035,7 +1029,7 @@
     if (job && !['failed', 'cancelled', 'missing'].includes(job.status)) return;
     await download(file, Math.max(0, fileIndex));
   }
-
+  
   let saved = $derived(post ? libraryState.isSaved(post) : false);
   let saving = $derived(post ? libraryState.isPending(post) : false);
   let stashes = $derived(libraryState.allStashes);
@@ -1563,15 +1557,6 @@
     }
   }
 
-  async function openFileExternally(item?: DownloadItem | null) {
-    if (!item?.final_path) return;
-    try {
-      await apiOpenDownloadFile(item.final_path);
-    } catch (error) {
-      notify.error(i18n.t('downloads.open_file_failed') || 'Failed to open file', error);
-    }
-  }
-
   async function openPostFolder() {
     const completed = media.map(attachmentDownload).find((d) => d && d.status === 'completed');
     if (completed?.final_path) {
@@ -1741,12 +1726,13 @@
   {@const declaredSize = declaredBytes > 0 ? formatBytes(declaredBytes) : ''}
   {@const hasProgress = Boolean(job && !verifying && !queued && knownTotal > 0)}
   {@const progress = job && knownTotal > 0 ? Math.min(100, Math.round(job.downloaded_bytes / knownTotal * 100)) : 0}
+  {@const isUnarchived = Boolean(post?.has_full === false && !downloaded && (file as any)?.is_cloud !== true)}
   <div class="media-download-group">
     {#if downloaded}
       <Button
         variant="ghost"
         class="media-download-btn is-downloaded"
-        onclick={() => openMediaViewer(file, filteredMedia)}
+        onclick={() => openMediaViewer(file, activeGalleryItems)}
         title={i18n.t('post.viewer_open')}
       >
         <span class="attachment-button-state downloaded-state">
@@ -1871,6 +1857,18 @@
         aria-label={i18n.t('downloads.remove')}
       >
         <IconDismiss class="w-[18px] h-[18px]" />
+      </Button>
+    {:else if isUnarchived}
+      <Button
+        variant="ghost"
+        class="media-download-btn opacity-60 cursor-not-allowed"
+        disabled={true}
+        title={i18n.t('post.file_not_archived')}
+      >
+        <span class="attachment-button-state text-[var(--fg-muted)]">
+          <IconVideoOff class="w-[16px] h-[16px]" />
+          <span>{i18n.t('post.unarchived')}</span>
+        </span>
       </Button>
     {:else}
       <Button
@@ -2327,14 +2325,15 @@
                       </div>
                     {:else if isAttachmentVideo(file, url) || isAttachmentImage(file, url)}
                       {@const isVid = isAttachmentVideo(file, url)}
+                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
                           <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                       </div>
-                      {#if isVid && (videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported))}
-                        {@const failure = videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : null)}
+                      {#if isVid && (isUnarchived || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported))}
+                        {@const failure = (isUnarchived ? { preset: 'unarchived' as const } : null) || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : null)}
                         <div class="file-placeholder is-error-placeholder">
                           <IconVideoOff class="placeholder-icon" />
                           {#if failure?.preset === 'unsupported_codec'}
@@ -2391,6 +2390,8 @@
                                 <span>{i18n.t('post.open_in_player')}</span>
                               </Button>
                             {/if}
+                          {:else if failure?.preset === 'unarchived'}
+                            <p class="placeholder-text">{i18n.t('post.file_not_archived')}</p>
                           {:else if failure?.preset === 'unavailable'}
                             <p class="placeholder-text">{i18n.t('post.cloud_file_unavailable')}</p>
                           {:else}
@@ -2455,7 +2456,7 @@
                           <button
                             class="media-viewer-open-btn"
                             type="button"
-                            onclick={(e) => openMediaViewer(file!, filteredMedia, e.currentTarget.parentElement?.querySelector('video'))}
+                            onclick={(e) => openMediaViewer(file!, activeGalleryItems, e.currentTarget.parentElement?.querySelector('video'))}
                             use:tooltip={i18n.t('post.viewer_open')}
                             aria-label={i18n.t('post.viewer_open')}
                           ><IconEye /></button>
@@ -2463,7 +2464,7 @@
                           <button
                             class="media-open-surface"
                             type="button"
-                            onclick={() => openMediaViewer(file!, filteredMedia)}
+                            onclick={() => openMediaViewer(file!, activeGalleryItems)}
                             aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || post.title}`}
                           >
                             <img
@@ -2485,13 +2486,19 @@
                       {@render mediaDownloadAction(file!, index)}
                     {:else if isAttachmentAudio(file, url)}
                       {@const ext = getFileExtension(file?.name).toUpperCase() || 'AUDIO'}
+                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
                           <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                       </div>
-                      {#if activeAudioIndexes.has(index)}
+                      {#if isUnarchived}
+                        <div class="file-placeholder is-error-placeholder">
+                          <IconVideoOff class="placeholder-icon" />
+                          <p class="placeholder-text">{i18n.t('post.file_not_archived')}</p>
+                        </div>
+                      {:else if activeAudioIndexes.has(index)}
                         <div class="audio-player-wrapper">
                           <IconMusicFilled class="placeholder-icon video-play-accent mb-2" />
                           <audio
@@ -2518,26 +2525,36 @@
                           <p class="placeholder-text">{ext}</p>
                         </button>
                       {/if}
-                      <button
-                        class="media-viewer-open-btn"
-                        type="button"
-                        onclick={() => openMediaViewer(file!, filteredMedia)}
-                        use:tooltip={i18n.t('post.viewer_open')}
-                        aria-label={i18n.t('post.viewer_open')}
-                      ><IconEye /></button>
+                      {#if !isUnarchived}
+                        <button
+                          class="media-viewer-open-btn"
+                          type="button"
+                          onclick={() => openMediaViewer(file!, activeGalleryItems)}
+                          use:tooltip={i18n.t('post.viewer_open')}
+                          aria-label={i18n.t('post.viewer_open')}
+                        ><IconEye /></button>
+                      {/if}
                       {@render mediaDownloadAction(file!, index)}
                     {:else}
                       {@const ext = getFileExtension(file?.name).toUpperCase() || 'FILE'}
+                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
                           <span class="cloud-source-badge">{(file as any).cloud_provider}</span>
                         {/if}
                       </div>
-                      <button class="file-placeholder media-open-surface" type="button" onclick={() => openMediaViewer(file!, filteredMedia)} aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
-                        <IconDocument class="placeholder-icon" />
-                        <p class="placeholder-text">{ext}</p>
-                      </button>
+                      {#if isUnarchived}
+                        <div class="file-placeholder is-error-placeholder">
+                          <IconVideoOff class="placeholder-icon" />
+                          <p class="placeholder-text">{i18n.t('post.file_not_archived')}</p>
+                        </div>
+                      {:else}
+                        <button class="file-placeholder media-open-surface" type="button" onclick={() => openMediaViewer(file!, activeGalleryItems)} aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
+                          <IconDocument class="placeholder-icon" />
+                          <p class="placeholder-text">{ext}</p>
+                        </button>
+                      {/if}
                       {@render mediaDownloadAction(file!, index)}
                     {/if}
                   </div>
@@ -3218,16 +3235,6 @@
     text-align: center;
     opacity: 0.8;
     transition: color var(--duration-fast) var(--ease-expo), opacity var(--duration-fast) var(--ease-expo);
-  }
-
-  .placeholder-subtext {
-    margin: 2px auto 0;
-    font-size: 11.5px;
-    color: var(--text-muted, var(--text-secondary));
-    max-width: 300px;
-    line-height: 1.4;
-    text-align: center;
-    opacity: 0.7;
   }
 
   .file-placeholder,
