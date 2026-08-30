@@ -422,6 +422,15 @@
     });
   });
 
+  function isFileUnarchived(file: Attachment | null | undefined, isDownloaded?: boolean): boolean {
+    if (!file) return false;
+    if (isDownloaded) return false;
+    if ((file as any)?.is_cloud === true) return false;
+    const isDeferred = (file as any)?.deferred === true;
+    const hasNoPath = !file.path || file.path.trim() === '' || file.path === 'null';
+    return isDeferred || hasNoPath;
+  }
+
   function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
     if (!a || !b) return false;
     if (a === b) return true;
@@ -433,7 +442,12 @@
     if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
 
     if (a.path && b.path && a.path === b.path) return true;
-    if (a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) return true;
+
+    const aIsCloud = (a as any).is_cloud === true;
+    const bIsCloud = (b as any).is_cloud === true;
+    if (aIsCloud === bIsCloud && a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) {
+      return true;
+    }
 
     return false;
   }
@@ -455,9 +469,20 @@
       }
       if (resolvedCloudAttachments.length > 0) {
         for (const att of resolvedCloudAttachments) {
-          const exists = items.some((existing) => isSameAttachment(existing, att));
-          if (!exists) {
-            items.push(att);
+          const stubIndex = items.findIndex(
+            (existing) =>
+              isFileUnarchived(existing) &&
+              existing.name &&
+              att.name &&
+              existing.name.trim().toLowerCase() === att.name.trim().toLowerCase()
+          );
+          if (stubIndex >= 0) {
+            items[stubIndex] = att;
+          } else {
+            const exists = items.some((existing) => isSameAttachment(existing, att));
+            if (!exists) {
+              items.push(att);
+            }
           }
         }
       }
@@ -563,14 +588,14 @@
 
       const syncDiag = diagnoseVideoFailure(file, video, {
         isLocal: isDownloaded,
-        isUnarchived: Boolean(post?.has_full === false && !isDownloaded && (file as any)?.is_cloud !== true)
+        isUnarchived: isFileUnarchived(file, isDownloaded)
       });
       videoFailures = { ...videoFailures, [index]: syncDiag };
 
       if (!isDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
         const asyncDiag = await diagnoseVideoFailureAsync(file, video, {
           isLocal: isDownloaded,
-          isUnarchived: Boolean(post?.has_full === false && !isDownloaded && (file as any)?.is_cloud !== true)
+          isUnarchived: isFileUnarchived(file, isDownloaded)
         });
         if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
           videoFailures = { ...videoFailures, [index]: asyncDiag };
@@ -825,7 +850,7 @@
     const job = attachmentDownload(file);
     const width = typeof file.width === 'number' && file.width > 0 ? file.width : undefined;
     const height = typeof file.height === 'number' && file.height > 0 ? file.height : undefined;
-    const isUnarchived = Boolean(post?.has_full === false && !job?.final_path && (file as any)?.is_cloud !== true);
+    const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
     return {
       id: file.path || `${file.name || 'media'}:${itemIndex}`,
       url,
@@ -1816,7 +1841,7 @@
   {@const declaredSize = declaredBytes > 0 ? formatBytes(declaredBytes) : ''}
   {@const hasProgress = Boolean(job && !verifying && !queued && knownTotal > 0)}
   {@const progress = job && knownTotal > 0 ? Math.min(100, Math.round(job.downloaded_bytes / knownTotal * 100)) : 0}
-  {@const isUnarchived = Boolean(post?.has_full === false && !downloaded && (file as any)?.is_cloud !== true)}
+  {@const isUnarchived = isFileUnarchived(file, Boolean(downloaded))}
   <div class="media-download-group">
     {#if downloaded}
       <Button
@@ -2422,7 +2447,7 @@
                       </div>
                     {:else if isAttachmentVideo(file, url) || isAttachmentImage(file, url)}
                       {@const isVid = isAttachmentVideo(file, url)}
-                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
+                      {@const isUnarchived = isFileUnarchived(file, Boolean(downloaded?.final_path))}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
@@ -2628,7 +2653,7 @@
                       {@render mediaDownloadAction(file!, index)}
                     {:else if isAttachmentAudio(file, url)}
                       {@const ext = getFileExtension(file?.name).toUpperCase() || 'AUDIO'}
-                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
+                      {@const isUnarchived = isFileUnarchived(file, Boolean(downloaded?.final_path))}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
@@ -2679,7 +2704,7 @@
                       {@render mediaDownloadAction(file!, index)}
                     {:else}
                       {@const ext = getFileExtension(file?.name).toUpperCase() || 'FILE'}
-                      {@const isUnarchived = Boolean(post?.has_full === false && !downloaded?.final_path && (file as any)?.is_cloud !== true)}
+                      {@const isUnarchived = isFileUnarchived(file, Boolean(downloaded?.final_path))}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
