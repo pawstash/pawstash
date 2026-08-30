@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, getContext } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
-  import { apiFetchCreatorArtworkDataUrl, apiSaveSettings } from '$lib/utils/ipc';
+  import { apiSaveSettings } from '$lib/utils/ipc';
   import { creatorAvatarUrl } from '$lib/utils/media';
+  import { thumbHashToUrl } from '$lib/utils/thumbhash';
+  import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Creator, Favorite, Post } from '$lib/types/content';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -150,7 +152,8 @@
   let stickyFiltersOpen = $state(false);
   let initialized = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  let avatarUrls = $state<Record<string, string>>({});
+  let visibleCreatorsCount = $state(80);
+  const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
   $effect(() => {
     navigationState.saveViewState(navigationState.entryKey, {
@@ -225,6 +228,39 @@
     }
     return sortCreators(filtered, creatorSort);
   });
+  let visibleCreators = $derived(filteredCreators.slice(0, visibleCreatorsCount));
+  let hasMoreCreators = $derived(filteredCreators.length > visibleCreatorsCount);
+
+  function loadMoreCreators() {
+    if (!hasMoreCreators) return;
+    visibleCreatorsCount += 80;
+  }
+
+  function creatorSentinel(node: HTMLElement) {
+    const root = scrollContext?.viewport ?? null;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMoreCreators();
+        }
+      },
+      { root, rootMargin: '1000px 0px' }
+    );
+    io.observe(node);
+
+    return {
+      destroy() {
+        io.disconnect();
+      }
+    };
+  }
+
+  $effect(() => {
+    normalizedQuery;
+    creatorSort;
+    creatorServiceFilters;
+    visibleCreatorsCount = 80;
+  });
   let sortOptions = $derived(activeTab === 'posts'
     ? [
         { value: 'favorite_desc', label: i18n.t('favorites.sort_favorite_desc') },
@@ -298,16 +334,6 @@
 
   $effect(() => {
     void creatorsState.load();
-  });
-
-  $effect(() => {
-    for (const creator of creators) {
-      const key = `${creator.service}:${creator.id}`;
-      if (avatarUrls[key]) continue;
-      void apiFetchCreatorArtworkDataUrl(creator.service, creator.id, 'avatar')
-        .then((url) => avatarUrls = { ...avatarUrls, [key]: url })
-        .catch(() => {});
-    }
   });
 
   function favoriteOrder(item: Post | Creator) {
@@ -418,6 +444,7 @@
     searchQuery = '';
     filtersOpen = false;
     stickyFiltersOpen = false;
+    visibleCreatorsCount = 80;
     if (selectionState.active) selectionState.clear();
   }
 
@@ -575,7 +602,17 @@
   }
 
   function getAvatarUrl(creator: Creator) {
-    return avatarUrls[`${creator.service}:${creator.id}`] || creatorAvatarUrl(creator.service, creator.id, (creator.extra as any)?.avatar_thumbhash);
+    const avatarThumb = (creator.extra as any)?.avatar_thumbhash;
+    const headerThumb = (creator.extra as any)?.header_thumbhash;
+    if (avatarThumb) {
+      const url = thumbHashToUrl(avatarThumb);
+      if (url) return url;
+    }
+    if (headerThumb) {
+      const url = thumbHashToUrl(headerThumb);
+      if (url) return url;
+    }
+    return creatorAvatarUrl(creator.service, creator.id);
   }
 
   function formatDate(value: unknown) {
@@ -817,7 +854,7 @@
       onwheel={handleCreatorWheel}
       style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
     >
-      {#each filteredCreators as creator (creator.service + ':' + creator.id)}
+      {#each visibleCreators as creator (creator.service + ':' + creator.id)}
         {@const creatorKey = `${creator.service}:${creator.id}`}
         {@const isSelected = isSelectionActive && selectionState.isSelected(creatorKey)}
         <article
@@ -872,6 +909,12 @@
         </article>
       {/each}
     </div>
+
+    {#if hasMoreCreators}
+      <div use:creatorSentinel class="sentinel">
+        <IconLoading />
+      </div>
+    {/if}
   {/if}
 
   {#if error && currentCount > 0}<p class="inline-error">{error}</p>{/if}
@@ -1001,4 +1044,11 @@
 
   .fallback-initials { font-size: 26px; font-weight: 700; color: rgba(255,255,255,.35); }
   .inline-error { margin-top: 20px; text-align: center; font-size: 12px; }
+  .sentinel {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 32px 0;
+    color: var(--text-muted);
+  }
 </style>

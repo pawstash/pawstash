@@ -45,4 +45,5 @@ export interface AppSettings {
   providers?: import('./provider').ProviderConfig[];
   smart_merge_attachments?: boolean;
   pawchive_hide_ai?: boolean;
+  persist_in_app_favorites_locally?: boolean;
 }

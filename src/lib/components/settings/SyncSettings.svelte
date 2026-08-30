@@ -13,6 +13,7 @@
   import IconTimer from '~icons/fluent/timer-24-regular';
   import IconFlash from '~icons/fluent/flash-24-regular';
   import IconArrowSync from '~icons/fluent/arrow-sync-24-regular';
+  import IconHeart from '~icons/fluent/heart-24-regular';
 
   async function updateSetting<K extends keyof typeof configState.settings>(
     key: K,
@@ -114,6 +115,22 @@
       ]}
       value={configState.settings.sync_pawchive_session}
       onchange={(val) => void updateSetting('sync_pawchive_session', Boolean(val))}
+    />
+  </SettingItem>
+
+  <SettingItem
+    title={i18n.t('sync.persist_in_app_favorites_locally')}
+    description={i18n.t('sync.persist_in_app_favorites_locally_desc')}
+    icon={IconHeart}
+    align="right"
+  >
+    <SegmentedControl
+      options={[
+        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+      ]}
+      value={configState.settings.persist_in_app_favorites_locally ?? true}
+      onchange={(val) => void updateSetting('persist_in_app_favorites_locally', Boolean(val))}
     />
   </SettingItem>
 

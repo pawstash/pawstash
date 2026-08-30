@@ -42,6 +42,8 @@ class AccountState {
       this.session = await apiLogoutAccount();
       this.checked = true;
       this.clearFavorites();
+      void this.fetchFavorites('post', true);
+      void this.fetchFavorites('creator', true);
     } finally {
       this.loading = false;
     }
@@ -117,14 +119,12 @@ class AccountState {
     const s = service.toLowerCase();
     const c = String(creatorId).toLowerCase();
     const p = String(postId).toLowerCase();
-    this.favoritePosts = this.favoritePosts.filter(
-      (f) =>
-        !(
-          f.service?.toLowerCase() === s &&
-          String(f.user ?? f.user_id ?? '').toLowerCase() === c &&
-          String(f.id ?? '').toLowerCase() === p
-        )
-    );
+    this.favoritePosts = this.favoritePosts.filter((f: any) => {
+      const fService = String(f.service ?? '').toLowerCase();
+      const fUser = String(f.user ?? f.user_id ?? f.creator_id ?? f.extra?.user ?? f.extra?.user_id ?? '').toLowerCase();
+      const fId = String(f.id ?? f.post_id ?? '').toLowerCase();
+      return !(fService === s && fUser === c && fId === p);
+    });
   }
 
   addCreatorFavoriteOptimistic(creator: Creator | Favorite) {
@@ -149,13 +149,11 @@ class AccountState {
     if (!this.favoriteCreators) return;
     const s = service.toLowerCase();
     const c = String(creatorId).toLowerCase();
-    this.favoriteCreators = this.favoriteCreators.filter(
-      (f) =>
-        !(
-          f.service?.toLowerCase() === s &&
-          String(f.id ?? f.user ?? f.user_id ?? '').toLowerCase() === c
-        )
-    );
+    this.favoriteCreators = this.favoriteCreators.filter((f: any) => {
+      const fService = String(f.service ?? '').toLowerCase();
+      const fId = String(f.id ?? f.user ?? f.user_id ?? f.creator_id ?? f.extra?.id ?? '').toLowerCase();
+      return !(fService === s && fId === c);
+    });
   }
 }
 

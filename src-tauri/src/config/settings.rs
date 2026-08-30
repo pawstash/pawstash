@@ -75,6 +75,7 @@ pub struct AppSettings {
     pub providers: Vec<crate::api::provider::ProviderConfig>,
     pub smart_merge_attachments: bool,
     pub pawchive_hide_ai: bool,
+    pub persist_in_app_favorites_locally: bool,
 }
 
 impl Default for AppSettings {
@@ -136,6 +137,7 @@ impl Default for AppSettings {
             providers: crate::api::provider_manager::ProviderManager::default_configs(),
             smart_merge_attachments: true,
             pawchive_hide_ai: false,
+            persist_in_app_favorites_locally: true,
         }
     }
 }
@@ -364,6 +366,10 @@ impl AppSettings {
                 self.smart_merge_attachments.to_string(),
             ),
             ("pawchive_hide_ai", self.pawchive_hide_ai.to_string()),
+            (
+                "persist_in_app_favorites_locally",
+                self.persist_in_app_favorites_locally.to_string(),
+            ),
         ]
     }
 
@@ -426,6 +432,9 @@ impl AppSettings {
         }
         if let Some(value) = get("pawchive_hide_ai").and_then(|v| v.parse().ok()) {
             self.pawchive_hide_ai = value;
+        }
+        if let Some(value) = get("persist_in_app_favorites_locally").and_then(|v| v.parse().ok()) {
+            self.persist_in_app_favorites_locally = value;
         }
         if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
             if value == "Alt+X" {

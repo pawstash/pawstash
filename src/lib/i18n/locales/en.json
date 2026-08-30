@@ -846,6 +846,8 @@
     "sync_on_change_desc": "Instantly push library saves, stashes, and subscription updates to the server",
     "sync_pawchive_session": "Sync Pawchive Account",
     "sync_pawchive_session_desc": "End-to-end encrypted synchronization of your Pawchive login session across devices",
+    "persist_in_app_favorites_locally": "Keep in-app favorites on logout",
+    "persist_in_app_favorites_locally_desc": "Saves creators and posts favorited in the app to local guest favorites so they remain after logging out",
     "title": "Library Sync",
     "unlock": "Unlock",
     "unlock_title": "Unlock Vault",

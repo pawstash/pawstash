@@ -795,7 +795,7 @@ impl ContentRepository {
             ).map_err(|e| e.to_string())?;
         } else {
             connection.execute(
-                "DELETE FROM content_pins WHERE entity_kind=?1 AND service=?2 AND creator_id=?3 AND post_id=?4 AND reason=?5 AND account_id=?6",
+                "DELETE FROM content_pins WHERE entity_kind=?1 AND service=?2 AND creator_id=?3 AND post_id=?4 AND reason=?5 AND (account_id=?6 OR account_id='' OR ?6='')",
                 params![kind,service,creator_id,post_id,reason,account_id]
             ).map_err(|e| e.to_string())?;
         }
@@ -806,12 +806,12 @@ impl ContentRepository {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let (sql, entity_kind) = if kind == "artist" {
             (
-                "SELECT c.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN creators c USING(service,creator_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') GROUP BY c.service, c.creator_id ORDER BY faved_at DESC",
+                "SELECT c.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN creators c USING(service,creator_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR (?2 != '' AND pin.account_id='')) GROUP BY c.service, c.creator_id ORDER BY faved_at DESC",
                 "creator",
             )
         } else {
             (
-                "SELECT p.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN posts p USING(service,creator_id,post_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR pin.account_id='' OR ?2='') GROUP BY p.service, p.creator_id, p.post_id ORDER BY faved_at DESC",
+                "SELECT p.snapshot_json, MAX(pin.created_at) AS faved_at FROM content_pins pin JOIN posts p USING(service,creator_id,post_id) WHERE pin.entity_kind=?1 AND pin.reason='favorite' AND (pin.account_id=?2 OR (?2 != '' AND pin.account_id='')) GROUP BY p.service, p.creator_id, p.post_id ORDER BY faved_at DESC",
                 "post",
             )
         };
@@ -1197,5 +1197,101 @@ mod tests {
         assert!(favorites.iter().any(|f| f.id == "100"
             && f.service.as_deref() == Some("patreon")
             && f.extra.contains_key("faved_at")));
+    }
+
+    #[test]
+    fn test_list_favorites_isolates_accounts_and_cleans_pins() {
+        let repo = ContentRepository::new(512).unwrap();
+        let creator_a = CreatorProfile {
+            id: "creator_a_test".into(),
+            name: "Creator A".into(),
+            service: "patreon".into(),
+            public_id: None,
+            relation_id: None,
+            indexed: None,
+            updated: None,
+            kemono_favorited: None,
+            ever_imported: None,
+            extra: Default::default(),
+        };
+        let creator_guest = CreatorProfile {
+            id: "creator_guest_test".into(),
+            name: "Creator Guest".into(),
+            service: "fanbox".into(),
+            public_id: None,
+            relation_id: None,
+            indexed: None,
+            updated: None,
+            kemono_favorited: None,
+            ever_imported: None,
+            extra: Default::default(),
+        };
+        repo.save_creator(&creator_a).unwrap();
+        repo.save_creator(&creator_guest).unwrap();
+
+        // Pin creator_a under account "marselo_test", and creator_guest under guest ""
+        repo.set_pin(
+            "creator",
+            "patreon",
+            "creator_a_test",
+            None,
+            "favorite",
+            "marselo_test",
+            true,
+        )
+        .unwrap();
+        repo.set_pin(
+            "creator",
+            "fanbox",
+            "creator_guest_test",
+            None,
+            "favorite",
+            "",
+            true,
+        )
+        .unwrap();
+
+        // When logged in as "marselo_test": sees both account favorites and local guest favorites
+        let logged_in_favs = repo.list_favorites("artist", "marselo_test").unwrap();
+        assert!(logged_in_favs.iter().any(|f| f.id == "creator_a_test"));
+        assert!(logged_in_favs.iter().any(|f| f.id == "creator_guest_test"));
+
+        // When logged out (""): sees ONLY guest favorites, NOT account favorites
+        let guest_favs = repo.list_favorites("artist", "").unwrap();
+        assert!(guest_favs.iter().any(|f| f.id == "creator_guest_test"));
+        assert!(!guest_favs.iter().any(|f| f.id == "creator_a_test"));
+
+        // When logged in as another user "other_user_test": does NOT see "marselo_test"
+        let other_favs = repo.list_favorites("artist", "other_user_test").unwrap();
+        assert!(other_favs.iter().any(|f| f.id == "creator_guest_test"));
+        assert!(!other_favs.iter().any(|f| f.id == "creator_a_test"));
+
+        // Unpin creator_guest_test: should be removed completely
+        repo.set_pin(
+            "creator",
+            "fanbox",
+            "creator_guest_test",
+            None,
+            "favorite",
+            "",
+            false,
+        )
+        .unwrap();
+        let guest_favs_after = repo.list_favorites("artist", "").unwrap();
+        assert!(!guest_favs_after
+            .iter()
+            .any(|f| f.id == "creator_guest_test"));
+
+        // Clean up test pin for creator_a_test
+        repo.set_pin(
+            "creator",
+            "patreon",
+            "creator_a_test",
+            None,
+            "favorite",
+            "marselo_test",
+            false,
+        )
+        .unwrap();
     }
 }

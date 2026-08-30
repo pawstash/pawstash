@@ -1052,10 +1052,18 @@ pub async fn fetch_account_favorites(
                 }
             }
 
-            // Then include all purely local favorites (not present on remote)
-            for (key, local) in local_map {
-                if seen_keys.insert(key) {
-                    merged.push(local);
+            // Clean up stale account pins that are no longer present on remote
+            for key in local_map.keys() {
+                if !seen_keys.contains(key) {
+                    let _ = state.content.set_pin(
+                        if kind == "post" { "post" } else { "creator" },
+                        &key.0,
+                        &key.1,
+                        if kind == "post" { Some(&key.1) } else { None },
+                        "favorite",
+                        &account,
+                        false,
+                    );
                 }
             }
 
@@ -1106,6 +1114,9 @@ pub async fn set_post_favorite(
                 .ok_or_else(|| "Post is not cached".to_string())?,
         };
         state.content.pin_post(&post, "favorite", &account)?;
+        if settings.persist_in_app_favorites_locally && !account.is_empty() {
+            let _ = state.content.pin_post(&post, "favorite", "");
+        }
     } else {
         state.content.set_pin(
             "post",
@@ -1199,6 +1210,12 @@ pub async fn set_creator_favorite(
             &account,
             true,
         )?;
+        if settings.persist_in_app_favorites_locally && !account.is_empty() {
+            let _ =
+                state
+                    .content
+                    .set_pin("creator", &service, &creator_id, None, "favorite", "", true);
+        }
     } else {
         state.content.set_pin(
             "creator",
