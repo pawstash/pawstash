@@ -60,7 +60,7 @@ impl ProviderManager {
                 name: "Pawchive".into(),
                 enabled: true,
                 api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec!["https://kemono.su".into()],
+                fallback_urls: vec![],
                 file_url: Some("https://file.pawchive.pw".into()),
                 image_url: Some("https://img.pawchive.pw".into()),
                 session_cookie: String::new(),

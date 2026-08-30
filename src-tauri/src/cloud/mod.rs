@@ -78,3 +78,50 @@ impl CloudResolver {
         ))
     }
 }
+
+pub fn normalize_cloud_direct_url(url: &str) -> String {
+    let mut target_url = url.trim().to_string();
+    if let Ok(mut u) = reqwest::Url::parse(&target_url) {
+        let host = u.host_str().unwrap_or("").to_lowercase();
+        let path = u.path().to_string();
+
+        // 1. Dropbox direct download parameter
+        if host.contains("dropbox.com") {
+            let query: Vec<(String, String)> = u
+                .query_pairs()
+                .filter(|(k, _)| k != "dl" && k != "raw")
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            u.query_pairs_mut()
+                .clear()
+                .extend_pairs(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                .append_pair("raw", "1");
+            target_url = u.to_string();
+        }
+
+        // 2. Pixeldrain file link conversion
+        if host.contains("pixeldrain.com") && path.starts_with("/u/") {
+            let file_id = path.trim_start_matches("/u/");
+            u.set_path(&format!("/api/file/{file_id}"));
+            target_url = u.to_string();
+        }
+    }
+    target_url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_cloud_direct_url() {
+        assert_eq!(
+            normalize_cloud_direct_url("https://www.dropbox.com/s/xyz/video.mp4?dl=0"),
+            "https://www.dropbox.com/s/xyz/video.mp4?raw=1"
+        );
+        assert_eq!(
+            normalize_cloud_direct_url("https://pixeldrain.com/u/abc12345"),
+            "https://pixeldrain.com/api/file/abc12345"
+        );
+    }
+}

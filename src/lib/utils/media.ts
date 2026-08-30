@@ -27,19 +27,11 @@ export function deriveSubdomainOrigin(baseUrl: string, kind: 'image' | 'file' | 
     const url = new URL(origin);
     const host = url.hostname;
 
-    if (host.includes('cum.st') || host.includes('coomer')) {
+    if (host.includes('cum.st') || host.includes('onlyhaven') || host.includes('coomer')) {
       const parts = host.split('.');
       const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
       if (kind === 'image') return `${url.protocol}//img.${baseHost}`;
       if (kind === 'file') return `${url.protocol}//e1.${baseHost}`;
-      return origin;
-    }
-
-    if (host.includes('kemono')) {
-      const parts = host.split('.');
-      const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
-      if (kind === 'image') return `${url.protocol}//img.${baseHost}`;
-      if (kind === 'file') return `${url.protocol}//c1.${baseHost}`;
       return origin;
     }
 
@@ -610,12 +602,24 @@ export function isH265Video(filename?: string, url?: string): boolean {
   return /\b(h265|hevc|x265)\b|\.(h265|hevc)(?:$|[?#])/i.test(target);
 }
 
-export type MediaErrorPreset = 'unsupported_format' | 'unsupported_codec' | 'unavailable' | 'unarchived' | 'network' | 'decode' | 'custom';
+export type MediaErrorPreset =
+  | 'unsupported_format'
+  | 'unsupported_codec'
+  | 'forbidden'
+  | 'not_found'
+  | 'rate_limited'
+  | 'server_error'
+  | 'unavailable'
+  | 'unarchived'
+  | 'network'
+  | 'decode'
+  | 'custom';
 
 export interface MediaFailureState {
   preset: MediaErrorPreset;
   format?: string;
   message?: string;
+  httpStatus?: number;
 }
 
 export function diagnoseVideoFailure(
@@ -717,4 +721,56 @@ export function diagnoseVideoFailure(
     preset: 'unavailable',
     message: mediaErr?.message || undefined
   };
+}
+
+export async function diagnoseVideoFailureAsync(
+  file?: Attachment | null,
+  videoEl?: HTMLVideoElement | null,
+  options?: { isLocal?: boolean; isUnarchived?: boolean }
+): Promise<MediaFailureState> {
+  const syncDiag = diagnoseVideoFailure(file, videoEl, options);
+  if (syncDiag.preset !== 'unavailable' && syncDiag.preset !== 'network') {
+    return syncDiag;
+  }
+
+  const src = videoEl?.src || file?.path || '';
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    try {
+      const resp = await fetch(src, { method: 'HEAD' });
+      if (!resp.ok) {
+        if (resp.status === 403) {
+          return {
+            preset: 'forbidden',
+            httpStatus: 403,
+            message: '403 Forbidden'
+          };
+        }
+        if (resp.status === 404) {
+          return {
+            preset: 'not_found',
+            httpStatus: 404,
+            message: '404 Not Found'
+          };
+        }
+        if (resp.status === 429) {
+          return {
+            preset: 'rate_limited',
+            httpStatus: 429,
+            message: '429 Too Many Requests'
+          };
+        }
+        if (resp.status >= 500) {
+          return {
+            preset: 'server_error',
+            httpStatus: resp.status,
+            message: `HTTP ${resp.status} ${resp.statusText || 'Server Error'}`
+          };
+        }
+      }
+    } catch {
+      // ignore network fetch failures
+    }
+  }
+
+  return syncDiag;
 }

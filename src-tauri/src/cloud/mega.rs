@@ -471,3 +471,50 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mega_urls() {
+        // Modern folder
+        match parse_mega_url("https://mega.nz/folder/abc12345#key67890") {
+            Some(MegaLink::Folder { id, key }) => {
+                assert_eq!(id, "abc12345");
+                assert_eq!(key, "key67890");
+            }
+            _ => panic!("Expected MegaLink::Folder"),
+        }
+
+        // Modern file
+        match parse_mega_url("https://mega.nz/file/file123#filekey456") {
+            Some(MegaLink::File { id, key }) => {
+                assert_eq!(id, "file123");
+                assert_eq!(key, "filekey456");
+            }
+            _ => panic!("Expected MegaLink::File"),
+        }
+
+        // Legacy folder
+        match parse_mega_url("https://mega.nz/#F!folderId!folderKey") {
+            Some(MegaLink::Folder { id, key }) => {
+                assert_eq!(id, "folderId");
+                assert_eq!(key, "folderKey");
+            }
+            _ => panic!("Expected legacy MegaLink::Folder"),
+        }
+
+        // Legacy file
+        match parse_mega_url("https://mega.nz/#!legacyFile!legacyKey") {
+            Some(MegaLink::File { id, key }) => {
+                assert_eq!(id, "legacyFile");
+                assert_eq!(key, "legacyKey");
+            }
+            _ => panic!("Expected legacy MegaLink::File"),
+        }
+
+        // Invalid URL
+        assert!(parse_mega_url("https://example.com/file/123").is_none());
+    }
+}

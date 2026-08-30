@@ -13,15 +13,52 @@ use tokio::io::AsyncWriteExt;
 pub struct NativeDownloader;
 
 impl NativeDownloader {
-    pub async fn probe_total_size(task: &DownloadTask) -> Result<Option<u64>, DownloadRunError> {
-        let client = Self::client(task)?;
+    pub async fn probe_single_url(
+        client: &Client,
+        url: &str,
+        session_cookie: Option<&str>,
+    ) -> Option<u64> {
+        let target_url = super::normalize_download_url(url);
 
-        // 1. Range GET (bytes=0-0)
-        if let Ok(headers) = Self::headers(task, Some("bytes=0-0")) {
+        let task_stub = DownloadTask {
+            id: String::new(),
+            url: target_url.clone(),
+            output_dir: String::new(),
+            temp_path: String::new(),
+            final_path: String::new(),
+            filename: String::new(),
+            session_cookie: session_cookie.map(|s| s.to_string()),
+            proxy_mode: ProxyMode::None,
+            proxy_url: String::new(),
+            proxy_username: String::new(),
+            proxy_password: String::new(),
+            proxy_bypass_local: true,
+            connections: 1,
+        };
+
+        // 1. Try HEAD request first (fastest, zero body transfer)
+        if let Ok(headers) = Self::headers(&task_stub, None) {
             if let Ok(response) = client
-                .get(&task.url)
+                .head(&target_url)
                 .headers(headers)
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(4))
+                .send()
+                .await
+            {
+                if response.status().is_success() {
+                    if let Some(size) = response.content_length().filter(|size| *size > 0) {
+                        return Some(size);
+                    }
+                }
+            }
+        }
+
+        // 2. Try Range GET (bytes=0-0)
+        if let Ok(headers) = Self::headers(&task_stub, Some("bytes=0-0")) {
+            if let Ok(response) = client
+                .get(&target_url)
+                .headers(headers)
+                .timeout(std::time::Duration::from_secs(4))
                 .send()
                 .await
             {
@@ -31,37 +68,101 @@ impl NativeDownloader {
                         .headers()
                         .get(CONTENT_RANGE)
                         .and_then(|value| value.to_str().ok())
-                        .and_then(|value| value.rsplit_once('/').map(|(_, total)| total))
+                        .and_then(|value| value.rsplit_once('/').map(|(_, total)| total.trim()))
                         .and_then(|total| total.parse::<u64>().ok())
                         .filter(|total| *total > 0)
                     {
-                        return Ok(Some(total));
+                        return Some(total);
                     }
-                    if let Some(len) = response.content_length().filter(|len| *len > 0) {
-                        return Ok(Some(len));
+                    if status == StatusCode::OK {
+                        if let Some(len) = response.content_length().filter(|len| *len > 0) {
+                            return Some(len);
+                        }
                     }
                 }
             }
         }
 
-        // 2. Fallback to HEAD request
-        if let Ok(headers) = Self::headers(task, None) {
+        // 3. Fallback Range GET (bytes=0-1) in case single-byte range is rejected
+        if let Ok(headers) = Self::headers(&task_stub, Some("bytes=0-1")) {
             if let Ok(response) = client
-                .head(&task.url)
+                .get(&target_url)
                 .headers(headers)
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(4))
                 .send()
                 .await
             {
-                if response.status().is_success() {
-                    if let Some(size) = response.content_length().filter(|size| *size > 0) {
-                        return Ok(Some(size));
+                let status = response.status();
+                if status == StatusCode::PARTIAL_CONTENT || status.is_success() {
+                    if let Some(total) = response
+                        .headers()
+                        .get(CONTENT_RANGE)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.rsplit_once('/').map(|(_, total)| total.trim()))
+                        .and_then(|total| total.parse::<u64>().ok())
+                        .filter(|total| *total > 0)
+                    {
+                        return Some(total);
+                    }
+                    if status == StatusCode::OK {
+                        if let Some(len) = response.content_length().filter(|len| *len > 0) {
+                            return Some(len);
+                        }
                     }
                 }
             }
         }
 
-        Ok(None)
+        None
+    }
+
+    pub async fn probe_total_size(task: &DownloadTask) -> Result<Option<u64>, DownloadRunError> {
+        let mut task = task.clone();
+        task.url = super::normalize_download_url(&task.url);
+
+        let client = Self::client(&task)?;
+        Ok(Self::probe_single_url(&client, &task.url, task.session_cookie.as_deref()).await)
+    }
+
+    pub async fn probe_total_sizes_batch(
+        urls: &[String],
+        task_template: &DownloadTask,
+    ) -> std::collections::HashMap<String, u64> {
+        if urls.is_empty() {
+            return std::collections::HashMap::new();
+        }
+
+        let client = match Self::client(task_template) {
+            Ok(c) => Arc::new(c),
+            Err(_) => return std::collections::HashMap::new(),
+        };
+
+        let session_cookie = task_template.session_cookie.clone();
+        let mut set = tokio::task::JoinSet::new();
+
+        for url in urls {
+            let orig_url = url.clone();
+            let norm_url = super::normalize_download_url(url);
+            let client = Arc::clone(&client);
+            let session_cookie = session_cookie.clone();
+
+            set.spawn(async move {
+                let size =
+                    Self::probe_single_url(&client, &norm_url, session_cookie.as_deref()).await;
+                (orig_url, norm_url, size)
+            });
+        }
+
+        let mut results = std::collections::HashMap::new();
+        while let Some(res) = set.join_next().await {
+            if let Ok((orig_url, norm_url, Some(size))) = res {
+                if size > 0 {
+                    results.insert(orig_url, size);
+                    results.insert(norm_url, size);
+                }
+            }
+        }
+        results
     }
 
     pub async fn download(
@@ -70,6 +171,8 @@ impl NativeDownloader {
         control: Arc<DownloadControl>,
         app_handle: &tauri::AppHandle,
     ) -> Result<u64, DownloadRunError> {
+        let mut task = task;
+        task.url = super::normalize_download_url(&task.url);
         let temp_path = Path::new(&task.temp_path);
         if let Some(parent) = temp_path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -265,29 +368,9 @@ impl NativeDownloader {
         }
 
         if let Some(cookie) = &task.session_cookie {
-            if !cookie.trim().is_empty() {
-                let is_cloud = reqwest::Url::parse(&task.url)
-                    .ok()
-                    .and_then(|u| {
-                        let h = u.host_str()?.to_lowercase();
-                        Some(
-                            h.contains("dropbox")
-                                || h.contains("google")
-                                || h.contains("mega")
-                                || h.contains("pixeldrain"),
-                        )
-                    })
-                    .unwrap_or(false);
-
-                if !is_cloud {
-                    let cookie_val = if cookie.contains('=') {
-                        cookie.clone()
-                    } else {
-                        format!("session={}", cookie)
-                    };
-                    if let Ok(val) = HeaderValue::from_str(&cookie_val) {
-                        headers.insert(reqwest::header::COOKIE, val);
-                    }
+            if let Some(cookie_val) = super::derive_download_cookie(&task.url, cookie) {
+                if let Ok(val) = HeaderValue::from_str(&cookie_val) {
+                    headers.insert(reqwest::header::COOKIE, val);
                 }
             }
         }

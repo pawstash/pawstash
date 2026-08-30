@@ -14,14 +14,14 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
   import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
@@ -492,14 +492,15 @@
       const port = serverPortState.port || 0;
       const encoded = d.final_path!.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
       const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : convertFileSrc(d.final_path!);
+      const isCloudNode = Boolean(d.media_id && (d.media_id.includes('cloud_') || d.media_id.startsWith('mega:') || d.media_id.startsWith('http')));
       const downloadAtt = {
         name: d.filename,
         path: streamUrl,
         size: d.total_bytes || d.downloaded_bytes,
         server: '',
-        is_cloud: true,
+        is_cloud: isCloudNode,
         is_cloud_folder: false,
-        cloud_provider: 'download',
+        cloud_provider: isCloudNode ? 'download' : undefined,
         cloud_node_id: d.media_id
       } as Attachment;
 
@@ -508,9 +509,7 @@
         items[existingIdx] = {
           ...items[existingIdx],
           path: streamUrl,
-          cloud_node_id: d.media_id,
-          is_cloud: true,
-          cloud_provider: 'download'
+          cloud_node_id: d.media_id
         } as any;
       } else {
         items.push(downloadAtt);
@@ -520,7 +519,7 @@
     return items;
   });
 
-  let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud'>('all');
+  let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud' | 'downloaded'>('all');
   let mediaSort = $state<'default' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'>('default');
   let mediaSearchQuery = $state('');
   let viewerIndex = $state<number | null>(null);
@@ -545,7 +544,7 @@
     }
   }
 
-  function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
+  async function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
       logMediaError('video', video.src, file.name, video.error);
@@ -562,10 +561,21 @@
         }
       }
 
-      videoFailures[index] = diagnoseVideoFailure(file, video, {
+      const syncDiag = diagnoseVideoFailure(file, video, {
         isLocal: isDownloaded,
         isUnarchived: Boolean(post?.has_full === false && !isDownloaded && (file as any)?.is_cloud !== true)
       });
+      videoFailures = { ...videoFailures, [index]: syncDiag };
+
+      if (!isDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
+        const asyncDiag = await diagnoseVideoFailureAsync(file, video, {
+          isLocal: isDownloaded,
+          isUnarchived: Boolean(post?.has_full === false && !isDownloaded && (file as any)?.is_cloud !== true)
+        });
+        if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
+          videoFailures = { ...videoFailures, [index]: asyncDiag };
+        }
+      }
     }
   }
 
@@ -643,14 +653,28 @@
     return title.includes(q);
   });
 
+  function isFileDownloaded(file?: Attachment | null): boolean {
+    if (!file) return false;
+    const job = attachmentDownload(file);
+    if (job?.final_path && job.status === 'completed') return true;
+    const p = file.path || '';
+    return (p.startsWith('http://127.0.0.1') && p.includes('/media/')) ||
+      p.startsWith('asset://') ||
+      p.startsWith('http://asset.localhost');
+  }
+
   let mediaCounts = $derived.by(() => {
     let videos = 0;
     let photos = 0;
     let files = 0;
     let cloud = 0;
+    let downloaded = 0;
     for (const file of media) {
       if ((file as any).is_cloud) {
         cloud++;
+      }
+      if (isFileDownloaded(file)) {
+        downloaded++;
       }
       const url = file.path ? fileUrl(file) : (file.name || '');
       if (isAttachmentVideo(file, url)) videos++;
@@ -669,7 +693,8 @@
       video: videos,
       photo: photos,
       file: files,
-      cloud
+      cloud,
+      downloaded
     };
   });
 
@@ -679,6 +704,7 @@
     if (mediaCounts.photo > 0) count++;
     if (mediaCounts.file > 0) count++;
     if (mediaCounts.cloud > 0) count++;
+    if (mediaCounts.downloaded > 0) count++;
     return count;
   });
 
@@ -708,7 +734,9 @@
     if (typeof file.size === 'string' && Number(file.size) > 0) return Number(file.size);
     if (file.path) {
       if (probedMediaSizes[file.path] && probedMediaSizes[file.path] > 0) return probedMediaSizes[file.path];
-      const cached = globalProbedSizes.get(file.path);
+      const clean = cleanMediaPath(file.path);
+      if (clean && probedMediaSizes[clean] && probedMediaSizes[clean] > 0) return probedMediaSizes[clean];
+      const cached = globalProbedSizes.get(file.path) || (clean ? globalProbedSizes.get(clean) : undefined);
       if (cached && cached > 0) return cached;
     }
     const job = attachmentDownload(file);
@@ -733,6 +761,8 @@
       });
     } else if (activeMediaTab === 'cloud') {
       list = list.filter((file) => (file as any).is_cloud === true);
+    } else if (activeMediaTab === 'downloaded') {
+      list = list.filter((file) => isFileDownloaded(file));
     }
 
     const query = mediaSearchQuery.trim().toLowerCase();
@@ -962,7 +992,7 @@
     const isPostFullyLoaded = entry.loaded && Boolean(post?.detail_fetched);
     const isPostLoading = entry.loading || (!isPostFullyLoaded && !entry.loaded && !entry.error);
     const isCloudResolving = cloudResolving;
-    const mediaCount = media.length;
+    const currentMedia = media;
 
     if (!initialViewerHandled && (openViewer || initialMedia)) {
       let targetFile: Attachment | undefined;
@@ -973,23 +1003,31 @@
       // If target file is found (e.g. from local download disk or existing media), open immediately!
       if (targetFile) {
         initialViewerHandled = true;
-        openMediaViewer(targetFile, media);
+        openMediaViewer(targetFile, currentMedia);
         return;
       }
 
-      // If looking for an un-downloaded online media item, wait for post fetching/cloud resolve to finish unless it failed
-      if (initialMedia && (isPostLoading || isCloudResolving) && !entry.error) {
+      // If looking for an un-downloaded online media item or initial post load, wait for post fetching/cloud resolve to finish
+      if ((isPostLoading || isCloudResolving) && !entry.error) {
         return;
       }
 
       // Fallback: if specific item was not found after loading finished but openViewer was requested, open first media item
-      if (openViewer && mediaCount > 0) {
-        targetFile = (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || post?.file || media[0];
+      if (currentMedia.length > 0) {
+        targetFile = post?.file || (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || currentMedia[0];
         if (targetFile) {
           initialViewerHandled = true;
-          openMediaViewer(targetFile, media);
+          openMediaViewer(targetFile, currentMedia);
         }
+      } else if (!isPostLoading && !isCloudResolving) {
+        initialViewerHandled = true;
       }
+    }
+  });
+
+  $effect(() => {
+    if (viewerIndex !== null && activeGalleryItems.length > viewerFiles.length) {
+      viewerFiles = activeGalleryItems;
     }
   });
 
@@ -1153,7 +1191,6 @@
       if (lastLoadedPostKey !== currentKey) {
         lastLoadedPostKey = currentKey;
         probingMediaPaths.clear();
-        probeQueue = [];
       }
       untrack(() => {
         void contentState.loadPost(currentService, currentCreatorId, currentPostId).then(() => {
@@ -1400,70 +1437,123 @@
     const remoteUrl = remoteFileUrl(file as Attachment);
     if (!remoteUrl) return '';
 
-    if (
-      port > 0 &&
-      (isAttachmentVideo(file as Attachment, remoteUrl) ||
-        isAttachmentAudio(file as Attachment, remoteUrl))
-    ) {
-      return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(remoteUrl)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
-    }
-
     return remoteUrl;
   }
 
-  let probeQueue: string[] = [];
-  let activeProbes = 0;
-  const MAX_CONCURRENT_PROBES = 3;
+  let isProbingBatch = false;
 
-  function processProbeQueue() {
-    while (activeProbes < MAX_CONCURRENT_PROBES && probeQueue.length > 0) {
-      const path = probeQueue.shift()!;
-      activeProbes++;
-      const file = media.find((m) => m.path === path) || (post?.file?.path === path ? post.file : undefined);
-      const url = path.startsWith('http://') || path.startsWith('https://')
-        ? path
-        : file ? remoteFileUrl(file) : '';
+  async function probeMediaBatch(files: Attachment[]) {
+    if (isProbingBatch || !files || files.length === 0) return;
 
-      if (!url || !url.startsWith('http')) {
-        activeProbes--;
-        probingMediaPaths.delete(path);
+    const probeTargets: { key: string; url: string; file: Attachment }[] = [];
+
+    for (const file of files) {
+      if (!file) continue;
+      const path = file.path;
+      const clean = path ? cleanMediaPath(path) : undefined;
+      const currentSize = getEffectiveFileSize(file);
+      const cached = (path ? globalProbedSizes.get(path) : undefined) || (clean ? globalProbedSizes.get(clean) : undefined);
+
+      if (currentSize > 0 || (path && probedMediaSizes[path]) || (clean && probedMediaSizes[clean]) || cached) {
+        if (cached && path && !probedMediaSizes[path]) {
+          probedMediaSizes = { ...probedMediaSizes, [path]: cached, ...(clean ? { [clean]: cached } : {}) };
+        }
         continue;
       }
 
-      apiProbeDownloadSize(url)
-        .then((size) => {
-          if (size && size > 0) {
-            globalProbedSizes.set(path, size);
-            globalProbedSizes.set(url, size);
-            probedMediaSizes = { ...probedMediaSizes, [path]: size };
-          } else {
-            probingMediaPaths.delete(path);
-          }
-        })
-        .catch(() => {
-          probingMediaPaths.delete(path);
-        })
-        .finally(() => {
-          activeProbes--;
-          processProbeQueue();
-        });
-    }
-  }
+      const url = path?.startsWith('http://') || path?.startsWith('https://')
+        ? path
+        : remoteFileUrl(file);
 
-  function probeAttachmentSize(file?: Attachment) {
-    const path = file?.path;
-    if (!path) return;
-    const currentSize = getEffectiveFileSize(file);
-    if (currentSize > 0 || probedMediaSizes[path] || globalProbedSizes.has(path) || probingMediaPaths.has(path)) {
-      if (!probedMediaSizes[path] && globalProbedSizes.has(path)) {
-        probedMediaSizes = { ...probedMediaSizes, [path]: globalProbedSizes.get(path)! };
+      if (url && url.startsWith('http')) {
+        const key = path || url;
+        if (!probingMediaPaths.has(key)) {
+          probingMediaPaths.add(key);
+          probeTargets.push({ key, url, file });
+        }
       }
-      return;
     }
 
-    probingMediaPaths.add(path);
-    probeQueue.push(path);
-    processProbeQueue();
+    if (probeTargets.length === 0) return;
+
+    isProbingBatch = true;
+    try {
+      const urls = probeTargets.map((t) => t.url);
+      const sizes = await apiProbeDownloadSizes(urls);
+      const updates: Record<string, number> = {};
+      const pendingTargets: typeof probeTargets = [];
+
+      for (const target of probeTargets) {
+        const size = sizes && typeof sizes === 'object' ? sizes[target.url] : undefined;
+        if (typeof size === 'number' && size > 0) {
+          globalProbedSizes.set(target.key, size);
+          globalProbedSizes.set(target.url, size);
+          const clean = cleanMediaPath(target.key);
+          if (clean) globalProbedSizes.set(clean, size);
+          updates[target.key] = size;
+          updates[target.url] = size;
+          if (clean) updates[clean] = size;
+          probingMediaPaths.delete(target.key);
+        } else {
+          pendingTargets.push(target);
+        }
+      }
+
+      if (pendingTargets.length > 0) {
+        await Promise.allSettled(
+          pendingTargets.map(async (target) => {
+            try {
+              const res = await fetch(target.url, { method: 'HEAD' });
+              let size: number | undefined;
+              if (res.ok) {
+                const len = res.headers.get('content-length');
+                if (len && Number(len) > 0) size = Number(len);
+              }
+              if (!size) {
+                const rangeRes = await fetch(target.url, {
+                  headers: { Range: 'bytes=0-0' }
+                });
+                if (rangeRes.ok || rangeRes.status === 206) {
+                  const cr = rangeRes.headers.get('content-range');
+                  if (cr) {
+                    const total = cr.split('/').pop()?.trim();
+                    if (total && Number(total) > 0) size = Number(total);
+                  }
+                  if (!size) {
+                    const len = rangeRes.headers.get('content-length');
+                    if (len && Number(len) > 0) size = Number(len);
+                  }
+                }
+              }
+              if (typeof size === 'number' && size > 0) {
+                globalProbedSizes.set(target.key, size);
+                globalProbedSizes.set(target.url, size);
+                const clean = cleanMediaPath(target.key);
+                if (clean) globalProbedSizes.set(clean, size);
+                updates[target.key] = size;
+                updates[target.url] = size;
+                if (clean) updates[clean] = size;
+              }
+            } catch {
+              // ignore
+            } finally {
+              probingMediaPaths.delete(target.key);
+            }
+          })
+        );
+      }
+
+      if (Object.keys(updates).length > 0) {
+        probedMediaSizes = { ...probedMediaSizes, ...updates };
+      }
+    } catch (err) {
+      logger.warn('Failed to batch probe media sizes', err);
+      for (const target of probeTargets) {
+        probingMediaPaths.delete(target.key);
+      }
+    } finally {
+      isProbingBatch = false;
+    }
   }
 
   $effect(() => {
@@ -1471,12 +1561,12 @@
     const currentFile = post?.file;
     if (!post) return;
     untrack(() => {
-      if (currentFile) probeAttachmentSize(currentFile);
-      for (const file of currentMedia) {
-        probeAttachmentSize(file);
-      }
+      const allFiles = currentFile ? [currentFile, ...currentMedia] : currentMedia;
+      void probeMediaBatch(allFiles);
     });
   });
+
+
 
 
   async function deleteDownload(item: DownloadItem) {
@@ -2116,6 +2206,13 @@
                     <CountBadge count={mediaCounts.cloud} />
                   </Button>
                 {/if}
+                {#if mediaCounts.downloaded > 0}
+                  <Button variant={activeMediaTab === 'downloaded' ? 'accent' : 'ghost'} onclick={() => activeMediaTab = 'downloaded'}>
+                    <IconArrowDownload class="w-[16px] h-[16px]" />
+                    <span>{i18n.t('post.tab_downloaded') || 'Downloaded'}</span>
+                    <CountBadge count={mediaCounts.downloaded} />
+                  </Button>
+                {/if}
               </nav>
             {/if}
 
@@ -2362,6 +2459,51 @@
                             {:else}
                               <p class="placeholder-subtext">{i18n.t('post.unsupported_format_hint')}</p>
                             {/if}
+                          {:else if failure?.preset === 'forbidden' || failure?.httpStatus === 403}
+                            <p class="placeholder-text text-[var(--warning,#fbbf24)]">{i18n.t('post.error_forbidden') || 'HTTP 403 Forbidden'}</p>
+                            <p class="placeholder-subtext">{i18n.t('post.error_forbidden_hint')}</p>
+                            <Button
+                              variant="ghost"
+                              class="placeholder-fix-btn"
+                              onclick={() => {
+                                delete videoFailures[index];
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                            >
+                              <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                            </Button>
+                          {:else if failure?.preset === 'not_found' || failure?.httpStatus === 404}
+                            <p class="placeholder-text text-red-400">{i18n.t('post.error_not_found') || 'HTTP 404 Not Found'}</p>
+                            <p class="placeholder-subtext">{i18n.t('post.error_not_found_hint')}</p>
+                          {:else if failure?.preset === 'rate_limited' || failure?.httpStatus === 429}
+                            <p class="placeholder-text text-[var(--warning,#fbbf24)]">{i18n.t('post.error_rate_limited') || 'HTTP 429 Rate Limited'}</p>
+                            <p class="placeholder-subtext">{i18n.t('post.error_rate_limited_hint')}</p>
+                            <Button
+                              variant="ghost"
+                              class="placeholder-fix-btn"
+                              onclick={() => {
+                                delete videoFailures[index];
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                            >
+                              <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                            </Button>
+                          {:else if failure?.preset === 'server_error' || (failure?.httpStatus && failure.httpStatus >= 500)}
+                            <p class="placeholder-text text-red-400">{failure.message || i18n.t('post.error_server')}</p>
+                            <p class="placeholder-subtext">{i18n.t('post.error_server_hint')}</p>
+                            <Button
+                              variant="ghost"
+                              class="placeholder-fix-btn"
+                              onclick={() => {
+                                delete videoFailures[index];
+                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                              }}
+                            >
+                              <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                            </Button>
                           {:else if failure?.preset === 'network'}
                             <p class="placeholder-text">{i18n.t('post.network_stream_error')}</p>
                             <Button

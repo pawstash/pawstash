@@ -539,13 +539,18 @@ impl AppSettings {
         if self.providers.is_empty() {
             self.providers = crate::api::provider_manager::ProviderManager::default_configs();
         }
-        if !self.session_cookie.is_empty() {
-            if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
+        if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
+            if !self.session_cookie.is_empty() {
                 if pawchive.session_cookie.is_empty() {
                     pawchive.session_cookie = self.session_cookie.clone();
                 }
                 if pawchive.username.is_empty() {
                     pawchive.username = self.pawchive_username.clone();
+                }
+            } else if !pawchive.session_cookie.is_empty() {
+                self.session_cookie = pawchive.session_cookie.clone();
+                if self.pawchive_username.is_empty() {
+                    self.pawchive_username = pawchive.username.clone();
                 }
             }
         }

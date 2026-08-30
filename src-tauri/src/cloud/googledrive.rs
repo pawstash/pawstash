@@ -5,28 +5,8 @@ pub async fn resolve_googledrive(
     client: &Client,
     url_str: &str,
 ) -> Result<CloudFolderResult, String> {
-    let url = reqwest::Url::parse(url_str).map_err(|e| format!("Invalid Google Drive URL: {e}"))?;
-
-    let path_segments: Vec<&str> = url.path_segments().map(|s| s.collect()).unwrap_or_default();
-
-    let folder_id = if let Some(pos) = path_segments.iter().position(|&s| s == "folders") {
-        path_segments.get(pos + 1).map(|s| s.to_string())
-    } else {
-        None
-    };
-
-    let file_id = if let Some(pos) = path_segments.iter().position(|&s| s == "d") {
-        path_segments.get(pos + 1).map(|s| s.to_string())
-    } else {
-        url.query_pairs()
-            .find(|(k, _)| k == "id")
-            .map(|(_, v)| v.into_owned())
-    };
-
-    let is_folder = folder_id.is_some();
-    let target_id = folder_id
-        .or(file_id)
-        .unwrap_or_else(|| "unknown".to_string());
+    let (target_id, is_folder) = parse_googledrive_url(url_str)
+        .ok_or_else(|| format!("Invalid Google Drive URL: {url_str}"))?;
 
     if is_folder {
         let folder_title = format!("Google Drive Folder ({target_id})");
@@ -213,4 +193,53 @@ fn html_escape_decode(s: &str) -> String {
         .replace("&#39;", "'")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
+}
+
+pub fn parse_googledrive_url(url_str: &str) -> Option<(String, bool)> {
+    let url = reqwest::Url::parse(url_str).ok()?;
+    let path_segments: Vec<&str> = url.path_segments().map(|s| s.collect()).unwrap_or_default();
+
+    let folder_id = if let Some(pos) = path_segments.iter().position(|&s| s == "folders") {
+        path_segments.get(pos + 1).map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    let file_id = if let Some(pos) = path_segments.iter().position(|&s| s == "d") {
+        path_segments.get(pos + 1).map(|s| s.to_string())
+    } else {
+        url.query_pairs()
+            .find(|(k, _)| k == "id")
+            .map(|(_, v)| v.into_owned())
+    };
+
+    let is_folder = folder_id.is_some();
+    let target_id = folder_id.or(file_id)?;
+    Some((target_id, is_folder))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_googledrive_urls() {
+        // File /file/d/{id}
+        assert_eq!(
+            parse_googledrive_url("https://drive.google.com/file/d/1a2b3c4d5e/view?usp=sharing"),
+            Some(("1a2b3c4d5e".to_string(), false))
+        );
+
+        // Folder /drive/folders/{id}
+        assert_eq!(
+            parse_googledrive_url("https://drive.google.com/drive/folders/folder98765"),
+            Some(("folder98765".to_string(), true))
+        );
+
+        // Query parameter ?id={id}
+        assert_eq!(
+            parse_googledrive_url("https://drive.google.com/uc?id=query_id_123&export=download"),
+            Some(("query_id_123".to_string(), false))
+        );
+    }
 }

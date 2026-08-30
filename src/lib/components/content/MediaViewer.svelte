@@ -30,7 +30,7 @@
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import { logMediaError } from '$lib/utils/logger';
-  import { diagnoseVideoFailure, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
+  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
   import { apiOpenDownloadFile } from '$lib/utils/ipc';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
@@ -628,6 +628,18 @@
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
               {/if}
+            {:else if failure.preset === 'forbidden' || failure.httpStatus === 403}
+              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden') || 'HTTP 403 Forbidden'}</p>
+              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
+            {:else if failure.preset === 'not_found' || failure.httpStatus === 404}
+              <p class="text-red-400 font-medium text-base text-center mt-2">{i18n.t('post.error_not_found') || 'HTTP 404 Not Found'}</p>
+              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
+            {:else if failure.preset === 'rate_limited' || failure.httpStatus === 429}
+              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited') || 'HTTP 429 Rate Limited'}</p>
+              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
+            {:else if failure.preset === 'server_error' || (failure.httpStatus && failure.httpStatus >= 500)}
+              <p class="text-red-400 font-medium text-base text-center mt-2">{failure.message || i18n.t('post.error_server')}</p>
+              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
             {:else if failure.preset === 'unarchived'}
               <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
             {:else if failure.preset === 'unavailable'}
@@ -651,12 +663,21 @@
             preload="auto"
             use:panicCapture
             onkeydown={handleGlobalPanicKey}
-            onerror={(e) => {
+            onerror={async (e) => {
               const el = e.currentTarget as HTMLVideoElement;
               logMediaError('video', el.src, current.name, el.error);
-              videoErrors[index] = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
+              const syncDiag = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
                 isLocal: currentDownloaded
               });
+              videoErrors = { ...videoErrors, [index]: syncDiag };
+              if (!currentDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
+                const asyncDiag = await diagnoseVideoFailureAsync({ name: current.name, path: current.url } as any, el, {
+                  isLocal: currentDownloaded
+                });
+                if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
+                  videoErrors = { ...videoErrors, [index]: asyncDiag };
+                }
+              }
             }}
             onloadedmetadata={handleVideoMetadata}
             ontimeupdate={handleVideoTimeUpdate}

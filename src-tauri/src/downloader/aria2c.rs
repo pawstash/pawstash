@@ -75,13 +75,8 @@ impl Aria2cManager {
         }
 
         if let Some(cookie) = &task.session_cookie {
-            if !cookie.trim().is_empty() {
-                let cookie_header = if cookie.contains('=') {
-                    format!("Cookie: {}", cookie)
-                } else {
-                    format!("Cookie: session={}", cookie)
-                };
-                cmd.arg(format!("--header={}", cookie_header));
+            if let Some(cookie_val) = super::derive_download_cookie(&task.url, cookie) {
+                cmd.arg(format!("--header=Cookie: {cookie_val}"));
             }
         }
 
@@ -106,7 +101,8 @@ impl Aria2cManager {
             }
         }
 
-        cmd.arg(&task.url);
+        let normalized_url = super::normalize_download_url(&task.url);
+        cmd.arg(normalized_url);
         cmd.stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
@@ -180,7 +176,8 @@ impl Aria2cManager {
                                         );
                                     }
                                 }
-                                if result.get("status").and_then(serde_json::Value::as_str) == Some("complete") {
+                                let status_str = result.get("status").and_then(serde_json::Value::as_str);
+                                if status_str == Some("complete") {
                                     let shutdown = serde_json::json!({
                                         "jsonrpc": "2.0",
                                         "id": "pawstash-shutdown",
@@ -203,6 +200,21 @@ impl Aria2cManager {
                                         .map_err(|error| DownloadRunError::Failed(error.to_string()))?
                                         .len();
                                     return Ok(size);
+                                } else if status_str == Some("error") {
+                                    let error_msg = result
+                                        .get("errorMessage")
+                                        .and_then(serde_json::Value::as_str)
+                                        .unwrap_or("aria2c download failed");
+                                    let shutdown = serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": "pawstash-shutdown",
+                                        "method": "aria2.shutdown",
+                                        "params": [format!("token:{rpc_secret}")]
+                                    });
+                                    let _ = rpc_client.post(&rpc_url).json(&shutdown).send().await;
+                                    let _ = child.kill().await;
+                                    let _ = child.wait().await;
+                                    return Err(DownloadRunError::Failed(error_msg.to_string()));
                                 }
                             }
                         }

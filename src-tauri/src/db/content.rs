@@ -1229,14 +1229,13 @@ mod tests {
         repo.save_creator(&creator_a).unwrap();
         repo.save_creator(&creator_guest).unwrap();
 
-        // Pin creator_a under account "marselo_test", and creator_guest under guest ""
         repo.set_pin(
             "creator",
             "patreon",
             "creator_a_test",
             None,
             "favorite",
-            "marselo_test",
+            "favkeep",
             true,
         )
         .unwrap();
@@ -1251,22 +1250,18 @@ mod tests {
         )
         .unwrap();
 
-        // When logged in as "marselo_test": sees both account favorites and local guest favorites
-        let logged_in_favs = repo.list_favorites("artist", "marselo_test").unwrap();
+        let logged_in_favs = repo.list_favorites("artist", "favkeep").unwrap();
         assert!(logged_in_favs.iter().any(|f| f.id == "creator_a_test"));
         assert!(logged_in_favs.iter().any(|f| f.id == "creator_guest_test"));
 
-        // When logged out (""): sees ONLY guest favorites, NOT account favorites
         let guest_favs = repo.list_favorites("artist", "").unwrap();
         assert!(guest_favs.iter().any(|f| f.id == "creator_guest_test"));
         assert!(!guest_favs.iter().any(|f| f.id == "creator_a_test"));
 
-        // When logged in as another user "other_user_test": does NOT see "marselo_test"
         let other_favs = repo.list_favorites("artist", "other_user_test").unwrap();
         assert!(other_favs.iter().any(|f| f.id == "creator_guest_test"));
         assert!(!other_favs.iter().any(|f| f.id == "creator_a_test"));
 
-        // Unpin creator_guest_test: should be removed completely
         repo.set_pin(
             "creator",
             "fanbox",
@@ -1282,14 +1277,13 @@ mod tests {
             .iter()
             .any(|f| f.id == "creator_guest_test"));
 
-        // Clean up test pin for creator_a_test
         repo.set_pin(
             "creator",
             "patreon",
             "creator_a_test",
             None,
             "favorite",
-            "marselo_test",
+            "favkeep",
             false,
         )
         .unwrap();

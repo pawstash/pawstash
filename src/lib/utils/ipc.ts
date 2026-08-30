@@ -220,6 +220,9 @@ export const apiStartDownload = (post: Post, mediaId: string, url: string, filen
 export const apiProbeDownloadSize = (url: string) =>
   invoke<number | null>('probe_download_size', { url });
 
+export const apiProbeDownloadSizes = (urls: string[]) =>
+  invoke<Record<string, number>>('probe_download_sizes', { urls });
+
 export const apiListDownloads = () => invoke<DownloadItem[]>('list_downloads');
 export const apiPauseDownload = (downloadId: string) =>
   invoke<DownloadItem>('pause_download', { downloadId });

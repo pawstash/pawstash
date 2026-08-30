@@ -204,6 +204,33 @@ pub async fn probe_download_size(
 }
 
 #[tauri::command]
+pub async fn probe_download_sizes(
+    urls: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, u64>, String> {
+    if urls.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let settings = state.config_manager.load()?;
+    let task_template = DownloadTask {
+        id: "size-probe-batch".to_string(),
+        url: urls.first().cloned().unwrap_or_default(),
+        output_dir: String::new(),
+        temp_path: String::new(),
+        final_path: String::new(),
+        filename: String::new(),
+        session_cookie: (!settings.session_cookie.is_empty()).then_some(settings.session_cookie),
+        proxy_mode: settings.proxy_mode,
+        proxy_url: settings.proxy_url,
+        proxy_username: settings.proxy_username,
+        proxy_password: settings.proxy_password,
+        proxy_bypass_local: settings.proxy_bypass_local,
+        connections: settings.aria2_connections.clamp(1, 32),
+    };
+    Ok(NativeDownloader::probe_total_sizes_batch(&urls, &task_template).await)
+}
+
+#[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     let mut settings = state.config_manager.load()?;
     settings.session_cookie.clear();
@@ -900,10 +927,32 @@ pub async fn fetch_account_favorites(
     let account = settings.pawchive_username;
     let is_authenticated = !settings.session_cookie.is_empty();
 
-    let local_favorites = state
+    let mut local_favorites = state
         .content
         .list_favorites(kind, &account)
         .unwrap_or_default();
+
+    if settings.persist_in_app_favorites_locally && !account.is_empty() {
+        let guest_favorites = state.content.list_favorites(kind, "").unwrap_or_default();
+        let mut existing_keys: std::collections::HashSet<(String, String)> = local_favorites
+            .iter()
+            .map(|f| {
+                (
+                    f.service.as_deref().unwrap_or("").to_lowercase(),
+                    f.id.to_lowercase(),
+                )
+            })
+            .collect();
+        for guest_fav in guest_favorites {
+            let key = (
+                guest_fav.service.as_deref().unwrap_or("").to_lowercase(),
+                guest_fav.id.to_lowercase(),
+            );
+            if existing_keys.insert(key) {
+                local_favorites.push(guest_fav);
+            }
+        }
+    }
 
     if is_authenticated {
         if let Ok(remote_items) = state
@@ -1052,18 +1101,27 @@ pub async fn fetch_account_favorites(
                 }
             }
 
-            // Clean up stale account pins that are no longer present on remote
-            for key in local_map.keys() {
-                if !seen_keys.contains(key) {
-                    let _ = state.content.set_pin(
-                        if kind == "post" { "post" } else { "creator" },
-                        &key.0,
-                        &key.1,
-                        if kind == "post" { Some(&key.1) } else { None },
-                        "favorite",
-                        &account,
-                        false,
-                    );
+            // If persist_in_app_favorites_locally is enabled, also keep all local favorites that aren't on remote
+            if settings.persist_in_app_favorites_locally || kind == "post" {
+                for (key, loc) in &local_map {
+                    if seen_keys.insert((key.0.clone(), key.1.clone())) {
+                        merged.push(loc.clone());
+                    }
+                }
+            } else {
+                // Clean up stale account pins that are no longer present on remote
+                for key in local_map.keys() {
+                    if !seen_keys.contains(key) {
+                        let _ = state.content.set_pin(
+                            if kind == "post" { "post" } else { "creator" },
+                            &key.0,
+                            &key.1,
+                            if kind == "post" { Some(&key.1) } else { None },
+                            "favorite",
+                            &account,
+                            false,
+                        );
+                    }
                 }
             }
 

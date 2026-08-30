@@ -99,6 +99,21 @@ pub fn derive_download_referer(url: &str) -> Option<String> {
     Some(format!("{}://{}/", parsed.scheme(), base_host))
 }
 
+pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String> {
+    if session_cookie.trim().is_empty() {
+        return None;
+    }
+    // Only send session cookie if the target URL belongs to a provider origin (not external clouds)
+    let _ = derive_download_referer(url)?;
+    if session_cookie.contains('=') {
+        Some(session_cookie.to_string())
+    } else {
+        Some(format!("session={}", session_cookie.trim()))
+    }
+}
+
+pub use crate::cloud::normalize_cloud_direct_url as normalize_download_url;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,14 +152,16 @@ mod tests {
             Some("https://cum.st/".into())
         );
 
-        // Kemono
+        // Custom 3-part subdomains
         assert_eq!(
-            derive_download_referer("https://c1.kemono.su/data/11/22/archive.zip"),
-            Some("https://kemono.su/".into())
+            derive_download_referer("https://cdn.custom-provider.org/data/11/22/archive.zip"),
+            Some("https://custom-provider.org/".into())
         );
         assert_eq!(
-            derive_download_referer("https://img.kemono.su/thumbnail/data/11/22/thumb.jpg"),
-            Some("https://kemono.su/".into())
+            derive_download_referer(
+                "https://img.custom-provider.org/thumbnail/data/11/22/thumb.jpg"
+            ),
+            Some("https://custom-provider.org/".into())
         );
 
         // Cloud hosts must not send referers (to avoid hotlink/cross-origin blocks)
@@ -158,6 +175,33 @@ mod tests {
         );
         assert_eq!(
             derive_download_referer("https://pixeldrain.com/api/file/12345"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_derive_download_cookie() {
+        // Provider URL gets cookie
+        assert_eq!(
+            derive_download_cookie("https://file.pawchive.pw/data/123", "abc_session"),
+            Some("session=abc_session".into())
+        );
+        assert_eq!(
+            derive_download_cookie("https://file.pawchive.pw/data/123", "session=abc_session"),
+            Some("session=abc_session".into())
+        );
+
+        // Cloud URLs MUST NEVER receive session cookie
+        assert_eq!(
+            derive_download_cookie("https://www.dropbox.com/s/xyz/file.zip?dl=1", "abc_session"),
+            None
+        );
+        assert_eq!(
+            derive_download_cookie("https://mega.nz/file/abc#key", "abc_session"),
+            None
+        );
+        assert_eq!(
+            derive_download_cookie("https://pixeldrain.com/api/file/12345", "abc_session"),
             None
         );
     }

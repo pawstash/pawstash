@@ -486,42 +486,22 @@ async fn serve_cloud_proxy_stream_handler(
         .build()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut target_url = params.url.clone();
-    if let Ok(mut u) = reqwest::Url::parse(&target_url) {
-        let host = u.host_str().unwrap_or("").to_lowercase();
-        let path = u.path();
-        if host == "pawchive.pw"
-            && (path.starts_with("/data/") || path.starts_with("/thumbnail/data/"))
-        {
-            let prefix = if path.starts_with("/thumbnail/") {
-                "img"
-            } else {
-                "file"
-            };
-            let _ = u.set_host(Some(&format!("{prefix}.pawchive.pw")));
-            target_url = u.to_string();
-        }
-    }
-
-    if target_url.contains("dropbox.com") {
-        if let Ok(mut u) = reqwest::Url::parse(&target_url) {
-            let query: Vec<(String, String)> = u
-                .query_pairs()
-                .filter(|(k, _)| k != "dl" && k != "raw")
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect();
-            u.query_pairs_mut()
-                .clear()
-                .extend_pairs(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .append_pair("raw", "1");
-            target_url = u.to_string();
-        }
-    }
+    let target_url = crate::downloader::normalize_download_url(&params.url);
 
     let mut req = client.get(&target_url);
+    req = req.header(header::ACCEPT, header::HeaderValue::from_static("*/*"));
+
     if let Some(referer_url) = crate::downloader::derive_download_referer(&target_url) {
         if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
             req = req.header(header::REFERER, ref_val);
+        }
+    }
+
+    if let Some(cookie_val) =
+        crate::downloader::derive_download_cookie(&target_url, &settings.session_cookie)
+    {
+        if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
+            req = req.header(header::COOKIE, val);
         }
     }
 
@@ -555,7 +535,25 @@ async fn serve_cloud_proxy_stream_handler(
             format!("Upstream media server returned error: {status}"),
         ));
     }
+
     let upstream_headers = upstream.headers().clone();
+    let upstream_content_type = upstream_headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // If upstream returned an HTML page (e.g. Dropbox "File Deleted" or login page), fail
+    if upstream_content_type.starts_with("text/html") {
+        tracing::warn!(
+            "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
+            target_url
+        );
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Upstream returned HTML page instead of media stream".to_string(),
+        ));
+    }
+
     let body = Body::from_stream(upstream.bytes_stream());
 
     let mut response = Response::builder()
@@ -572,24 +570,6 @@ async fn serve_cloud_proxy_stream_handler(
         {
             resp_headers.insert(k.clone(), v.clone());
         }
-    }
-
-    let upstream_content_type = upstream_headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    // If upstream returned an HTML page (e.g. Dropbox "File Deleted" or login page), fail immediately
-    if upstream_content_type.starts_with("text/html") {
-        tracing::warn!(
-            "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
-            target_url
-        );
-        return Err((
-            StatusCode::NOT_FOUND,
-            "Upstream returned HTML page instead of media stream (file deleted or private)"
-                .to_string(),
-        ));
     }
 
     // Ensure valid streaming MIME type
@@ -620,6 +600,19 @@ async fn serve_cloud_proxy_stream_handler(
             resp_headers.insert(header::ACCEPT_RANGES, val);
         }
     }
+
+    resp_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        header::HeaderValue::from_static("*"),
+    );
+    resp_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        header::HeaderValue::from_static("GET, HEAD, OPTIONS"),
+    );
+    resp_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        header::HeaderValue::from_static("Range, Origin, Content-Type, Accept"),
+    );
 
     Ok(response)
 }

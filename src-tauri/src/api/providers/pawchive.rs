@@ -1132,31 +1132,19 @@ pub(crate) fn derive_subdomain_url(api_url: &str, kind: &str) -> String {
     if let Ok(parsed) = reqwest::Url::parse(&clean_url) {
         let host = parsed.host_str().unwrap_or("pawchive.pw");
         let scheme = parsed.scheme();
-
-        if host.contains("kemono") {
-            let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
-            if kind == "image" {
-                return format!("{scheme}://img.{base_host}");
-            } else if kind == "file" {
-                return format!("{scheme}://c1.{base_host}");
-            }
-        } else if host.contains("cum.st") || host.contains("coomer") {
-            let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
-            if kind == "image" {
-                return format!("{scheme}://img.{base_host}");
-            } else if kind == "file" {
-                return format!("{scheme}://e1.{base_host}");
-            }
+        let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
+        let parts: Vec<&str> = base_host.split('.').collect();
+        let domain = if parts.len() > 2 {
+            parts[parts.len() - 2..].join(".")
         } else {
-            let parts: Vec<&str> = host.split('.').collect();
-            let base_host = if parts.len() > 2 {
-                parts[parts.len() - 2..].join(".")
-            } else {
-                host.to_string()
-            };
-            let prefix = if kind == "image" { "img" } else { "file" };
-            return format!("{scheme}://{prefix}.{base_host}");
-        }
+            base_host.to_string()
+        };
+        let prefix = if kind == "image" || kind == "img" {
+            "img"
+        } else {
+            "file"
+        };
+        return format!("{scheme}://{prefix}.{domain}");
     }
     clean_url
 }
@@ -1604,8 +1592,8 @@ mod tests {
             "https://file1.pawchive.pw/data/ab/cd/video.mp4"
         );
         assert_eq!(
-            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("https://c1.kemono.su")),
-            "https://c1.kemono.su/data/ab/cd/video.mp4"
+            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("https://cdn.example.com")),
+            "https://cdn.example.com/data/ab/cd/video.mp4"
         );
         assert_eq!(
             provider.resolve_media_url("/data/ab/cd/video.mp4", None),

@@ -198,6 +198,7 @@ pub fn run() {
             get_axum_port,
             check_aria2c_installed,
             probe_download_size,
+            probe_download_sizes,
             get_settings,
             get_default_settings,
             get_cache_stats,

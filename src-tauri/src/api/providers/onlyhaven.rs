@@ -302,7 +302,7 @@ impl OnlyHavenPostRow {
                 Attachment {
                     name: a.original_filename.or(a.name),
                     path: clean_path,
-                    server: Some("https://e1.cum.st".to_string()),
+                    server: None,
                     size: a.bytes,
                     extra,
                 }
@@ -890,5 +890,51 @@ impl SourceProvider for OnlyHavenProvider {
 
     async fn expand_short_link(&self, _raw_url: &str) -> Result<Option<String>, String> {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_onlyhaven_title() {
+        assert_eq!(
+            clean_onlyhaven_title("<p>Hello <b>World</b> &amp; Friends</p>"),
+            "Hello World & Friends"
+        );
+        assert_eq!(
+            clean_onlyhaven_title("**Bold** __Underline__ ~~Strike~~"),
+            "Bold Underline Strike"
+        );
+        assert_eq!(clean_onlyhaven_title(""), "");
+    }
+
+    #[test]
+    fn test_onlyhaven_url_resolution() {
+        let provider = OnlyHavenProvider::new(ProviderConfig {
+            id: "onlyhaven".to_string(),
+            name: "OnlyHaven".to_string(),
+            enabled: true,
+            priority: 1,
+            api_url: "https://cum.st".to_string(),
+            file_url: Some("https://e1.cum.st".to_string()),
+            image_url: Some("https://img.cum.st".to_string()),
+            fallback_urls: vec![],
+            session_cookie: "".to_string(),
+            username: "".to_string(),
+            services: vec!["onlyfans".to_string()],
+            is_custom: false,
+        })
+        .unwrap();
+
+        assert_eq!(
+            provider.resolve_media_url("/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg", None),
+            "https://e1.cum.st/media/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg/original.jpg"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg"),
+            "https://img.cum.st/thumbnail/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg/preview.webp"
+        );
     }
 }
