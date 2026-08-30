@@ -355,7 +355,7 @@ where
         type Value = Option<String>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string, integer, float, or null")
+            formatter.write_str("a string, number, boolean, map, or null")
         }
 
         fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -379,18 +379,33 @@ where
             Ok(None)
         }
 
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
         {
             Ok(Some(v.to_string()))
         }
 
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v.to_string()))
+            }
+        }
+
         fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
         {
-            Ok(Some(v))
+            if v.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v))
+            }
         }
 
         fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
@@ -413,6 +428,49 @@ where
         {
             Ok(Some(v.to_string()))
         }
+
+        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut id_val: Option<String> = None;
+            let mut url_val: Option<String> = None;
+            while let Some((key, value)) = access.next_entry::<String, serde_json::Value>()? {
+                if key == "id" || key == "post_id" {
+                    if let Some(s) = value.as_str() {
+                        id_val = Some(s.to_string());
+                    } else if let Some(n) = value.as_i64() {
+                        id_val = Some(n.to_string());
+                    } else if let Some(n) = value.as_u64() {
+                        id_val = Some(n.to_string());
+                    }
+                } else if key == "url" || key == "link" || key == "path" {
+                    if let Some(s) = value.as_str() {
+                        url_val = Some(s.to_string());
+                    }
+                }
+            }
+            Ok(id_val.or(url_val))
+        }
+
+        fn visit_seq<S>(self, mut access: S) -> Result<Self::Value, S::Error>
+        where
+            S: serde::de::SeqAccess<'de>,
+        {
+            let mut first_val: Option<String> = None;
+            while let Some(val) = access.next_element::<serde_json::Value>()? {
+                if first_val.is_none() {
+                    if let Some(s) = val.as_str() {
+                        first_val = Some(s.to_string());
+                    } else if let Some(n) = val.as_i64() {
+                        first_val = Some(n.to_string());
+                    } else if let Some(n) = val.as_u64() {
+                        first_val = Some(n.to_string());
+                    }
+                }
+            }
+            Ok(first_val)
+        }
     }
 
     deserializer.deserialize_option(FlexibleStringVisitor)
@@ -428,7 +486,28 @@ where
         type Value = String;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or integer id")
+            formatter.write_str("a string, integer, or map id")
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(String::new())
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(String::new())
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(v.to_string())
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -457,6 +536,49 @@ where
             E: serde::de::Error,
         {
             Ok(v.to_string())
+        }
+
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(v.to_string())
+        }
+
+        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut id_val: Option<String> = None;
+            while let Some((key, value)) = access.next_entry::<String, serde_json::Value>()? {
+                if key == "id" || key == "user" || key == "user_id" || key == "creator_id" {
+                    if let Some(s) = value.as_str() {
+                        id_val = Some(s.to_string());
+                    } else if let Some(n) = value.as_i64() {
+                        id_val = Some(n.to_string());
+                    } else if let Some(n) = value.as_u64() {
+                        id_val = Some(n.to_string());
+                    }
+                }
+            }
+            Ok(id_val.unwrap_or_default())
+        }
+
+        fn visit_seq<S>(self, mut access: S) -> Result<Self::Value, S::Error>
+        where
+            S: serde::de::SeqAccess<'de>,
+        {
+            let mut first_val: Option<String> = None;
+            while let Some(val) = access.next_element::<serde_json::Value>()? {
+                if first_val.is_none() {
+                    if let Some(s) = val.as_str() {
+                        first_val = Some(s.to_string());
+                    } else if let Some(n) = val.as_i64() {
+                        first_val = Some(n.to_string());
+                    }
+                }
+            }
+            Ok(first_val.unwrap_or_default())
         }
     }
 
@@ -628,5 +750,30 @@ mod tests {
         assert_eq!(post.id, "123");
         assert_eq!(post.user, "456");
         assert_eq!(post.edited.as_deref(), Some("2026-08-28T22:00:00"));
+    }
+
+    #[test]
+    fn flexible_fields_accept_maps_and_objects() {
+        let json_with_maps = r#"{
+            "id": 98765,
+            "user": { "id": "creator_123" },
+            "service": "onlyfans",
+            "title": "Post with nested objects",
+            "prev": { "id": "98764", "title": "Previous post" },
+            "next": { "id": 98766 },
+            "origin": { "url": "https://onlyfans.com/98765" },
+            "preview_state": { "status": "done" },
+            "published": 1756543200,
+            "added": "2026-08-30T10:00:00"
+        }"#;
+        let post: Post = serde_json::from_str(json_with_maps).unwrap();
+        assert_eq!(post.id, "98765");
+        assert_eq!(post.user, "creator_123");
+        assert_eq!(post.service, "onlyfans");
+        assert_eq!(post.prev.as_deref(), Some("98764"));
+        assert_eq!(post.next.as_deref(), Some("98766"));
+        assert_eq!(post.origin.as_deref(), Some("https://onlyfans.com/98765"));
+        assert_eq!(post.published.as_deref(), Some("1756543200"));
+        assert_eq!(post.added.as_deref(), Some("2026-08-30T10:00:00"));
     }
 }

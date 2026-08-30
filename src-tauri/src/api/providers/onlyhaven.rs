@@ -346,7 +346,33 @@ impl OnlyHavenPostRow {
             Value::String(provider_id.to_string()),
         );
 
-        Post {
+        let prev = extra.remove("prev").and_then(|v| match v {
+            Value::String(s) => Some(s),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Object(map) => map.get("id").and_then(|id| {
+                if let Some(s) = id.as_str() {
+                    Some(s.to_string())
+                } else {
+                    id.as_i64().map(|n| n.to_string())
+                }
+            }),
+            _ => None,
+        });
+
+        let next = extra.remove("next").and_then(|v| match v {
+            Value::String(s) => Some(s),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Object(map) => map.get("id").and_then(|id| {
+                if let Some(s) = id.as_str() {
+                    Some(s.to_string())
+                } else {
+                    id.as_i64().map(|n| n.to_string())
+                }
+            }),
+            _ => None,
+        });
+
+        let mut post = Post {
             id: self.id,
             user,
             service: self.service,
@@ -367,12 +393,14 @@ impl OnlyHavenPostRow {
             preview_state: None,
             has_full: Some(true),
             detail_fetched: Some(false),
-            next: None,
-            prev: None,
+            next,
+            prev,
             favorite_count: self.bookmarked,
             attachment_count: Some(att_count),
             extra,
-        }
+        };
+        post.clean_extra();
+        post
     }
 }
 

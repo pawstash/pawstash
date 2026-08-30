@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.8.9"
+version = "26.8.10-1"
 description = "A beautiful cross-platform client, downloader, and stash manager for pawchive, with server sync and more sources in mind."
 authors = ["nichind"]
 license = "GPL-3.0-or-later"
