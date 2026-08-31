@@ -37,6 +37,8 @@ impl Aria2cManager {
             .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
 
         let mut cmd = tokio::process::Command::new(aria2_path);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         let connections = task.connections.clamp(1, 32).to_string();
         let rpc_listener = std::net::TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
@@ -67,15 +69,9 @@ impl Aria2cManager {
             .arg("-o")
             .arg(temp_name);
 
-        cmd.arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
-        cmd.arg("--header=Accept: */*");
-        cmd.arg("--header=Accept-Language: en-US,en;q=0.9");
-        cmd.arg("--header=sec-ch-ua: \"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"");
-        cmd.arg("--header=sec-ch-ua-mobile: ?0");
-        cmd.arg("--header=sec-ch-ua-platform: \"Windows\"");
-        cmd.arg("--header=Sec-Fetch-Dest: empty");
-        cmd.arg("--header=Sec-Fetch-Mode: cors");
-        cmd.arg("--header=Sec-Fetch-Site: same-site");
+        for header_arg in super::standard_browser_header_args() {
+            cmd.arg(header_arg);
+        }
 
         if let Some(referer) = super::derive_download_referer(&task.url) {
             cmd.arg(format!("--header=Referer: {referer}"));
@@ -110,7 +106,8 @@ impl Aria2cManager {
 
         let normalized_url = super::normalize_download_url(&task.url);
         cmd.arg(normalized_url);
-        cmd.stdout(Stdio::null())
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
 

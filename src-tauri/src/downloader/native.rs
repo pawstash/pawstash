@@ -2,7 +2,7 @@ use crate::config::settings::ProxyMode;
 use crate::db::downloads::DownloadRepository;
 use crate::downloader::{DownloadControl, DownloadRunError, DownloadTask, Interruption};
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_RANGE, RANGE, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_RANGE, RANGE};
 use reqwest::{Client, Response, StatusCode};
 use std::path::Path;
 use std::sync::Arc;
@@ -348,47 +348,10 @@ impl NativeDownloader {
     }
 
     fn headers(task: &DownloadTask, range: Option<&str>) -> Result<HeaderMap, DownloadRunError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-            ),
-        );
-        headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("*/*"));
-        headers.insert(
-            reqwest::header::ACCEPT_LANGUAGE,
-            HeaderValue::from_static("en-US,en;q=0.9"),
-        );
+        let mut headers = super::standard_browser_headers();
         headers.insert(
             reqwest::header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-ch-ua"),
-            HeaderValue::from_static(
-                "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
-            ),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-ch-ua-mobile"),
-            HeaderValue::from_static("?0"),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-ch-ua-platform"),
-            HeaderValue::from_static("\"Windows\""),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-fetch-dest"),
-            HeaderValue::from_static("empty"),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-fetch-mode"),
-            HeaderValue::from_static("cors"),
-        );
-        headers.insert(
-            reqwest::header::HeaderName::from_static("sec-fetch-site"),
-            HeaderValue::from_static("same-site"),
         );
 
         if let Some(referer) = super::derive_download_referer(&task.url) {

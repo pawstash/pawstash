@@ -112,6 +112,60 @@ pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String>
     }
 }
 
+pub fn standard_browser_headers() -> reqwest::header::HeaderMap {
+    use reqwest::header::*;
+    let mut map = HeaderMap::new();
+    map.insert(
+        USER_AGENT,
+        HeaderValue::from_static(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        ),
+    );
+    map.insert(ACCEPT, HeaderValue::from_static("*/*"));
+    map.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+    map.insert(
+        HeaderName::from_static("sec-ch-ua"),
+        HeaderValue::from_static(
+            "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+        ),
+    );
+    map.insert(
+        HeaderName::from_static("sec-ch-ua-platform"),
+        HeaderValue::from_static("\"Windows\""),
+    );
+    map.insert(
+        HeaderName::from_static("sec-ch-ua-mobile"),
+        HeaderValue::from_static("?0"),
+    );
+    map.insert(
+        HeaderName::from_static("sec-fetch-dest"),
+        HeaderValue::from_static("empty"),
+    );
+    map.insert(
+        HeaderName::from_static("sec-fetch-mode"),
+        HeaderValue::from_static("cors"),
+    );
+    map.insert(
+        HeaderName::from_static("sec-fetch-site"),
+        HeaderValue::from_static("same-site"),
+    );
+    map
+}
+
+pub fn standard_browser_header_args() -> Vec<String> {
+    vec![
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36".into(),
+        "--header=Accept: */*".into(),
+        "--header=Accept-Language: en-US,en;q=0.9".into(),
+        "--header=sec-ch-ua: \"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"".into(),
+        "--header=sec-ch-ua-platform: \"Windows\"".into(),
+        "--header=sec-ch-ua-mobile: ?0".into(),
+        "--header=Sec-Fetch-Dest: empty".into(),
+        "--header=Sec-Fetch-Mode: cors".into(),
+        "--header=Sec-Fetch-Site: same-site".into(),
+    ]
+}
+
 pub use crate::cloud::normalize_cloud_direct_url as normalize_download_url;
 
 #[cfg(test)]
@@ -204,5 +258,35 @@ mod tests {
             derive_download_cookie("https://pixeldrain.com/api/file/12345", "abc_session"),
             None
         );
+    }
+
+    #[test]
+    fn test_standard_browser_headers() {
+        let headers = standard_browser_headers();
+        assert_eq!(
+            headers.get("user-agent").and_then(|v| v.to_str().ok()),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+        );
+        assert_eq!(
+            headers
+                .get("sec-ch-ua-platform")
+                .and_then(|v| v.to_str().ok()),
+            Some("\"Windows\"")
+        );
+        assert_eq!(
+            headers
+                .get("sec-ch-ua-mobile")
+                .and_then(|v| v.to_str().ok()),
+            Some("?0")
+        );
+        assert!(headers.contains_key("sec-ch-ua"));
+        assert!(headers.contains_key("sec-fetch-dest"));
+
+        let args = standard_browser_header_args();
+        assert!(args.iter().any(|a| a.starts_with("--user-agent=")));
+        assert!(args.iter().any(|a| a.starts_with("--header=sec-ch-ua:")));
+        assert!(args
+            .iter()
+            .any(|a| a == "--header=sec-ch-ua-platform: \"Windows\""));
     }
 }
