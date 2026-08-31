@@ -357,8 +357,38 @@ impl NativeDownloader {
         );
         headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("*/*"));
         headers.insert(
+            reqwest::header::ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.9"),
+        );
+        headers.insert(
             reqwest::header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua"),
+            HeaderValue::from_static(
+                "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+            ),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua-mobile"),
+            HeaderValue::from_static("?0"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua-platform"),
+            HeaderValue::from_static("\"Windows\""),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("empty"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-mode"),
+            HeaderValue::from_static("cors"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-site"),
+            HeaderValue::from_static("same-site"),
         );
 
         if let Some(referer) = super::derive_download_referer(&task.url) {

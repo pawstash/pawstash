@@ -611,6 +611,7 @@
 
   function isHtmlContentEmpty(html?: string) {
     if (!html) return true;
+    if (/<(iframe|img|video|audio|embed|object|picture|svg)\b/i.test(html)) return false;
     const text = html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim();
     return text.length === 0;
   }

@@ -4,12 +4,46 @@
 
   const ALLOWED_TAGS = new Set([
     'a', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em', 'figcaption', 'figure',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'ol', 'p', 'pre',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'iframe', 'img', 'li', 'ol', 'p', 'pre',
     's', 'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr',
     'u', 'ul'
   ]);
-  const DROP_TAGS = new Set(['base', 'button', 'embed', 'form', 'iframe', 'input', 'link', 'math', 'meta', 'object', 'script', 'style', 'svg', 'textarea']);
+  const DROP_TAGS = new Set(['base', 'button', 'embed', 'form', 'input', 'link', 'math', 'meta', 'object', 'script', 'style', 'svg', 'textarea']);
   const resolutionCache = new Map<string, Promise<ResolvedPostLink | null>>();
+
+  export function isSafeIframeSrc(url: string): boolean {
+    try {
+      const u = new URL(url);
+      if (!['http:', 'https:'].includes(u.protocol)) return false;
+      const host = u.hostname.toLowerCase();
+      return (
+        host.includes('google.com') ||
+        host.includes('docs.google.com') ||
+        host.includes('forms.gle') ||
+        host.includes('strawpoll.com') ||
+        host.includes('strawpoll.me') ||
+        host.includes('youtube.com') ||
+        host.includes('youtube-nocookie.com') ||
+        host.includes('youtu.be') ||
+        host.includes('player.vimeo.com') ||
+        host.includes('vimeo.com') ||
+        host.includes('soundcloud.com') ||
+        host.includes('spotify.com') ||
+        host.includes('bilibili.com') ||
+        host.includes('nicovideo.jp') ||
+        host.includes('iframely.net') ||
+        host.includes('iframe.ly') ||
+        host.includes('mega.nz') ||
+        host.includes('pawchive.pw') ||
+        host.includes('kemono.party') ||
+        host.includes('kemono.su') ||
+        host.includes('coomer.party') ||
+        host.includes('coomer.su')
+      );
+    } catch {
+      return false;
+    }
+  }
 
   export function smartLinkPlatform(raw: string): string | null {
     try {
@@ -194,6 +228,10 @@
       const imageAlt = element instanceof HTMLImageElement
         ? (element.getAttribute('alt') || '').slice(0, 500)
         : '';
+      const iframeSource = element instanceof HTMLIFrameElement
+        ? safeHttpUrl(element.getAttribute('src') || '')
+        : null;
+
       for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
       if (element instanceof HTMLAnchorElement) {
         if (href) {
@@ -211,6 +249,18 @@
         element.loading = 'lazy';
         element.decoding = 'async';
         element.referrerPolicy = 'no-referrer';
+      } else if (element instanceof HTMLIFrameElement) {
+        if (iframeSource && isSafeIframeSrc(iframeSource)) {
+          element.src = iframeSource;
+          element.loading = 'lazy';
+          element.referrerPolicy = 'no-referrer';
+          element.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation');
+          element.setAttribute('allowfullscreen', 'true');
+          element.classList.add('rich-content-iframe');
+        } else {
+          element.remove();
+          continue;
+        }
       }
     }
     return document.body.innerHTML;
@@ -521,6 +571,23 @@
 
   @keyframes smart-link-pulse {
     to { opacity: 0.32; }
+  }
+
+  .rich-content-root :global(iframe.rich-content-iframe) {
+    width: 100%;
+    min-height: 520px;
+    height: 700px;
+    max-height: 85vh;
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: 12px;
+    background: var(--bg-card, #1c1c1f);
+    margin: 1rem 0;
+    display: block;
+  }
+
+  .rich-content-root :global(.iframely-responsive) {
+    position: relative;
+    width: 100%;
   }
 
   @media (prefers-reduced-motion: reduce) {

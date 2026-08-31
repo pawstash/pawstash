@@ -490,6 +490,36 @@ async fn serve_cloud_proxy_stream_handler(
 
     let mut req = client.get(&target_url);
     req = req.header(header::ACCEPT, header::HeaderValue::from_static("*/*"));
+    req = req.header(
+        header::ACCEPT_LANGUAGE,
+        header::HeaderValue::from_static("en-US,en;q=0.9"),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-ch-ua"),
+        header::HeaderValue::from_static(
+            "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+        ),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-ch-ua-mobile"),
+        header::HeaderValue::from_static("?0"),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-ch-ua-platform"),
+        header::HeaderValue::from_static("\"Windows\""),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-fetch-dest"),
+        header::HeaderValue::from_static("empty"),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-fetch-mode"),
+        header::HeaderValue::from_static("cors"),
+    );
+    req = req.header(
+        header::HeaderName::from_static("sec-fetch-site"),
+        header::HeaderValue::from_static("same-site"),
+    );
 
     if let Some(referer_url) = crate::downloader::derive_download_referer(&target_url) {
         if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {

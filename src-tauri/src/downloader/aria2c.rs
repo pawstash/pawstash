@@ -69,6 +69,13 @@ impl Aria2cManager {
 
         cmd.arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
         cmd.arg("--header=Accept: */*");
+        cmd.arg("--header=Accept-Language: en-US,en;q=0.9");
+        cmd.arg("--header=sec-ch-ua: \"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"");
+        cmd.arg("--header=sec-ch-ua-mobile: ?0");
+        cmd.arg("--header=sec-ch-ua-platform: \"Windows\"");
+        cmd.arg("--header=Sec-Fetch-Dest: empty");
+        cmd.arg("--header=Sec-Fetch-Mode: cors");
+        cmd.arg("--header=Sec-Fetch-Site: same-site");
 
         if let Some(referer) = super::derive_download_referer(&task.url) {
             cmd.arg(format!("--header=Referer: {referer}"));
