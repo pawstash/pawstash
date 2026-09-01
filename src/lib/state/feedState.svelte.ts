@@ -7,6 +7,7 @@ import { parseTags } from '$lib/utils/formatters';
 import { logger } from '$lib/utils/logger';
 import { accountState } from './accountState.svelte';
 import { configState } from './configState.svelte';
+import { providerState } from './providerState.svelte';
 
 const PAGE_SIZE = 50;
 export type FeedMode = 'recent' | 'popular';
@@ -86,7 +87,7 @@ export class FeedState {
   filteredPosts = $derived(
     this.posts.filter((post) => {
       if (Object.keys(this.providerFilters).length > 0) {
-        const postProvider = (post.extra as any)?.provider_id || (['onlyfans', 'fansly', 'candfans'].includes(post.service.toLowerCase()) ? 'coomer' : 'pawchive');
+        const postProvider = (post.extra as any)?.provider_id || providerState.getProviderIdForService(post.service);
         const matchesProvider = matchesTriStateFilter([postProvider], this.providerFilters);
         if (!matchesProvider) return false;
       }

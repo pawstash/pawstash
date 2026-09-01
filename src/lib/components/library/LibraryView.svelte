@@ -179,15 +179,8 @@
   async function batchDownloadPosts() {
     const items = selectionState.getItems<Post>();
     if (items.length === 0) return;
-    let count = 0;
     try {
-      for (const post of items) {
-        const targets = getPostDownloadTargets(post);
-        for (const target of targets) {
-          await downloadState.start(post, target.mediaId, target.url, target.filename);
-          count++;
-        }
-      }
+      const count = await downloadState.downloadPosts(items);
       notify.success(
         i18n.t('selection.download_all') || 'Queued downloads',
         `${count} ${count === 1 ? 'file' : 'files'}`

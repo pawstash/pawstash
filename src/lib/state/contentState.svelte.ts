@@ -213,7 +213,7 @@ export class ContentState {
       relation_id: undefined,
       indexed: undefined,
       updated: undefined,
-      kemono_favorited: 0,
+      favorited: 0,
       ever_imported: false,
       extra: {}
     };

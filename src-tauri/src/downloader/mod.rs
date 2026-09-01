@@ -112,6 +112,19 @@ pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String>
     }
 }
 
+pub const PAWSTASH_USER_AGENT: &str =
+    concat!("Github:Pawstash/Pawstash;v=", env!("CARGO_PKG_VERSION"));
+
+pub fn is_pawchive_url(url: &str) -> bool {
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        if let Some(host) = parsed.host_str() {
+            let host = host.to_lowercase();
+            return host.contains("pawchive");
+        }
+    }
+    false
+}
+
 pub fn standard_browser_headers() -> reqwest::header::HeaderMap {
     use reqwest::header::*;
     let mut map = HeaderMap::new();
@@ -166,6 +179,31 @@ pub fn standard_browser_header_args() -> Vec<String> {
     ]
 }
 
+pub fn derive_download_headers(url: &str) -> reqwest::header::HeaderMap {
+    use reqwest::header::*;
+    if is_pawchive_url(url) {
+        let mut map = HeaderMap::new();
+        map.insert(USER_AGENT, HeaderValue::from_static(PAWSTASH_USER_AGENT));
+        map.insert(ACCEPT, HeaderValue::from_static("*/*"));
+        map.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+        map
+    } else {
+        standard_browser_headers()
+    }
+}
+
+pub fn derive_download_header_args(url: &str) -> Vec<String> {
+    if is_pawchive_url(url) {
+        vec![
+            format!("--user-agent={PAWSTASH_USER_AGENT}"),
+            "--header=Accept: */*".into(),
+            "--header=Accept-Language: en-US,en;q=0.9".into(),
+        ]
+    } else {
+        standard_browser_header_args()
+    }
+}
+
 pub use crate::cloud::normalize_cloud_direct_url as normalize_download_url;
 
 #[cfg(test)]
@@ -192,7 +230,7 @@ mod tests {
             Some("https://pawchive.pw/".into())
         );
 
-        // OnlyHaven (cum.st) - must NEVER leak to coomer.su
+        // OnlyHaven (cum.st)
         assert_eq!(
             derive_download_referer("https://cum.st/data/aa/bb/image.png"),
             Some("https://cum.st/".into())
@@ -288,5 +326,27 @@ mod tests {
         assert!(args
             .iter()
             .any(|a| a == "--header=sec-ch-ua-platform: \"Windows\""));
+    }
+
+    #[test]
+    fn test_pawchive_user_agent_headers() {
+        assert!(is_pawchive_url("https://pawchive.pw/api/v1/posts"));
+        assert!(is_pawchive_url("https://file.pawchive.pw/data/123"));
+        assert!(is_pawchive_url(
+            "https://img.pawchive.pw/thumbnail/data/123"
+        ));
+        assert!(!is_pawchive_url("https://cum.st/data/123"));
+        assert!(!is_pawchive_url("https://mega.nz/file/123"));
+
+        let headers = derive_download_headers("https://file.pawchive.pw/data/123");
+        assert_eq!(
+            headers.get("user-agent").and_then(|v| v.to_str().ok()),
+            Some(PAWSTASH_USER_AGENT)
+        );
+
+        let args = derive_download_header_args("https://file.pawchive.pw/data/123");
+        assert!(args
+            .iter()
+            .any(|a| a == &format!("--user-agent={PAWSTASH_USER_AGENT}")));
     }
 }

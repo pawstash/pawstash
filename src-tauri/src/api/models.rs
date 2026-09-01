@@ -283,7 +283,6 @@ pub struct Creator {
     pub indexed: Option<i64>,
     pub updated: Option<i64>,
     pub favorited: Option<u64>,
-    pub kemono_favorited: Option<u64>,
     pub ever_imported: Option<bool>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -298,7 +297,7 @@ pub struct CreatorProfile {
     pub relation_id: Option<Value>,
     pub indexed: Option<Value>,
     pub updated: Option<Value>,
-    pub kemono_favorited: Option<u64>,
+    pub favorited: Option<u64>,
     pub ever_imported: Option<bool>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,

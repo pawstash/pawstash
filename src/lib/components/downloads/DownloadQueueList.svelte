@@ -215,7 +215,7 @@
         .replace('/data/', '/thumbnail/data/')
         .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, '://img.');
     }
-    if (cleanUrl.includes('cum.st') || cleanUrl.includes('coomer')) {
+    if (cleanUrl.includes('cum.st') || cleanUrl.includes('onlyhaven')) {
       const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
       if (match) {
         return `https://img.cum.st/thumbnail/${match[1]}/preview.webp`;

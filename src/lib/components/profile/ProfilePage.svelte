@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { syncState } from '$lib/state/syncState.svelte';
-  import { accountState } from '$lib/state/accountState.svelte';
-  import { configState } from '$lib/state/configState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -32,7 +30,6 @@
     | 'connect'
     | 'create'
     | 'recover'
-    | 'pawchive_login'
     | 'recovery_kit'
     | 'change_password'
     | 'unlock';
@@ -49,16 +46,6 @@
   let currentPassword = $state('');
   let newPassword = $state('');
   let recoveryKitText = $state('');
-
-  let pawchiveUsername = $state('');
-  let pawchivePassword = $state('');
-  let pawchiveLoginError = $state('');
-  let registerUrl = $derived(
-    `https://${configState.settings.api_domain.replace(/^https?:\/\//, '')}/account/register`
-  );
-  let pawchiveProfileUrl = $derived(
-    `https://${configState.settings.api_domain.replace(/^https?:\/\//, '')}/account`
-  );
 
   async function openExternalUrl(url: string) {
     try {
@@ -79,9 +66,6 @@
 
   onMount(() => {
     syncAccount = generateRandomId();
-    void accountState.refresh().catch((error) =>
-      notify.error(i18n.t('profile.check_error'), error)
-    );
   });
 
   async function runSyncAction(work: () => Promise<unknown>, successMessage?: string) {
@@ -168,29 +152,7 @@
     });
   }
 
-  async function loginPawchive() {
-    if (accountState.loading || !pawchiveUsername.trim() || !pawchivePassword) return;
-    pawchiveLoginError = '';
-    try {
-      await accountState.login(pawchiveUsername, pawchivePassword);
-      notify.success(i18n.t('profile.connected'), pawchiveUsername);
-      activeView = 'menu';
-    } catch (error) {
-      pawchiveLoginError = String(error);
-      notify.error(i18n.t('profile.login_error'), pawchiveLoginError);
-    } finally {
-      pawchivePassword = '';
-    }
-  }
 
-  async function logoutPawchive() {
-    try {
-      await accountState.logout();
-      notify.success(i18n.t('profile.logged_out'));
-    } catch (error) {
-      notify.error(i18n.t('profile.logout_error'), error);
-    }
-  }
 
   let parsedRecovery = $derived.by(() => {
     if (!recoveryKitText) return null;
@@ -290,50 +252,6 @@
             </div>
           </div>
 
-          <div class="relative flex py-1 items-center">
-            <div class="flex-grow border-t border-white/[0.08]"></div>
-            <span class="flex-shrink mx-3 text-[11px] font-medium text-white/40 uppercase tracking-widest font-outfit">
-              Pawchive
-            </span>
-            <div class="flex-grow border-t border-white/[0.08]"></div>
-          </div>
-
-          <div class="flex flex-col gap-2">
-            {#if accountState.session.authenticated}
-              <div class="flex flex-col gap-2 w-full">
-                <Button
-                  variant="ghost"
-                  class="w-full font-mono"
-                  onclick={() => void openExternalUrl(pawchiveProfileUrl)}
-                  title="Open Pawchive Profile"
-                >
-                  <IconPerson class="w-4 h-4 mr-2 text-white/60 shrink-0" />
-                  <span class="truncate">@{accountState.session.username}</span>
-                  <IconOpen class="w-3.5 h-3.5 ml-1.5 text-white/40 shrink-0" />
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  class="w-full text-red-400 hover:text-red-300"
-                  disabled={accountState.loading}
-                  onclick={() => void logoutPawchive()}
-                >
-                  <IconSignOut class="w-4 h-4 mr-1.5 text-red-400/80" />
-                  <span>{i18n.t('profile.logout')}</span>
-                </Button>
-              </div>
-            {:else}
-              <Button
-                variant="ghost"
-                class="w-full"
-                onclick={() => (activeView = 'pawchive_login')}
-              >
-                <IconGlobe class="w-5 h-5 mr-2 text-white/60" />
-                <span>{i18n.t('profile.login')}</span>
-              </Button>
-            {/if}
-          </div>
-
         {:else}
           <div class="flex flex-col items-center text-center gap-2">
             <svg viewBox="0 0 602 602" fill="none" class="w-14 h-14 mb-1" xmlns="http://www.w3.org/2000/svg">
@@ -385,50 +303,6 @@
               <IconKey class="w-5 h-5 mr-2 text-white/50" />
               <span>{i18n.t('sync.mode_recover')}</span>
             </Button>
-          </div>
-
-          <div class="relative flex py-1 items-center">
-            <div class="flex-grow border-t border-white/[0.08]"></div>
-            <span class="flex-shrink mx-3 text-[11px] font-medium text-white/40 uppercase tracking-widest font-outfit">
-              Pawchive
-            </span>
-            <div class="flex-grow border-t border-white/[0.08]"></div>
-          </div>
-
-          <div class="flex flex-col gap-2">
-            {#if accountState.session.authenticated}
-              <div class="flex flex-col gap-2 w-full">
-                <Button
-                  variant="ghost"
-                  class="w-full font-mono"
-                  onclick={() => void openExternalUrl(pawchiveProfileUrl)}
-                  title="Open Pawchive Profile"
-                >
-                  <IconPerson class="w-4 h-4 mr-2 text-white/60 shrink-0" />
-                  <span class="truncate">@{accountState.session.username}</span>
-                  <IconOpen class="w-3.5 h-3.5 ml-1.5 text-white/40 shrink-0" />
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  class="w-full text-red-400 hover:text-red-300"
-                  disabled={accountState.loading}
-                  onclick={() => void logoutPawchive()}
-                >
-                  <IconSignOut class="w-4 h-4 mr-1.5 text-red-400/80" />
-                  <span>{i18n.t('profile.logout')}</span>
-                </Button>
-              </div>
-            {:else}
-              <Button
-                variant="ghost"
-                class="w-full"
-                onclick={() => (activeView = 'pawchive_login')}
-              >
-                <IconGlobe class="w-5 h-5 mr-2 text-white/60" />
-                <span>{i18n.t('profile.login')}</span>
-              </Button>
-            {/if}
           </div>
         {/if}
 
@@ -716,74 +590,6 @@
             <IconLock class="mr-2" />
             {i18n.t('sync.unlock')}
           </Button>
-        </form>
-
-      {:else if activeView === 'pawchive_login'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-white font-outfit m-0">
-            {i18n.t('profile.login_title')}
-          </h2>
-        </div>
-
-        <form
-          class="flex flex-col gap-3"
-          onsubmit={(e) => { e.preventDefault(); void loginPawchive(); }}
-        >
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('profile.username')}</span>
-            <Input
-              icon={IconPerson}
-              clearable={true}
-              bind:value={pawchiveUsername}
-              placeholder="Username"
-              autocomplete="username"
-            />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('profile.password')}</span>
-            <Input
-              icon={IconKey}
-              bind:value={pawchivePassword}
-              type="password"
-              placeholder="••••••••"
-              autocomplete="current-password"
-            />
-          </div>
-
-          {#if pawchiveLoginError}
-            <p class="text-xs text-red-400 m-0 py-0.5" role="alert">{pawchiveLoginError}</p>
-          {/if}
-
-          <Button
-            type="submit"
-            variant="accent"
-            class="w-full mt-2"
-            disabled={accountState.loading || !pawchiveUsername.trim() || !pawchivePassword}
-          >
-            {#if accountState.loading}
-              <IconLoading class="w-4 h-4 mr-2" />
-              {i18n.t('profile.signing_in')}
-            {:else}
-              <IconCheck class="w-4 h-4 mr-2" />
-              {i18n.t('profile.login')}
-            {/if}
-          </Button>
-
-          <p class="text-xs text-white/40 text-center m-0 pt-1">
-            {i18n.t('profile.no_account')}
-            <a
-              href={registerUrl}
-              target="_blank"
-              rel="noreferrer"
-              class="text-[var(--accent)] hover:underline font-medium ml-1"
-            >
-              {i18n.t('profile.register')}
-            </a>
-          </p>
         </form>
       {/if}
 

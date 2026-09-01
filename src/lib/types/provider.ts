@@ -8,6 +8,8 @@ export interface ProviderConfig {
   fallback_urls: string[];
   file_url?: string | null;
   image_url?: string | null;
+  file_prefix?: string | null;
+  image_prefix?: string | null;
   session_cookie: string;
   username: string;
   services: string[];
@@ -22,6 +24,31 @@ export interface ProviderHealth {
   latency_ms: number;
   error?: string | null;
   last_checked_at: string;
+}
+
+export interface AuthField {
+  key: string;
+  label_key: string;
+  field_type: 'text' | 'password' | 'textarea';
+  placeholder?: string | null;
+  help_text_key?: string | null;
+  required: boolean;
+}
+
+export interface ProviderAuthSchema {
+  provider_id: string;
+  supports_auth: boolean;
+  supports_remote_favorites: boolean;
+  supports_push_favorites: boolean;
+  auth_fields: AuthField[];
+  help_url?: string | null;
+}
+
+export interface FavoritesSyncResult {
+  provider_id: string;
+  pulled_count: number;
+  pushed_count: number;
+  errors: string[];
 }
 
 export interface PostRevisionData {

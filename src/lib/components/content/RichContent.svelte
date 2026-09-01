@@ -34,11 +34,9 @@
         host.includes('iframely.net') ||
         host.includes('iframe.ly') ||
         host.includes('mega.nz') ||
-        host.includes('pawchive.pw') ||
-        host.includes('kemono.party') ||
-        host.includes('kemono.su') ||
-        host.includes('coomer.party') ||
-        host.includes('coomer.su')
+        host.includes('pawchive') ||
+        host.includes('cum.st') ||
+        host.includes('onlyhaven')
       );
     } catch {
       return false;
@@ -68,8 +66,8 @@
       if (host.includes('workupload.com')) return 'workupload';
       if (host.includes('qiwi.gg')) return 'qiwi';
       if (host.includes('send.cm')) return 'sendcm';
-      if (host.includes('kemono') || host.includes('pawchive')) return 'pawchive';
-      if (host.includes('coomer') || host.includes('cum.st') || host.includes('onlyhaven')) return 'onlyhaven';
+      if (host.includes('pawchive')) return 'pawchive';
+      if (host.includes('cum.st') || host.includes('onlyhaven')) return 'onlyhaven';
       if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
       if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
       if (host.includes('pixeldrain.com')) return 'pixeldrain';
@@ -82,49 +80,7 @@
     }
   }
 
-  export function isDirectMediaUrl(url: string): boolean {
-    if (!url) return false;
-    const clean = url.split('?')[0].split('#')[0].toLowerCase();
-    if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v|zip|rar|7z|tar|gz|pdf|mp3|wav|flac|opus|ogg|png|jpe?g|webp|gif|avif)$/i.test(clean)) {
-      return true;
-    }
-    if (url.includes('.b-cdn.net/') && (url.includes('play_') || url.includes('.mp4'))) {
-      return true;
-    }
-    return false;
-  }
-
-  export function extractDirectMediaLinks(raw: string): Array<{ url: string; name: string }> {
-    if (!raw) return [];
-    const results: Array<{ url: string; name: string }> = [];
-    const seen = new Set<string>();
-
-    const anchorRegex = /<a\s+[^>]*href=["'](https?:\/\/[^"'>]+)["'][^>]*>(.*?)<\/a>/gi;
-    let match: RegExpExecArray | null;
-    while ((match = anchorRegex.exec(raw)) !== null) {
-      const url = match[1];
-      const text = match[2].replace(/<[^>]*>/g, '').trim();
-      if (isDirectMediaUrl(url) && !seen.has(url)) {
-        seen.add(url);
-        const filename = text && !text.startsWith('http')
-          ? text
-          : decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
-        results.push({ url, name: filename });
-      }
-    }
-
-    const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
-    while ((match = urlRegex.exec(raw)) !== null) {
-      const url = match[0];
-      if (isDirectMediaUrl(url) && !seen.has(url)) {
-        seen.add(url);
-        const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
-        results.push({ url, name: filename });
-      }
-    }
-
-    return results;
-  }
+  export { isDirectMediaUrl, extractDirectMediaLinks, extractCloudLinks } from '$lib/utils/media';
 
   export function deriveCloudProviderFromUrl(url: string): string {
     try {
@@ -152,13 +108,6 @@
     } catch {
       return 'Cloud';
     }
-  }
-
-  export function extractCloudLinks(raw: string): string[] {
-    if (!raw) return [];
-    const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
-    const matches = raw.match(regex) || [];
-    return [...new Set(matches)];
   }
 
   function safeHttpUrl(raw: string): string | null {
@@ -331,8 +280,7 @@
   }
 
   const POST_PLATFORMS = new Set([
-    'patreon', 'fanbox', 'fantia', 'boosty', 'subscribestar',
-    'afdian', 'candfans', 'onlyfans', 'fansly', 'pawchive', 'onlyhaven'
+    'patreon', 'fanbox', 'discord', 'onlyfans', 'fansly', 'pawchive', 'onlyhaven'
   ]);
 
   const CLOUD_PLATFORMS = new Set(['mega', 'dropbox', 'pixeldrain', 'googledrive']);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import { ripple } from '$lib/motion';
   import { layoutState } from '$lib/state/layoutState.svelte';
@@ -45,6 +46,7 @@
 
 {#if isOpen}
   <div
+    use:portal={'body'}
     class="modal-overlay"
     class:is-top={position === 'top'}
     class:mobile={layoutState.isMobile}
@@ -103,7 +105,7 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    z-index: 50;
+    z-index: 2000;
     display: flex;
     align-items: center;
     justify-content: center;

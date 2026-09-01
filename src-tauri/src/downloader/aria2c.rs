@@ -69,7 +69,7 @@ impl Aria2cManager {
             .arg("-o")
             .arg(temp_name);
 
-        for header_arg in super::standard_browser_header_args() {
+        for header_arg in super::derive_download_header_args(&task.url) {
             cmd.arg(header_arg);
         }
 

@@ -458,7 +458,6 @@ impl DownloadManager {
     ) {
         match self.run_inner(&id, settings, control, &app_handle).await {
             Err(DownloadRunError::Failed(message)) => {
-                eprintln!("[Pawstash Downloader] Job {id} failed: {message}");
                 tracing::error!(id = %id, error = %message, "Download job failed");
                 if let Ok(job) = self
                     .repository

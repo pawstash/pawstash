@@ -4,6 +4,7 @@ import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
 import type { CreatorSubscription, SubscriptionInput } from '$lib/types/subscription';
 import type { SyncDevice, SyncStatus } from '$lib/types/sync';
+import type { ProviderAuthSchema, FavoritesSyncResult } from '$lib/types/provider';
 import type {
   LibraryCollection,
   LibraryPostIdentity,
@@ -61,9 +62,6 @@ export const apiShowInFolder = (path: string) =>
 export const apiShowMainWindow = () => invoke<void>('show_main_window');
 export const apiPickFolder = () => invoke<string | null>('pick_folder');
 export const apiGetAccountSession = () => invoke<AccountSession>('get_account_session');
-export const apiLoginAccount = (username: string, password: string) =>
-  invoke<AccountSession>('login_account', { username, password });
-export const apiLogoutAccount = () => invoke<AccountSession>('logout_account');
 
 export const apiFetchCreators = () => invoke<Creator[]>('fetch_creators');
 
@@ -280,5 +278,21 @@ export const apiUpdateBossKey = (shortcut: string, enabled: boolean) =>
 
 export const apiResolveCloudLink = (url: string) =>
   invoke<CloudFolderResult>('resolve_cloud_link', { url });
+
+export const apiGetProviderAuthSchema = (providerId: string) =>
+  invoke<ProviderAuthSchema>('get_provider_auth_schema', { providerId });
+
+export const apiSaveProviderSession = (providerId: string, cookie: string, username?: string) =>
+  invoke<AccountSession>('save_provider_session', { providerId, cookie, username });
+
+export const apiLoginProvider = (providerId: string, credentials: Record<string, string>) =>
+  invoke<AccountSession>('login_provider', { providerId, credentials });
+
+export const apiLogoutProviderSession = (providerId: string, removeSessionFavorites: boolean) =>
+  invoke<AccountSession>('logout_provider_session', { providerId, removeSessionFavorites });
+
+export const apiSyncProviderFavorites = (providerId: string, direction: 'pull' | 'push' | 'both') =>
+  invoke<FavoritesSyncResult>('sync_provider_favorites', { providerId, direction });
+
 
 

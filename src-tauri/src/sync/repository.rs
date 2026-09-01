@@ -1308,11 +1308,6 @@ mod tests {
 
         // Device A detects dirty records
         let dirty_a = repo_a.detect_and_get_dirty_records().unwrap();
-        let kinds: Vec<(&str, &str, bool)> = dirty_a
-            .iter()
-            .map(|d| (d.kind.as_str(), d.record_id.as_str(), d.payload.is_some()))
-            .collect();
-        eprintln!("DEBUG dirty_a: {:?}", kinds);
         assert_eq!(dirty_a.len(), 6); // collection, post, membership, subscription, fav_post, fav_creator
 
         // Simulate server accept

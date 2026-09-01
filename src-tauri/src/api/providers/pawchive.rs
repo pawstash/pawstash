@@ -1,4 +1,6 @@
-use super::traits::{ProviderConfig, ProviderHealth, SourceProvider};
+use super::traits::{
+    AuthField, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+};
 use crate::api::models::*;
 use crate::config::settings::{AppSettings, ProxyMode};
 use crate::smart_links::{
@@ -24,16 +26,28 @@ pub struct PawchiveClient {
 
 impl PawchiveClient {
     pub async fn login(&self, username: &str, password: &str) -> Result<String, String> {
+        self.login_with_endpoint("", username, password).await
+    }
+
+    pub async fn login_with_endpoint(
+        &self,
+        base_endpoint: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<String, String> {
         let username = username.trim();
         if username.is_empty() || password.is_empty() {
             return Err("Username and password are required".to_string());
         }
         let settings = self.settings.read().await.clone();
-        let url = Url::parse(&format!(
-            "{}/account/login",
+        let site = if base_endpoint.trim().is_empty() {
             Self::site_url(&settings.api_domain)
-        ))
-        .map_err(|e| e.to_string())?;
+        } else if base_endpoint.starts_with("http://") || base_endpoint.starts_with("https://") {
+            base_endpoint.trim_end_matches('/').to_string()
+        } else {
+            format!("https://{}", base_endpoint.trim_end_matches('/'))
+        };
+        let url = Url::parse(&format!("{site}/account/login")).map_err(|e| e.to_string())?;
         let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
         if url.scheme() != "https" && !local {
             return Err("Pawchive login requires HTTPS".to_string());
@@ -174,7 +188,7 @@ impl PawchiveClient {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Pawstash/0.1.0"),
+            HeaderValue::from_static(crate::downloader::PAWSTASH_USER_AGENT),
         );
         headers.insert(
             ACCEPT,
@@ -922,7 +936,7 @@ impl PawchiveClient {
                     relation_id: None,
                     updated: None,
                     indexed: None,
-                    kemono_favorited: None,
+                    favorited: None,
                     ever_imported: None,
                     extra: Default::default(),
                 });
@@ -1122,33 +1136,6 @@ impl PawchiveProvider {
     }
 }
 
-pub(crate) fn derive_subdomain_url(api_url: &str, kind: &str) -> String {
-    let clean_url = if api_url.starts_with("http://") || api_url.starts_with("https://") {
-        api_url.trim_end_matches('/').to_string()
-    } else {
-        format!("https://{}", api_url.trim_end_matches('/'))
-    };
-
-    if let Ok(parsed) = reqwest::Url::parse(&clean_url) {
-        let host = parsed.host_str().unwrap_or("pawchive.pw");
-        let scheme = parsed.scheme();
-        let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
-        let parts: Vec<&str> = base_host.split('.').collect();
-        let domain = if parts.len() > 2 {
-            parts[parts.len() - 2..].join(".")
-        } else {
-            base_host.to_string()
-        };
-        let prefix = if kind == "image" || kind == "img" {
-            "img"
-        } else {
-            "file"
-        };
-        return format!("{scheme}://{prefix}.{domain}");
-    }
-    clean_url
-}
-
 #[async_trait]
 impl SourceProvider for PawchiveProvider {
     fn id(&self) -> &str {
@@ -1164,18 +1151,10 @@ impl SourceProvider for PawchiveProvider {
     }
 
     fn supports_service(&self, service: &str) -> bool {
-        matches!(
-            service.to_lowercase().as_str(),
-            "patreon"
-                | "fanbox"
-                | "fantia"
-                | "boosty"
-                | "subscribestar"
-                | "gumroad"
-                | "dlsite"
-                | "discord"
-                | "afdian"
-        )
+        self.config()
+            .services
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(service))
     }
 
     fn get_active_endpoint(&self) -> String {
@@ -1191,28 +1170,22 @@ impl SourceProvider for PawchiveProvider {
             .unwrap_or_default();
 
         match self.client.fetch_creators().await {
-            Ok(_) => {
-                let latency_ms = start.elapsed().as_millis() as u64;
-                Ok(ProviderHealth {
-                    provider_id: self.id().to_string(),
-                    active_endpoint: endpoint,
-                    is_healthy: true,
-                    latency_ms,
-                    error: None,
-                    last_checked_at: now_str,
-                })
-            }
-            Err(e) => {
-                let latency_ms = start.elapsed().as_millis() as u64;
-                Ok(ProviderHealth {
-                    provider_id: self.id().to_string(),
-                    active_endpoint: endpoint,
-                    is_healthy: false,
-                    latency_ms,
-                    error: Some(e),
-                    last_checked_at: now_str,
-                })
-            }
+            Ok(_) => Ok(ProviderHealth {
+                provider_id: self.id().to_string(),
+                active_endpoint: endpoint,
+                is_healthy: true,
+                latency_ms: start.elapsed().as_millis() as u64,
+                error: None,
+                last_checked_at: now_str,
+            }),
+            Err(e) => Ok(ProviderHealth {
+                provider_id: self.id().to_string(),
+                active_endpoint: endpoint,
+                is_healthy: false,
+                latency_ms: start.elapsed().as_millis() as u64,
+                error: Some(e),
+                last_checked_at: now_str,
+            }),
         }
     }
 
@@ -1250,8 +1223,7 @@ impl SourceProvider for PawchiveProvider {
             relation_id: prof.relation_id,
             indexed: None,
             updated: None,
-            favorited: prof.kemono_favorited,
-            kemono_favorited: prof.kemono_favorited,
+            favorited: prof.favorited,
             ever_imported: prof.ever_imported,
             extra: prof.extra,
         })
@@ -1385,6 +1357,42 @@ impl SourceProvider for PawchiveProvider {
             .await
     }
 
+    fn auth_schema(&self) -> ProviderAuthSchema {
+        let base = self.get_active_endpoint();
+        let clean_base = base.trim_end_matches('/');
+        let help_url = if clean_base.is_empty() {
+            None
+        } else {
+            Some(format!("{clean_base}/account/login"))
+        };
+
+        ProviderAuthSchema {
+            provider_id: "pawchive".to_string(),
+            supports_auth: true,
+            supports_remote_favorites: true,
+            supports_push_favorites: true,
+            auth_fields: vec![
+                AuthField {
+                    key: "username".to_string(),
+                    label_key: "settings.username".to_string(),
+                    field_type: "text".to_string(),
+                    placeholder: Some("Username".to_string()),
+                    help_text_key: None,
+                    required: true,
+                },
+                AuthField {
+                    key: "password".to_string(),
+                    label_key: "settings.password".to_string(),
+                    field_type: "password".to_string(),
+                    placeholder: Some("••••••••".to_string()),
+                    help_text_key: None,
+                    required: true,
+                },
+            ],
+            help_url,
+        }
+    }
+
     fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String {
         let conf = self.config.read().unwrap();
         let clean = file_path
@@ -1404,7 +1412,7 @@ impl SourceProvider for PawchiveProvider {
                     .as_deref()
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| derive_subdomain_url(&conf.api_url, "file"));
+                    .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "file"));
 
                 if let Ok(parsed) = Url::parse(&file_base) {
                     let host = parsed.host_str().unwrap_or("");
@@ -1436,7 +1444,7 @@ impl SourceProvider for PawchiveProvider {
             return format!("{base}/data/{clean}");
         }
 
-        let base = derive_subdomain_url(&conf.api_url, "file");
+        let base = super::traits::derive_subdomain_url(&conf.api_url, "file");
         format!("{base}/data/{clean}")
     }
 
@@ -1456,7 +1464,7 @@ impl SourceProvider for PawchiveProvider {
             return format!("{base}/thumbnail/data/{clean}");
         }
 
-        let base = derive_subdomain_url(&conf.api_url, "image");
+        let base = super::traits::derive_subdomain_url(&conf.api_url, "img");
         format!("{base}/thumbnail/data/{clean}")
     }
 
@@ -1504,7 +1512,10 @@ impl SourceProvider for PawchiveProvider {
     }
 
     async fn login(&self, username: &str, password: &str) -> Result<String, String> {
-        self.client.login(username, password).await
+        let base = self.get_active_endpoint();
+        self.client
+            .login_with_endpoint(&base, username, password)
+            .await
     }
 
     async fn logout(&self) -> Result<(), String> {
@@ -1580,6 +1591,8 @@ mod tests {
             fallback_urls: vec![],
             file_url: Some("https://file.pawchive.pw".into()),
             image_url: Some("https://img.pawchive.pw".into()),
+            file_prefix: None,
+            image_prefix: None,
             session_cookie: String::new(),
             username: String::new(),
             services: vec![],
@@ -1628,6 +1641,8 @@ mod tests {
             fallback_urls: vec![],
             file_url: None,
             image_url: None,
+            file_prefix: None,
+            image_prefix: None,
             session_cookie: String::new(),
             username: String::new(),
             services: vec![],

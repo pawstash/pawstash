@@ -1,13 +1,13 @@
 use super::onlyhaven::OnlyHavenProvider;
 use super::pawchive::PawchiveProvider;
 use super::traits::{
-    default_coomer_services, default_pawchive_services, ProviderConfig, ProviderHealth,
-    SourceProvider,
+    default_onlyhaven_services, default_pawchive_services, FavoritesSyncResult, ProviderAuthSchema,
+    ProviderConfig, ProviderHealth, SourceProvider,
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
 use futures_util::future::join_all;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -15,11 +15,7 @@ fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, St
     let id_lower = config.id.to_lowercase();
     let url_lower = config.api_url.to_lowercase();
 
-    if id_lower == "pawchive"
-        || id_lower == "kemono"
-        || url_lower.contains("pawchive")
-        || url_lower.contains("kemono")
-    {
+    if id_lower == "pawchive" || url_lower.contains("pawchive") {
         Ok(Arc::new(PawchiveProvider::new(config)?))
     } else {
         Ok(Arc::new(OnlyHavenProvider::new(config)?))
@@ -63,6 +59,8 @@ impl ProviderManager {
                 fallback_urls: vec![],
                 file_url: Some("https://file.pawchive.pw".into()),
                 image_url: Some("https://img.pawchive.pw".into()),
+                file_prefix: Some("file".into()),
+                image_prefix: Some("img".into()),
                 session_cookie: String::new(),
                 username: String::new(),
                 services: default_pawchive_services(),
@@ -70,16 +68,18 @@ impl ProviderManager {
                 priority: 1,
             },
             ProviderConfig {
-                id: "coomer".into(),
+                id: "onlyhaven".into(),
                 name: "OnlyHaven".into(),
                 enabled: false,
                 api_url: "https://cum.st".into(),
                 fallback_urls: vec![],
                 file_url: Some("https://e1.cum.st".into()),
                 image_url: Some("https://img.cum.st".into()),
+                file_prefix: Some("e1".into()),
+                image_prefix: Some("img".into()),
                 session_cookie: String::new(),
                 username: String::new(),
-                services: default_coomer_services(),
+                services: default_onlyhaven_services(),
                 is_custom: false,
                 priority: 2,
             },
@@ -594,6 +594,261 @@ impl ProviderManager {
         }
     }
 
+    pub async fn get_provider_auth_schema(
+        &self,
+        provider_id: &str,
+    ) -> Result<ProviderAuthSchema, String> {
+        if let Some(p) = self.get_provider_by_id(provider_id).await {
+            Ok(p.auth_schema())
+        } else {
+            Err(format!("Provider '{provider_id}' not found"))
+        }
+    }
+
+    pub async fn save_provider_session(
+        &self,
+        provider_id: &str,
+        cookie: &str,
+        username: Option<&str>,
+    ) -> Result<(), String> {
+        let mut list = self.providers.write().await;
+        if let Some(p) = list.iter_mut().find(|p| p.config().id == provider_id) {
+            let mut conf = p.config();
+            conf.session_cookie = cookie.trim().to_string();
+            if let Some(u) = username {
+                conf.username = u.trim().to_string();
+            }
+            p.update_config(conf).await?;
+            Ok(())
+        } else {
+            Err(format!("Provider '{provider_id}' not found"))
+        }
+    }
+
+    pub async fn login_provider_with_credentials(
+        &self,
+        provider_id: &str,
+        credentials: &HashMap<String, String>,
+    ) -> Result<String, String> {
+        let mut list = self.providers.write().await;
+        if let Some(p) = list.iter_mut().find(|p| p.config().id == provider_id) {
+            let (cookie, username): (String, String) = if let (Some(u), Some(pass)) =
+                (credentials.get("username"), credentials.get("password"))
+            {
+                let session_res = p.login(u, pass).await?;
+                let derived_user = if let Ok(sess) = p.get_account_session().await {
+                    sess.username.unwrap_or_else(|| u.to_string())
+                } else {
+                    u.to_string()
+                };
+                (session_res, derived_user)
+            } else if let Some(cookie) = credentials.get("session_cookie") {
+                let mut conf = p.config();
+                conf.session_cookie = cookie.trim().to_string();
+                if let Some(u) = credentials.get("username") {
+                    conf.username = u.trim().to_string();
+                }
+                p.update_config(conf).await?;
+                let derived_user = if let Ok(sess) = p.get_account_session().await {
+                    sess.username.unwrap_or_default()
+                } else {
+                    credentials.get("username").cloned().unwrap_or_default()
+                };
+                (cookie.trim().to_string(), derived_user)
+            } else {
+                return Err("Missing login credentials".to_string());
+            };
+
+            let mut conf = p.config();
+            conf.session_cookie = cookie;
+            if !username.is_empty() {
+                conf.username = username;
+            }
+            p.update_config(conf).await?;
+            Ok(p.config().username)
+        } else {
+            Err(format!("Provider '{provider_id}' not found"))
+        }
+    }
+
+    pub async fn logout_provider_session(
+        &self,
+        provider_id: &str,
+        remove_session_favorites: bool,
+        content_repo: &crate::db::content::ContentRepository,
+    ) -> Result<(), String> {
+        let username_to_clear = {
+            let mut list = self.providers.write().await;
+            if let Some(p) = list.iter_mut().find(|p| p.config().id == provider_id) {
+                let mut conf = p.config();
+                let user = conf.username.clone();
+                conf.session_cookie.clear();
+                conf.username.clear();
+                p.update_config(conf).await?;
+                user
+            } else {
+                return Err(format!("Provider '{provider_id}' not found"));
+            }
+        };
+        if remove_session_favorites && !username_to_clear.trim().is_empty() {
+            let _ = content_repo.remove_account_favorites(&username_to_clear);
+        }
+        Ok(())
+    }
+
+    pub async fn sync_provider_favorites(
+        &self,
+        provider_id: &str,
+        direction: &str,
+        content_repo: &crate::db::content::ContentRepository,
+    ) -> Result<FavoritesSyncResult, String> {
+        let provider = self
+            .get_provider_by_id(provider_id)
+            .await
+            .ok_or_else(|| format!("Provider '{provider_id}' not found"))?;
+
+        let mut pulled_count = 0;
+        let mut pushed_count = 0;
+        let mut errors = Vec::new();
+
+        let conf = provider.config();
+        let account_id = if !conf.username.is_empty() {
+            conf.username.clone()
+        } else {
+            conf.id.clone()
+        };
+
+        // 1. Pull from remote to local
+        if direction == "pull" || direction == "both" {
+            match provider.fetch_account_favorites(None).await {
+                Ok(remote_favs) => {
+                    for fav in remote_favs {
+                        let srv = fav.service.as_deref().unwrap_or("").to_lowercase();
+                        if srv.is_empty() || fav.id.is_empty() {
+                            continue;
+                        }
+                        let kind = fav
+                            .extra
+                            .get("kind")
+                            .and_then(|k| k.as_str())
+                            .unwrap_or("creator");
+                        let is_post = kind == "post";
+                        let creator_id = if is_post {
+                            fav.extra
+                                .get("user")
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("")
+                                .to_string()
+                        } else {
+                            fav.id.clone()
+                        };
+                        let post_id = if is_post {
+                            fav.id.clone()
+                        } else {
+                            String::new()
+                        };
+                        let entity_kind = if is_post { "post" } else { "creator" };
+
+                        let opt_post = if is_post {
+                            Some(post_id.as_str())
+                        } else {
+                            None
+                        };
+                        if let Err(e) = content_repo.set_pin(
+                            entity_kind,
+                            &srv,
+                            &creator_id,
+                            opt_post,
+                            "favorite",
+                            &account_id,
+                            true,
+                        ) {
+                            errors.push(format!(
+                                "Failed to save local favorite {srv}:{creator_id}:{post_id}: {e}"
+                            ));
+                        } else {
+                            pulled_count += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!("Pull favorites failed: {e}"));
+                }
+            }
+        }
+
+        // 2. Push from local to remote (with 100ms throttle to prevent HTTP 429)
+        if direction == "push" || direction == "both" {
+            let local_creators = content_repo
+                .list_favorites("artist", &account_id)
+                .unwrap_or_default();
+            for creator in local_creators {
+                if let Some(srv) = creator.service.as_deref() {
+                    if provider.supports_service(srv) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        match provider.set_creator_favorite(srv, &creator.id, true).await {
+                            Ok(res) if res.success => {
+                                pushed_count += 1;
+                            }
+                            Ok(_) => {
+                                errors.push(format!(
+                                    "Push creator favorite rejected by server for {srv}:{}",
+                                    creator.id
+                                ));
+                            }
+                            Err(e) => {
+                                errors
+                                    .push(format!("Push creator {srv}:{} failed: {e}", creator.id));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let local_posts = content_repo
+                .list_favorites("post", &account_id)
+                .unwrap_or_default();
+            for post in local_posts {
+                if let Some(srv) = post.service.as_deref() {
+                    if provider.supports_service(srv) {
+                        let user_id = post
+                            .extra
+                            .get("user")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("");
+                        if !user_id.is_empty() {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            match provider
+                                .set_post_favorite(srv, user_id, &post.id, true)
+                                .await
+                            {
+                                Ok(res) if res.success => {
+                                    pushed_count += 1;
+                                }
+                                Ok(_) => {
+                                    errors.push(format!("Push post favorite rejected by server for {srv}:{user_id}:{}", post.id));
+                                }
+                                Err(e) => {
+                                    errors.push(format!(
+                                        "Push post {srv}:{user_id}:{} failed: {e}",
+                                        post.id
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(FavoritesSyncResult {
+            provider_id: provider_id.to_string(),
+            pulled_count,
+            pushed_count,
+            errors,
+        })
+    }
+
     pub async fn resolve_media_url(
         &self,
         service: &str,
@@ -613,6 +868,8 @@ impl ProviderManager {
             let enabled = self.get_all_enabled_providers().await;
             if let Some(first) = enabled.first() {
                 first.resolve_media_url(file_path, server)
+            } else if let Some(first) = self.providers.read().await.first() {
+                first.resolve_media_url(file_path, server)
             } else {
                 let clean = file_path
                     .trim_start_matches('/')
@@ -630,6 +887,8 @@ impl ProviderManager {
         } else {
             let enabled = self.get_all_enabled_providers().await;
             if let Some(first) = enabled.first() {
+                first.resolve_thumbnail_url(thumb_path)
+            } else if let Some(first) = self.providers.read().await.first() {
                 first.resolve_thumbnail_url(thumb_path)
             } else {
                 let clean = thumb_path

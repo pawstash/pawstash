@@ -3,7 +3,9 @@ pub mod window_effects;
 
 use crate::api::models::*;
 use crate::api::pawchive::PawchiveClient;
-use crate::api::provider::{ProviderConfig, ProviderHealth};
+use crate::api::provider::{
+    FavoritesSyncResult, ProviderAuthSchema, ProviderConfig, ProviderHealth,
+};
 use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
 use crate::db::content::{CacheStats, ContentRepository};
@@ -20,6 +22,7 @@ use crate::smart_links::{parse_external_creator_link, parse_external_post_link};
 use crate::subscriptions::SubscriptionManager;
 use crate::sync::client::SyncDevice;
 use crate::sync::manager::{SyncManager, SyncStatus};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
@@ -326,92 +329,138 @@ pub async fn test_provider_connection(
 #[tauri::command]
 pub async fn get_account_session(state: State<'_, AppState>) -> Result<AccountSession, String> {
     let settings = state.config_manager.load()?;
-    if settings.session_cookie.trim().is_empty() {
-        return Ok(AccountSession {
+    let any_auth = settings
+        .providers
+        .iter()
+        .find(|p| p.enabled && !p.session_cookie.trim().is_empty());
+
+    if let Some(p) = any_auth {
+        Ok(AccountSession {
+            authenticated: true,
+            username: if p.username.trim().is_empty() {
+                None
+            } else {
+                Some(p.username.clone())
+            },
+        })
+    } else {
+        Ok(AccountSession {
             authenticated: false,
             username: None,
-        });
-    }
-    match state
-        .provider_manager
-        .fetch_account_favorites(None, Some("artist"))
-        .await
-    {
-        Ok(_) => Ok(AccountSession {
-            authenticated: true,
-            username: Some(settings.pawchive_username),
-        }),
-        Err(error) if error.contains("401") || error.contains("403") => Ok(AccountSession {
-            authenticated: false,
-            username: None,
-        }),
-        Err(_) => Ok(AccountSession {
-            authenticated: true,
-            username: Some(settings.pawchive_username),
-        }),
+        })
     }
 }
 
 #[tauri::command]
-pub async fn login_account(
-    username: String,
-    password: String,
+pub async fn get_provider_auth_schema(
+    provider_id: String,
+    state: State<'_, AppState>,
+) -> Result<ProviderAuthSchema, String> {
+    state
+        .provider_manager
+        .get_provider_auth_schema(&provider_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn save_provider_session(
+    provider_id: String,
+    cookie: String,
+    username: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
-    let cookie = state
-        .provider_manager
-        .login("pawchive", &username, &password)
-        .await?;
-    let previous = state.config_manager.load()?;
-    let mut settings = previous.clone();
-    settings.session_cookie = cookie.clone();
-    settings.pawchive_username = username.trim().to_string();
-    if let Some(pawchive) = settings.providers.iter_mut().find(|p| p.id == "pawchive") {
-        pawchive.session_cookie = cookie;
-        pawchive.username = username.trim().to_string();
-    }
-    let _ = state
-        .provider_manager
-        .update_providers(settings.providers.clone())
-        .await;
     state
-        .pawchive_client
-        .update_settings(settings.clone())
+        .provider_manager
+        .save_provider_session(&provider_id, &cookie, username.as_deref())
         .await?;
-    if let Err(error) = state.config_manager.save(&settings) {
-        let _ = state.pawchive_client.update_settings(previous).await;
-        return Err(error);
+
+    let mut settings = state.config_manager.load()?;
+    if let Some(p) = settings.providers.iter_mut().find(|p| p.id == provider_id) {
+        p.session_cookie = cookie.clone();
+        if let Some(ref u) = username {
+            p.username = u.trim().to_string();
+        }
     }
+    let _ = state.config_manager.save(&settings);
+
     Ok(AccountSession {
         authenticated: true,
-        username: Some(settings.pawchive_username),
+        username: state
+            .provider_manager
+            .get_provider_by_id(&provider_id)
+            .await
+            .map(|p| p.config().username),
     })
 }
 
 #[tauri::command]
-pub async fn logout_account(state: State<'_, AppState>) -> Result<AccountSession, String> {
-    let _ = state.provider_manager.logout("pawchive").await;
-    let mut settings = state.config_manager.load()?;
-    settings.session_cookie.clear();
-    settings.pawchive_username.clear();
-    if let Some(pawchive) = settings.providers.iter_mut().find(|p| p.id == "pawchive") {
-        pawchive.session_cookie.clear();
-        pawchive.username.clear();
-    }
-    let _ = state
+pub async fn login_provider(
+    provider_id: String,
+    credentials: HashMap<String, String>,
+    state: State<'_, AppState>,
+) -> Result<AccountSession, String> {
+    let username = state
         .provider_manager
-        .update_providers(settings.providers.clone())
-        .await;
-    state
-        .pawchive_client
-        .update_settings(settings.clone())
+        .login_provider_with_credentials(&provider_id, &credentials)
         .await?;
-    state.config_manager.clear_session_cookie()?;
-    state.config_manager.save(&settings)?;
+
+    let mut settings = state.config_manager.load()?;
+    if let Some(p) = settings.providers.iter_mut().find(|p| p.id == provider_id) {
+        if let Some(prov) = state
+            .provider_manager
+            .get_provider_by_id(&provider_id)
+            .await
+        {
+            p.session_cookie = prov.config().session_cookie;
+            p.username = prov.config().username;
+        }
+    }
+    let _ = state.config_manager.save(&settings);
+
+    Ok(AccountSession {
+        authenticated: true,
+        username: if username.is_empty() {
+            None
+        } else {
+            Some(username)
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn logout_provider_session(
+    provider_id: String,
+    remove_session_favorites: bool,
+    state: State<'_, AppState>,
+) -> Result<AccountSession, String> {
+    state
+        .provider_manager
+        .logout_provider_session(&provider_id, remove_session_favorites, &state.content)
+        .await?;
+
+    let mut settings = state.config_manager.load()?;
+    if let Some(p) = settings.providers.iter_mut().find(|p| p.id == provider_id) {
+        p.session_cookie.clear();
+        p.username.clear();
+    }
+    let _ = state.config_manager.save(&settings);
+
     Ok(AccountSession {
         authenticated: false,
         username: None,
     })
+}
+
+#[tauri::command]
+pub async fn sync_provider_favorites(
+    provider_id: String,
+    direction: String,
+    state: State<'_, AppState>,
+) -> Result<FavoritesSyncResult, String> {
+    state
+        .provider_manager
+        .sync_provider_favorites(&provider_id, &direction, &state.content)
+        .await
 }
 
 #[tauri::command]
@@ -575,7 +624,7 @@ pub async fn fetch_creator_profile(
                 relation_id: creator.relation_id,
                 indexed: creator.indexed.map(serde_json::Value::from),
                 updated: creator.updated.map(serde_json::Value::from),
-                kemono_favorited: creator.kemono_favorited,
+                favorited: creator.favorited,
                 ever_imported: creator.ever_imported,
                 extra: creator.extra,
             };
@@ -742,7 +791,7 @@ pub async fn fetch_post(
                         .available_providers
                         .first()
                         .map(String::as_str)
-                        .unwrap_or("pawchive"),
+                        .unwrap_or("unknown"),
                     &reconciled.revisions,
                 );
             }
@@ -1031,7 +1080,7 @@ pub async fn fetch_account_favorites(
                             "relation_id",
                             "indexed",
                             "updated",
-                            "kemono_favorited",
+                            "favorited",
                             "ever_imported",
                             "extra",
                         ];
@@ -1048,7 +1097,7 @@ pub async fn fetch_account_favorites(
                                 relation_id: None,
                                 indexed: fav.indexed.clone().map(serde_json::Value::String),
                                 updated: fav.updated.clone().map(serde_json::Value::String),
-                                kemono_favorited: None,
+                                favorited: None,
                                 ever_imported: None,
                                 extra,
                             };
@@ -1235,7 +1284,7 @@ pub async fn set_creator_favorite(
                 relation_id: creator.relation_id,
                 indexed: creator.indexed.map(|v| serde_json::Value::Number(v.into())),
                 updated: creator.updated.map(|v| serde_json::Value::Number(v.into())),
-                kemono_favorited: creator.kemono_favorited,
+                favorited: creator.favorited,
                 ever_imported: creator.ever_imported,
                 extra: creator.extra,
             },
@@ -1251,7 +1300,7 @@ pub async fn set_creator_favorite(
                         relation_id: None,
                         indexed: None,
                         updated: None,
-                        kemono_favorited: None,
+                        favorited: None,
                         ever_imported: None,
                         extra: Default::default(),
                     }
@@ -1399,7 +1448,7 @@ pub async fn fetch_post_revisions(
                 .await
                 .first()
                 .map(|p| p.id().to_string())
-                .unwrap_or_else(|| "pawchive".to_string());
+                .unwrap_or_else(|| "unknown".to_string());
             let _ = state.content.save_post_revisions(
                 &service,
                 &creator_id,
@@ -1616,7 +1665,7 @@ pub async fn start_download(
             relation_id: creator.relation_id,
             indexed: creator.indexed.map(serde_json::Value::from),
             updated: creator.updated.map(serde_json::Value::from),
-            kemono_favorited: creator.kemono_favorited,
+            favorited: creator.favorited,
             ever_imported: creator.ever_imported,
             extra: creator.extra,
         };
@@ -1871,11 +1920,11 @@ pub async fn upsert_subscription(
     state: State<'_, AppState>,
 ) -> Result<Subscription, String> {
     if let Ok(profile) = state
-        .pawchive_client
+        .provider_manager
         .fetch_creator_profile(&input.service, &input.creator_id)
         .await
     {
-        state.content.save_creator(&profile)?;
+        state.content.save_creators(&[profile])?;
     }
     state.content.set_pin(
         "creator",

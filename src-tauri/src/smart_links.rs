@@ -127,13 +127,7 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
-    if (host_matches(&host, "cum.st")
-        || host_matches(&host, "coomer.su")
-        || host_matches(&host, "coomer.party")
-        || host_matches(&host, "kemono.su")
-        || host_matches(&host, "kemono.party")
-        || host_matches(&host, "pawchive.pw")
-        || host_matches(&host, "pawchive.st"))
+    if (host_matches(&host, "cum.st") || host.contains("pawchive"))
         && segments.len() >= 5
         && matches!(segments[1], "user" | "server" | "channel")
         && segments[3] == "post"
@@ -148,7 +142,7 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
-    if (host_matches(&host, "cum.st") || host_matches(&host, "coomer.su"))
+    if host_matches(&host, "cum.st")
         && segments.len() >= 5
         && segments[0] == "creators"
         && segments[3] == "post"
@@ -229,13 +223,7 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
         .filter(|segment| !segment.is_empty())
         .collect();
 
-    if (host_matches(&host, "cum.st")
-        || host_matches(&host, "coomer.su")
-        || host_matches(&host, "coomer.party")
-        || host_matches(&host, "kemono.su")
-        || host_matches(&host, "kemono.party")
-        || host_matches(&host, "pawchive.pw")
-        || host_matches(&host, "pawchive.st"))
+    if (host_matches(&host, "cum.st") || host.contains("pawchive"))
         && segments.len() >= 3
         && matches!(segments[1], "user" | "server" | "channel")
     {
@@ -247,10 +235,7 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
         });
     }
 
-    if (host_matches(&host, "cum.st") || host_matches(&host, "coomer.su"))
-        && segments.len() >= 3
-        && segments[0] == "creators"
-    {
+    if host_matches(&host, "cum.st") && segments.len() >= 3 && segments[0] == "creators" {
         let service = clean_segment(segments[1])?;
         let creator_id = clean_segment(segments[2])?;
         return Some(ExternalCreatorLink {

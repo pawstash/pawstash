@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -160,24 +160,28 @@ async fn serve_media_handler(
                 let mut response = (StatusCode::PARTIAL_CONTENT, body).into_response();
                 let res_headers = response.headers_mut();
 
-                res_headers.insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
-                res_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+                if let Ok(val) = HeaderValue::from_str(&mime_type) {
+                    res_headers.insert(header::CONTENT_TYPE, val);
+                }
+                res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+                if let Ok(val) =
+                    HeaderValue::from_str(&format!("bytes {}-{}/{}", start, end, file_size))
+                {
+                    res_headers.insert(header::CONTENT_RANGE, val);
+                }
+                res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
                 res_headers.insert(
-                    header::CONTENT_RANGE,
-                    format!("bytes {}-{}/{}", start, end, file_size)
-                        .parse()
-                        .unwrap(),
+                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                    HeaderValue::from_static("*"),
                 );
-                res_headers.insert(
-                    header::CONTENT_LENGTH,
-                    chunk_size.to_string().parse().unwrap(),
-                );
-                res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
                 res_headers.insert(
                     header::ACCESS_CONTROL_ALLOW_METHODS,
-                    "GET, HEAD, OPTIONS".parse().unwrap(),
+                    HeaderValue::from_static("GET, HEAD, OPTIONS"),
                 );
-                res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
+                res_headers.insert(
+                    header::ACCESS_CONTROL_ALLOW_HEADERS,
+                    HeaderValue::from_static("*"),
+                );
 
                 return Ok(response);
             }
@@ -193,18 +197,23 @@ async fn serve_media_handler(
     let mut response = (StatusCode::OK, body).into_response();
     let res_headers = response.headers_mut();
 
-    res_headers.insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
-    res_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    if let Ok(val) = HeaderValue::from_str(&mime_type) {
+        res_headers.insert(header::CONTENT_TYPE, val);
+    }
+    res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(file_size));
     res_headers.insert(
-        header::CONTENT_LENGTH,
-        file_size.to_string().parse().unwrap(),
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
     );
-    res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
     res_headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        "GET, HEAD, OPTIONS".parse().unwrap(),
+        HeaderValue::from_static("GET, HEAD, OPTIONS"),
     );
-    res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
+    res_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
 
     Ok(response)
 }
@@ -384,32 +393,39 @@ async fn serve_mega_stream_handler(
     let body = Body::from_stream(decrypted_stream);
     let mut response = if headers.contains_key(header::RANGE) && total_size > 0 {
         let mut resp = (StatusCode::PARTIAL_CONTENT, body).into_response();
-        resp.headers_mut().insert(
-            header::CONTENT_RANGE,
-            format!("bytes {range_start}-{range_end}/{total_size}")
-                .parse()
-                .unwrap(),
-        );
+        if let Ok(val) =
+            HeaderValue::from_str(&format!("bytes {range_start}-{range_end}/{total_size}"))
+        {
+            resp.headers_mut().insert(header::CONTENT_RANGE, val);
+        }
         resp
     } else {
         (StatusCode::OK, body).into_response()
     };
 
     let res_headers = response.headers_mut();
-    res_headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
-    res_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-    res_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+    if let Ok(val) = HeaderValue::from_str(&mime) {
+        res_headers.insert(header::CONTENT_TYPE, val);
+    }
+    res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    res_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
     res_headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        "GET, HEAD, OPTIONS".parse().unwrap(),
+        HeaderValue::from_static("GET, HEAD, OPTIONS"),
     );
-    res_headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
-    res_headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, "*".parse().unwrap());
+    res_headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    res_headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("*"),
+    );
     if chunk_size > 0 {
-        res_headers.insert(
-            header::CONTENT_LENGTH,
-            chunk_size.to_string().parse().unwrap(),
-        );
+        res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
     }
 
     Ok(response)
@@ -489,7 +505,7 @@ async fn serve_cloud_proxy_stream_handler(
     let target_url = crate::downloader::normalize_download_url(&params.url);
 
     let mut req = client.get(&target_url);
-    req = req.headers(crate::downloader::standard_browser_headers());
+    req = req.headers(crate::downloader::derive_download_headers(&target_url));
 
     if let Some(referer_url) = crate::downloader::derive_download_referer(&target_url) {
         if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {

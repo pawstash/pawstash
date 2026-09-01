@@ -1,99 +1,23 @@
 import type { Post, Attachment } from '$lib/types/content';
-import { configState } from '$lib/state/configState.svelte';
 import { providerState } from '$lib/state/providerState.svelte';
+import { getProviderDriver, deriveSubdomainOrigin } from '$lib/providers/drivers';
 import { thumbHashToUrl } from './thumbhash';
 
-function siteOrigin(domain: string): string {
-  const value = domain.trim().replace(/\/+$/, '');
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
+export { deriveSubdomainOrigin };
 
 export function formatProviderName(name?: string): string {
   if (!name) return '';
-  return name.replace(/Coomer/gi, 'OnlyHaven').replace(/\s*\([^)]*\)/g, '').trim();
+  return name.replace(/\s*\([^)]*\)/g, '').trim();
 }
 
-export function isOnlyHavenService(service?: string): boolean {
-  if (!service) return false;
-  const s = service.toLowerCase();
-  return s === 'onlyfans' || s === 'fansly' || s === 'candfans';
-}
-
-export function deriveSubdomainOrigin(baseUrl: string, kind: 'image' | 'file' | 'api'): string {
-  const origin = siteOrigin(baseUrl);
-  if (kind === 'api') return origin;
-
-  try {
-    const url = new URL(origin);
-    const host = url.hostname;
-
-    if (host.includes('cum.st') || host.includes('onlyhaven') || host.includes('coomer')) {
-      const parts = host.split('.');
-      const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
-      if (kind === 'image') return `${url.protocol}//img.${baseHost}`;
-      if (kind === 'file') return `${url.protocol}//e1.${baseHost}`;
-      return origin;
-    }
-
-    const parts = host.split('.');
-    const baseHost = parts.length > 2 ? parts.slice(-2).join('.') : host;
-    const prefix = kind === 'image' ? 'img' : 'file';
-    return `${url.protocol}//${prefix}.${baseHost}`;
-  } catch {
-    return origin;
-  }
-}
-
-export function getProviderOrigin(service?: string, kind: 'api' | 'image' | 'file' = 'api'): string {
-  if (service) {
-    if (isOnlyHavenService(service)) {
-      const havenProviders = providerState.getProvidersForService(service);
-      const havenBase = havenProviders[0]?.api_url || 'https://cum.st';
-      return deriveSubdomainOrigin(havenBase, kind);
-    }
-    const providers = providerState.getProvidersForService(service);
-    if (providers && providers.length > 0) {
-      const p = providers[0];
-      if (kind === 'image') {
-        if (p.image_url) return siteOrigin(p.image_url);
-        if (configState.settings.image_domain && !configState.settings.image_domain.startsWith('pawchive.pw')) {
-          return siteOrigin(configState.settings.image_domain);
-        }
-        return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'image');
-      }
-      if (kind === 'file') {
-        if (p.file_url) return siteOrigin(p.file_url);
-        if (configState.settings.file_domain && !configState.settings.file_domain.startsWith('pawchive.pw')) {
-          return siteOrigin(configState.settings.file_domain);
-        }
-        return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'file');
-      }
-      if (p.api_url) return siteOrigin(p.api_url);
+function resolveDriver(service?: string, explicitProviderId?: string) {
+  if (explicitProviderId) {
+    const config = providerState.getProviderById(explicitProviderId);
+    if (config) {
+      return { config, driver: getProviderDriver(config.id) };
     }
   }
-
-  const enabled = providerState.providers.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
-  if (enabled.length > 0) {
-    const p = enabled[0];
-    if (kind === 'image') {
-      if (p.image_url) return siteOrigin(p.image_url);
-      return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'image');
-    }
-    if (kind === 'file') {
-      if (p.file_url) return siteOrigin(p.file_url);
-      return deriveSubdomainOrigin(p.api_url || 'pawchive.pw', 'file');
-    }
-    if (p.api_url) return siteOrigin(p.api_url);
-  }
-
-  const defaultApi = configState.settings.api_domain || 'pawchive.pw';
-  if (kind === 'image') {
-    return deriveSubdomainOrigin(configState.settings.image_domain || defaultApi, 'image');
-  }
-  if (kind === 'file') {
-    return deriveSubdomainOrigin(configState.settings.file_domain || defaultApi, 'file');
-  }
-  return siteOrigin(defaultApi);
+  return providerState.getDriverForService(service);
 }
 
 export function cleanMediaPath(rawPath: string): string {
@@ -157,27 +81,51 @@ const MIME_MAP: Record<string, string> = {
   'application/xml': 'xml'
 };
 
-export function inferAttachmentExtension(file?: { name?: string; path?: string; extra?: any } | null, fallback = 'jpg'): string {
+export function inferAttachmentExtension(file?: { name?: string; path?: string; extra?: any; [key: string]: any } | null, fallback = 'jpg'): string {
   if (!file) return fallback;
 
-  const nameExt = file.name?.split('.').pop()?.trim().toLowerCase();
-  if (nameExt && nameExt.length <= 8) return nameExt;
+  const nameExt = file.name?.split('.').pop()?.split(/[?#]/)[0].trim().toLowerCase();
+  if (nameExt && nameExt.length <= 8 && !nameExt.includes('/')) return nameExt;
 
   const pathExt = file.path?.split('.').pop()?.split(/[?#]/)[0].trim().toLowerCase();
   if (pathExt && pathExt.length <= 8 && !pathExt.includes('/')) return pathExt;
 
-  const mime = String((file.extra as any)?.mime_type || '').trim().toLowerCase();
+  const variants = (file as any).variants || (file.extra as any)?.variants;
+  if (Array.isArray(variants) && variants.length > 0) {
+    for (const v of variants) {
+      const vName = typeof v === 'string' ? v : v?.name;
+      const vExt = vName?.split('.').pop()?.split(/[?#]/)[0].trim().toLowerCase();
+      if (vExt && vExt.length <= 8 && !vExt.includes('/')) return vExt;
+    }
+  }
+
+  const mime = String(
+    (file as any).mime_type ||
+    (file as any).mimeType ||
+    (file.extra as any)?.mime_type ||
+    (file.extra as any)?.mimeType ||
+    ''
+  ).trim().toLowerCase();
   if (mime) {
     if (MIME_MAP[mime]) return MIME_MAP[mime];
     const sub = mime.split('/')[1]?.split(';')[0]?.replace(/^x-/, '').trim();
     if (sub && sub.length <= 8 && sub !== 'octet-stream') return sub;
   }
 
-  const kind = (file.extra as any)?.kind;
+  const kind = String(
+    (file as any).kind ||
+    (file as any).type ||
+    (file as any).media_type ||
+    (file.extra as any)?.kind ||
+    (file.extra as any)?.type ||
+    (file.extra as any)?.media_type ||
+    ''
+  ).trim().toLowerCase();
   if (kind === 'video') return 'mp4';
   if (kind === 'audio') return 'mp3';
   if (kind === 'archive') return 'zip';
   if (kind === 'document') return 'pdf';
+  if (kind === 'image' || kind === 'gif' || kind === 'photo') return 'jpg';
 
   return fallback;
 }
@@ -187,13 +135,8 @@ export function creatorAvatarUrl(service: string, creatorId: string, thumbhash?:
     const dataUrl = thumbHashToUrl(thumbhash);
     if (dataUrl) return dataUrl;
   }
-  const s = (service || '').toLowerCase();
-  if (isOnlyHavenService(s)) {
-    const origin = getProviderOrigin(service, 'image');
-    return `${origin}/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/avatar.webp`;
-  }
-  const origin = getProviderOrigin(service, 'api');
-  return `${origin}/icons/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolveAvatarUrl(config, service, creatorId);
 }
 
 export function creatorBannerUrl(service: string, creatorId: string, thumbhash?: string | null): string {
@@ -201,29 +144,18 @@ export function creatorBannerUrl(service: string, creatorId: string, thumbhash?:
     const dataUrl = thumbHashToUrl(thumbhash);
     if (dataUrl) return dataUrl;
   }
-  const s = (service || '').toLowerCase();
-  if (isOnlyHavenService(s)) {
-    const origin = getProviderOrigin(service, 'image');
-    return `${origin}/creator/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}/header.webp`;
-  }
-  const origin = getProviderOrigin(service, 'api');
-  return `${origin}/banners/${encodeURIComponent(s)}/${encodeURIComponent(creatorId)}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolveBannerUrl(config, service, creatorId);
 }
 
 export function creatorPageUrl(service: string, creatorId: string): string {
-  const origin = getProviderOrigin(service, 'api');
-  if (isOnlyHavenService(service)) {
-    return `${origin}/creators/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
-  }
-  return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolveCreatorPageUrl(config, service, creatorId);
 }
 
 export function postPageUrl(service: string, creatorId: string, postId: string): string {
-  const origin = getProviderOrigin(service, 'api');
-  if (isOnlyHavenService(service)) {
-    return `${origin}/creators/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}/post/${encodeURIComponent(postId)}`;
-  }
-  return `${origin}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}/post/${encodeURIComponent(postId)}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolvePostPageUrl(config, service, creatorId, postId);
 }
 
 export function postMediaUrl(post: Post): string | null {
@@ -237,7 +169,8 @@ export function resolveServerOrigin(server: string, service?: string): string {
   if (/^https?:\/\//i.test(srv)) return srv;
   if (srv.includes('.')) return `https://${srv}`;
 
-  const providerOrigin = getProviderOrigin(service, 'file');
+  const { config } = resolveDriver(service);
+  const providerOrigin = config.file_url ? config.file_url : deriveSubdomainOrigin(config.api_url, 'file');
   try {
     const url = new URL(providerOrigin);
     const host = url.hostname;
@@ -260,28 +193,16 @@ export function attachmentMediaUrl(file: Attachment, service: string): string {
     return attachmentThumbnailUrl(file, service);
   }
 
-  const key = cleanMediaPath(file.path);
-  const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
-
-  if (isHaven) {
-    const ext = inferAttachmentExtension(file);
-    const origin = getProviderOrigin(service, 'file');
-    return `${origin}/media/${key}/original.${ext}`;
-  }
-
-  if (file.server) {
-    const origin = resolveServerOrigin(file.server, service);
-    return `${origin}/data/${key}`;
-  }
-
-  const origin = getProviderOrigin(service, 'file');
-  return `${origin}/data/${key}`;
+  const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
+  const { config, driver } = resolveDriver(service, explicitProv);
+  const ext = inferAttachmentExtension(file);
+  return driver.resolveMediaUrl(config, file.path, file.server, ext);
 }
 
 export function attachmentThumbnailUrl(file: Attachment, service: string): string {
   if (!file?.path) return '';
   if (isAttachmentVideo(file, file.path)) {
-    const thumb = (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
+    const thumb = (file as any)?.thumbnail || (file as any)?.preview || (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
     if (thumb && typeof thumb === 'string') return thumb;
     return '';
   }
@@ -292,20 +213,19 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
     return file.path;
   }
 
-  const key = cleanMediaPath(file.path);
-  const isHaven = isOnlyHavenService(service) || (file.extra as any)?.provider_id === 'coomer' || (file.extra as any)?.provider_id === 'onlyhaven';
-  const origin = getProviderOrigin(service, 'image');
-
-  if (isHaven) {
-    return `${origin}/thumbnail/${key}/preview.webp`;
-  }
-
-  return `${origin}/thumbnail/data/${key}`;
+  const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
+  const { config, driver } = resolveDriver(service, explicitProv);
+  return driver.resolveThumbnailUrl(config, file.path);
 }
 
 export function postThumbnailUrl(post: Post): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
-  const thumbhash = (media?.extra as any)?.preview_thumbhash || (post.file?.extra as any)?.preview_thumbhash || (post.attachments?.[0]?.extra as any)?.preview_thumbhash;
+  const thumbhash = (media as any)?.preview_thumbhash ||
+    (media?.extra as any)?.preview_thumbhash ||
+    (post.file as any)?.preview_thumbhash ||
+    (post.file?.extra as any)?.preview_thumbhash ||
+    (post.attachments?.[0] as any)?.preview_thumbhash ||
+    (post.attachments?.[0]?.extra as any)?.preview_thumbhash;
 
   if (thumbhash) {
     const dataUrl = thumbHashToUrl(thumbhash);
@@ -314,31 +234,16 @@ export function postThumbnailUrl(post: Post): string | null {
 
   if (!media?.path) return null;
 
-  const key = cleanMediaPath(media.path);
-  const isHaven = isOnlyHavenService(post.service) || (post.extra as any)?.provider_id === 'coomer' || (post.extra as any)?.provider_id === 'onlyhaven';
-  const origin = getProviderOrigin(post.service, 'image');
-
-  if (isHaven) {
-    return `${origin}/thumbnail/${key}/preview.webp`;
-  }
-
-  return `${origin}/thumbnail/data/${key}`;
+  const explicitProv = (post as any)?.provider_id || (post.extra as any)?.provider_id;
+  const { config, driver } = resolveDriver(post.service, explicitProv);
+  return driver.resolveThumbnailUrl(config, media.path);
 }
 
 export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: string }, service: string): string {
   if (!card.hash || card.hash.length < 4) return '';
-  const sub1 = card.hash.slice(0, 2);
-  const sub2 = card.hash.slice(2, 4);
   const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
-
-  const isHaven = isOnlyHavenService(service);
-  if (isHaven) {
-    const origin = getProviderOrigin(service, 'file');
-    return `${origin}/media/${sub1}/${sub2}/${card.hash}/original.${ext}`;
-  }
-
-  const origin = getProviderOrigin(service, 'image');
-  return `${origin}/data/${sub1}/${sub2}/${card.hash}.${ext}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolveFancardMediaUrl(config, service, { hash: card.hash, ext });
 }
 
 export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: string; ihash?: string }, service: string): string {
@@ -347,16 +252,9 @@ export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: 
     if (dataUrl) return dataUrl;
   }
   if (!card.hash || card.hash.length < 4) return '';
-  const sub1 = card.hash.slice(0, 2);
-  const sub2 = card.hash.slice(2, 4);
   const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
-
-  const origin = getProviderOrigin(service, 'image');
-  if (isOnlyHavenService(service)) {
-    return `${origin}/thumbnail/${sub1}/${sub2}/${card.hash}/preview.webp`;
-  }
-
-  return `${origin}/thumbnail/data/${sub1}/${sub2}/${card.hash}.${ext}`;
+  const { config, driver } = resolveDriver(service);
+  return driver.resolveFancardThumbnailUrl(config, service, { hash: card.hash, ext });
 }
 
 export function postAttachmentCount(post: Post): number {
@@ -378,10 +276,37 @@ export function isAttachmentVideo(file?: Attachment | null, url?: string | null)
   if (url && isVideoUrl(url)) return true;
   const name = (file?.name || '').toLowerCase();
   if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(name)) return true;
-  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
+  const path = (file?.path || '').toLowerCase();
+  if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(path)) return true;
+
+  const variants = (file as any)?.variants || (file?.extra as any)?.variants;
+  if (Array.isArray(variants)) {
+    for (const v of variants) {
+      const vName = typeof v === 'string' ? v : v?.name;
+      if (vName && /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(vName)) return true;
+    }
+  }
+
+  const kind = String(
+    (file as any)?.kind ||
+    (file as any)?.type ||
+    (file as any)?.media_type ||
+    (file?.extra as any)?.kind ||
+    (file?.extra as any)?.type ||
+    (file?.extra as any)?.media_type ||
+    ''
+  ).toLowerCase();
   if (kind === 'video') return true;
-  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+
+  const mime = String(
+    (file as any)?.mime_type ||
+    (file as any)?.mimeType ||
+    (file?.extra as any)?.mime_type ||
+    (file?.extra as any)?.mimeType ||
+    ''
+  ).toLowerCase();
   if (mime.includes('video') || mime.includes('mp4')) return true;
+
   return false;
 }
 
@@ -390,10 +315,37 @@ export function isAttachmentImage(file?: Attachment | null, url?: string | null)
   if (url && isImageUrl(url)) return true;
   const name = (file?.name || '').toLowerCase();
   if (/\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(name)) return true;
-  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
-  if (kind === 'image' || kind === 'gif') return true;
-  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+  const path = (file?.path || '').toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(path)) return true;
+
+  const variants = (file as any)?.variants || (file?.extra as any)?.variants;
+  if (Array.isArray(variants)) {
+    for (const v of variants) {
+      const vName = typeof v === 'string' ? v : v?.name;
+      if (vName && /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(vName)) return true;
+    }
+  }
+
+  const kind = String(
+    (file as any)?.kind ||
+    (file as any)?.type ||
+    (file as any)?.media_type ||
+    (file?.extra as any)?.kind ||
+    (file?.extra as any)?.type ||
+    (file?.extra as any)?.media_type ||
+    ''
+  ).toLowerCase();
+  if (kind === 'image' || kind === 'gif' || kind === 'photo') return true;
+
+  const mime = String(
+    (file as any)?.mime_type ||
+    (file as any)?.mimeType ||
+    (file?.extra as any)?.mime_type ||
+    (file?.extra as any)?.mimeType ||
+    ''
+  ).toLowerCase();
   if (mime.includes('image')) return true;
+
   return false;
 }
 
@@ -402,10 +354,37 @@ export function isAttachmentAudio(file?: Attachment | null, url?: string | null)
   if (url && isAudioUrl(url)) return true;
   const name = (file?.name || '').toLowerCase();
   if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(?:$|[?#])/i.test(name)) return true;
-  const kind = ((file?.extra as any)?.kind || '').toLowerCase();
+  const path = (file?.path || '').toLowerCase();
+  if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(?:$|[?#])/i.test(path)) return true;
+
+  const variants = (file as any)?.variants || (file?.extra as any)?.variants;
+  if (Array.isArray(variants)) {
+    for (const v of variants) {
+      const vName = typeof v === 'string' ? v : v?.name;
+      if (vName && /\.(mp3|m4a|aac|wav|ogg|opus|flac)(?:$|[?#])/i.test(vName)) return true;
+    }
+  }
+
+  const kind = String(
+    (file as any)?.kind ||
+    (file as any)?.type ||
+    (file as any)?.media_type ||
+    (file?.extra as any)?.kind ||
+    (file?.extra as any)?.type ||
+    (file?.extra as any)?.media_type ||
+    ''
+  ).toLowerCase();
   if (kind === 'audio') return true;
-  const mime = ((file?.extra as any)?.mime_type || '').toLowerCase();
+
+  const mime = String(
+    (file as any)?.mime_type ||
+    (file as any)?.mimeType ||
+    (file?.extra as any)?.mime_type ||
+    (file?.extra as any)?.mimeType ||
+    ''
+  ).toLowerCase();
   if (mime.includes('audio')) return true;
+
   return false;
 }
 
@@ -425,43 +404,56 @@ export function isDocumentUrl(url: string | null): boolean {
 }
 
 export function getPostFormats(post: Post): string[] {
+  const p = post;
   const allFiles: string[] = [];
-  if (post.file?.path) allFiles.push(post.file.path.toLowerCase());
-  if (post.file?.name) allFiles.push(post.file.name.toLowerCase());
-  if (post.attachments && Array.isArray(post.attachments)) {
-    for (const att of post.attachments) {
+  if (p.file?.path) allFiles.push(p.file.path.toLowerCase());
+  if (p.file?.name) allFiles.push(p.file.name.toLowerCase());
+  if (p.attachments && Array.isArray(p.attachments)) {
+    for (const att of p.attachments) {
       if (att?.path) allFiles.push(att.path.toLowerCase());
       if (att?.name) allFiles.push(att.name.toLowerCase());
     }
   }
 
-  const items = [post.file, ...(post.attachments || [])].filter(Boolean) as Attachment[];
+  const directMedia = extractDirectMediaLinks(p.content || p.substring || '');
+  for (const d of directMedia) {
+    if (d.url) allFiles.push(d.url.toLowerCase());
+    if (d.name) allFiles.push(d.name.toLowerCase());
+  }
+
+  const items = [p.file, ...(p.attachments || [])].filter(Boolean) as Attachment[];
   const hasVideoAttachment = items.some((it) => isAttachmentVideo(it, it.path));
   const hasImageAttachment = items.some((it) => isAttachmentImage(it, it.path));
+  const hasAudioAttachment = items.some((it) => isAttachmentAudio(it, it.path));
 
-  const embedStr = JSON.stringify(post.embed || {}).toLowerCase();
-  const contentStr = (post.content || '').toLowerCase();
-  const titleStr = (post.title || '').toLowerCase();
-  const tagsStr = Array.isArray(post.tags)
-    ? post.tags.join(' ').toLowerCase()
-    : typeof post.tags === 'string'
-      ? post.tags.toLowerCase()
+  const embedStr = JSON.stringify(p.embed || {}).toLowerCase();
+  const contentStr = (p.content || p.substring || '').toLowerCase();
+  const titleStr = (p.title || '').toLowerCase();
+  const tagsStr = Array.isArray(p.tags)
+    ? p.tags.join(' ').toLowerCase()
+    : typeof p.tags === 'string'
+      ? p.tags.toLowerCase()
       : '';
 
   const formats: string[] = [];
 
   // Video
   const hasVideoFile = allFiles.some((f) => /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f));
-  const hasVideoEmbed = /youtube|youtu\.be|vimeo|bilibili|streamable|gfycat|coomer|kemono|sproutvideo|vids\.io|redgifs|\.(mp4|webm|mkv|mov|m4v)/i.test(embedStr) || /<video|\.(mp4|webm|mkv|mov|m4v)/i.test(contentStr);
+  const hasVideoEmbed = /youtube|youtu\.be|vimeo|bilibili|streamable|gfycat|sproutvideo|vids\.io|redgifs|mediadelivery\.net|b-cdn\.net|\.(mp4|webm|mkv|mov|m4v)/i.test(embedStr) || /<video|\.(mp4|webm|mkv|mov|m4v)/i.test(contentStr);
   const hasVideoTitle = /\b(video|mp4|webm|movie|animation|anim|clip|mkv|mov|4k|1080p|720p|60fps|short|pv|trailer)\b/i.test(titleStr);
-  if (hasVideoAttachment || hasVideoFile || hasVideoEmbed || hasVideoTitle) {
+  const hasVideoTag = /\b(video|mp4|webm|movie|animation|anim|clip|mkv|mov|4k|1080p|720p|60fps|short|pv|trailer)\b/i.test(tagsStr);
+  const hasDirectVideo = directMedia.some((d) => isVideoUrl(d.url) || isAttachmentVideo(null, d.url));
+  if (hasVideoAttachment || hasVideoFile || hasVideoEmbed || hasVideoTitle || hasVideoTag || hasDirectVideo) {
     formats.push('video');
   }
 
   // Image
   const hasImageFile = allFiles.some((f) => /\.(avif|bmp|gif|jpe?g|png|webp)(?:$|[?#])/i.test(f));
   const hasImageEmbed = /\.(avif|bmp|gif|jpe?g|png|webp)|<img/i.test(embedStr) || /<img/i.test(contentStr);
-  if (hasImageAttachment || hasImageFile || hasImageEmbed || Boolean(post.file?.path || post.file?.name)) {
+  const hasImageTag = /\b(photo|photos|image|images|pic|pics|picture|pictures|illustration|art|cg|drawing|wallpaper)\b/i.test(tagsStr);
+  const hasDirectImage = directMedia.some((d) => isImageUrl(d.url) || isAttachmentImage(null, d.url));
+  const isGenericMediaImage = (p.file?.path || p.file?.name) && !hasVideoAttachment && !hasAudioAttachment && !hasVideoFile;
+  if (hasImageAttachment || hasImageFile || hasImageEmbed || hasImageTag || hasDirectImage || isGenericMediaImage) {
     formats.push('image');
   }
 
@@ -469,13 +461,15 @@ export function getPostFormats(post: Post): string[] {
   const hasAudioFile = allFiles.some((f) => /\.(mp3|wav|ogg|m4a|flac|aac|opus|wma)(?:$|[?#])/i.test(f));
   const hasAudioEmbed = /soundcloud|bandcamp|spotify|audio|\.(mp3|wav|ogg|m4a|flac)/i.test(embedStr) || /<audio|\.(mp3|wav|ogg|m4a|flac)/i.test(contentStr);
   const hasAudioTitle = /\b(audio|mp3|wav|flac|sound|track|voice|podcast|asmr|song|music|ost)\b/i.test(titleStr);
-  if (hasAudioFile || hasAudioEmbed || hasAudioTitle) {
+  const hasAudioTag = /\b(audio|mp3|wav|flac|sound|track|voice|podcast|asmr|song|music|ost)\b/i.test(tagsStr);
+  const hasDirectAudio = directMedia.some((d) => isAudioUrl(d.url) || isAttachmentAudio(null, d.url));
+  if (hasAudioAttachment || hasAudioFile || hasAudioEmbed || hasAudioTitle || hasAudioTag || hasDirectAudio) {
     formats.push('audio');
   }
 
   // Text
-  const hasTextContent = Boolean(post.content && post.content.trim().length > 20);
-  const isTextOnlyPost = (post.attachment_count ?? 0) === 0 && !post.file?.path && !post.file?.name;
+  const hasTextContent = Boolean(p.content && p.content.trim().length > 20);
+  const isTextOnlyPost = (p.attachment_count ?? 0) === 0 && !p.file?.path && !p.file?.name && directMedia.length === 0;
   if (hasTextContent || isTextOnlyPost) {
     formats.push('text');
   }
@@ -484,7 +478,8 @@ export function getPostFormats(post: Post): string[] {
   const hasArchiveFile = allFiles.some((f) => /\.(zip|rar|7z|tar|gz|pdf|txt|epub|html|cbz|cbr|psd|clip|blend|fbx|obj|stl)(?:$|[?#])/i.test(f));
   const hasArchiveLink = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(contentStr) || /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(embedStr);
   const hasArchiveTitle = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|file|files|psd|clip|brush|brushes|model|blend)\b/i.test(titleStr);
-  if (hasArchiveFile || hasArchiveLink || hasArchiveTitle) {
+  const hasArchiveTag = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|files|psd|clip|brush|brushes|model|blend)\b/i.test(tagsStr);
+  if (hasArchiveFile || hasArchiveLink || hasArchiveTitle || hasArchiveTag) {
     formats.push('archive');
   }
 
@@ -503,6 +498,70 @@ export function getPostFormats(post: Post): string[] {
 export function matchesPostFormat(post: Post, format: string): boolean {
   if (format === 'all') return true;
   return getPostFormats(post).includes(format);
+}
+
+export function isDirectMediaUrl(url: string): boolean {
+  if (!url) return false;
+  const clean = url.split('?')[0].split('#')[0].toLowerCase();
+  if (/\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v|zip|rar|7z|tar|gz|pdf|mp3|wav|flac|opus|ogg|png|jpe?g|webp|gif|avif)$/i.test(clean)) {
+    return true;
+  }
+  if (url.includes('.b-cdn.net/') && (url.includes('play_') || url.includes('.mp4'))) {
+    return true;
+  }
+  return false;
+}
+
+export function extractDirectMediaLinks(raw: string): Array<{ url: string; name: string }> {
+  if (!raw) return [];
+  const results: Array<{ url: string; name: string }> = [];
+  const seen = new Set<string>();
+
+  // 1. Anchors: <a href="...">
+  const anchorRegex = /<a\s+[^>]*href=["'](https?:\/\/[^"'>]+)["'][^>]*>(.*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = anchorRegex.exec(raw)) !== null) {
+    const url = match[1];
+    const text = match[2].replace(/<[^>]*>/g, '').trim();
+    if (isDirectMediaUrl(url) && !seen.has(url)) {
+      seen.add(url);
+      const filename = text && !text.startsWith('http')
+        ? text
+        : decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
+      results.push({ url, name: filename });
+    }
+  }
+
+  // 2. Images: <img src="...">
+  const imgRegex = /<img\s+[^>]*src=["'](https?:\/\/[^"'>]+)["'][^>]*>/gi;
+  while ((match = imgRegex.exec(raw)) !== null) {
+    const url = match[1];
+    if (isDirectMediaUrl(url) && !seen.has(url)) {
+      seen.add(url);
+      const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
+      results.push({ url, name: filename });
+    }
+  }
+
+  // 3. Raw URLs in plain text
+  const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
+  while ((match = urlRegex.exec(raw)) !== null) {
+    const url = match[0];
+    if (isDirectMediaUrl(url) && !seen.has(url)) {
+      seen.add(url);
+      const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
+      results.push({ url, name: filename });
+    }
+  }
+
+  return results;
+}
+
+export function extractCloudLinks(raw: string): string[] {
+  if (!raw) return [];
+  const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
+  const matches = raw.match(regex) || [];
+  return [...new Set(matches)];
 }
 
 export interface DownloadTarget {
@@ -533,6 +592,27 @@ export function getPostDownloadTargets(post: Post): DownloadTarget[] {
     targets.push({
       mediaId: item.path,
       url,
+      filename
+    });
+  }
+
+  const directMedia = extractDirectMediaLinks(post.content || post.substring || '');
+  for (let i = 0; i < directMedia.length; i++) {
+    const d = directMedia[i];
+    if (!d.url) continue;
+    const pathKey = d.url.toLowerCase();
+    if (seenPaths.has(pathKey)) continue;
+    seenPaths.add(pathKey);
+
+    let filename = d.name || `embedded_media_${i + 1}`;
+    if (!filename.includes('.')) {
+      const ext = inferAttachmentExtension({ path: d.url, name: d.name });
+      filename = `${filename}.${ext}`;
+    }
+
+    targets.push({
+      mediaId: d.url,
+      url: d.url,
       filename
     });
   }
@@ -639,6 +719,7 @@ export function diagnoseVideoFailure(
 
   const isLocal = options?.isLocal ?? Boolean(
     ((src.startsWith('http://127.0.0.1') || src.startsWith('http://localhost')) && !src.includes('cloud_stream')) ||
+    src.includes('asset.localhost') ||
     src.startsWith('file:') ||
     src.startsWith('tauri:') ||
     src.startsWith('asset:') ||

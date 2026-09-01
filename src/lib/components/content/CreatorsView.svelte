@@ -676,10 +676,10 @@
             <div class="grid-tile-meta">
               <span>{creator.service} · {creator.id}</span>
               <div class="grid-tile-meta-stats">
-                {#if Number(creator.favorited ?? creator.kemono_favorited ?? 0) > 0}
+                {#if Number(creator.favorited ?? 0) > 0}
                   <span class="grid-tile-meta-row">
                     <IconHeartFilled />
-                    {creator.favorited ?? creator.kemono_favorited}
+                    {creator.favorited}
                   </span>
                 {/if}
                 <span>{formatTimestamp(creator.updated)}</span>

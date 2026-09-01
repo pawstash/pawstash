@@ -53,7 +53,6 @@ export interface Creator {
   updated?: number;
   indexed?: number;
   favorited?: number;
-  kemono_favorited?: number;
   ever_imported?: boolean;
   [key: string]: unknown;
 }

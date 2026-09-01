@@ -15,6 +15,10 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub image_url: Option<String>,
     #[serde(default)]
+    pub file_prefix: Option<String>,
+    #[serde(default)]
+    pub image_prefix: Option<String>,
+    #[serde(default)]
     pub session_cookie: String,
     #[serde(default)]
     pub username: String,
@@ -37,25 +41,62 @@ pub struct ProviderHealth {
 }
 
 pub fn default_pawchive_services() -> Vec<String> {
-    vec![
-        "patreon".into(),
-        "fanbox".into(),
-        "fantia".into(),
-        "boosty".into(),
-        "subscribestar".into(),
-        "gumroad".into(),
-        "dlsite".into(),
-        "discord".into(),
-        "afdian".into(),
-    ]
+    vec!["patreon".into(), "fanbox".into(), "discord".into()]
 }
 
 pub fn default_onlyhaven_services() -> Vec<String> {
-    vec!["onlyfans".into(), "fansly".into(), "candfans".into()]
+    vec!["onlyfans".into(), "fansly".into()]
 }
 
-pub fn default_coomer_services() -> Vec<String> {
-    default_onlyhaven_services()
+pub fn derive_subdomain_url(base_url: &str, prefix: &str) -> String {
+    let clean_url = if base_url.starts_with("http://") || base_url.starts_with("https://") {
+        base_url.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", base_url.trim_end_matches('/'))
+    };
+
+    if let Ok(parsed) = reqwest::Url::parse(&clean_url) {
+        if let Some(host) = parsed.host_str() {
+            let scheme = parsed.scheme();
+            let base_host = host.trim_start_matches("www.").trim_start_matches("api.");
+            let parts: Vec<&str> = base_host.split('.').collect();
+            let domain = if parts.len() > 2 {
+                parts[parts.len() - 2..].join(".")
+            } else {
+                base_host.to_string()
+            };
+            return format!("{scheme}://{prefix}.{domain}");
+        }
+    }
+    clean_url
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthField {
+    pub key: String,
+    pub label_key: String,
+    pub field_type: String, // "text" | "password" | "textarea"
+    pub placeholder: Option<String>,
+    pub help_text_key: Option<String>,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthSchema {
+    pub provider_id: String,
+    pub supports_auth: bool,
+    pub supports_remote_favorites: bool,
+    pub supports_push_favorites: bool,
+    pub auth_fields: Vec<AuthField>,
+    pub help_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoritesSyncResult {
+    pub provider_id: String,
+    pub pulled_count: usize,
+    pub pushed_count: usize,
+    pub errors: Vec<String>,
 }
 
 #[async_trait]
@@ -65,6 +106,17 @@ pub trait SourceProvider: Send + Sync {
     fn config(&self) -> ProviderConfig;
     fn supports_service(&self, service: &str) -> bool;
     fn get_active_endpoint(&self) -> String;
+
+    fn auth_schema(&self) -> ProviderAuthSchema {
+        ProviderAuthSchema {
+            provider_id: self.id().to_string(),
+            supports_auth: false,
+            supports_remote_favorites: false,
+            supports_push_favorites: false,
+            auth_fields: Vec::new(),
+            help_url: None,
+        }
+    }
 
     async fn test_connection(&self) -> Result<ProviderHealth, String>;
     async fn update_config(&self, config: ProviderConfig) -> Result<(), String>;

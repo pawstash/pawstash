@@ -7,6 +7,6 @@ pub use manager::ProviderManager;
 pub use onlyhaven::OnlyHavenProvider;
 pub use pawchive::{PawchiveClient, PawchiveProvider};
 pub use traits::{
-    default_coomer_services, default_onlyhaven_services, default_pawchive_services, ProviderConfig,
+    default_onlyhaven_services, default_pawchive_services, derive_subdomain_url, ProviderConfig,
     ProviderHealth, SourceProvider,
 };

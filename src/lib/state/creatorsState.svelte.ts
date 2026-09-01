@@ -4,6 +4,7 @@ import type { Creator } from '$lib/types/content';
 import type { FilterMap, TriStateFilter } from '$lib/types/filter';
 import { matchesTriStateFilter } from '$lib/types/filter';
 import { configState } from './configState.svelte';
+import { providerState } from './providerState.svelte';
 
 export class CreatorsState {
   creators = $state<Creator[]>([]);
@@ -37,7 +38,7 @@ export class CreatorsState {
 
     if (Object.keys(this.providerFilters).length > 0) {
       result = result.filter((c) => {
-        const cProvider = (c.extra as any)?.provider_id || (['onlyfans', 'fansly', 'candfans'].includes(c.service.toLowerCase()) ? 'coomer' : 'pawchive');
+        const cProvider = (c.extra as any)?.provider_id || providerState.getProviderIdForService(c.service);
         return matchesTriStateFilter([cProvider], this.providerFilters);
       });
     }
@@ -84,8 +85,8 @@ export class CreatorsState {
         const tB = b.indexed ?? 0;
         comparison = tA - tB;
       } else if (this.sortBy === 'favorited') {
-        const favA = Number(a.favorited ?? a.kemono_favorited ?? 0);
-        const favB = Number(b.favorited ?? b.kemono_favorited ?? 0);
+        const favA = Number(a.favorited ?? 0);
+        const favB = Number(b.favorited ?? 0);
         comparison = favA - favB;
       }
 

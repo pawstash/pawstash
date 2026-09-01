@@ -348,7 +348,7 @@ impl NativeDownloader {
     }
 
     fn headers(task: &DownloadTask, range: Option<&str>) -> Result<HeaderMap, DownloadRunError> {
-        let mut headers = super::standard_browser_headers();
+        let mut headers = super::derive_download_headers(&task.url);
         headers.insert(
             reqwest::header::ACCEPT_ENCODING,
             HeaderValue::from_static("identity"),

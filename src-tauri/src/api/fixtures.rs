@@ -23,7 +23,7 @@ pub fn mock_creator_profile_fixture() -> serde_json::Value {
         "relation_id": null,
         "indexed": 1720000000,
         "updated": 1723000000,
-        "kemono_favorited": 420,
+        "favorited": 420,
         "ever_imported": true
     })
 }

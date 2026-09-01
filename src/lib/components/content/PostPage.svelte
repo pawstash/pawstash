@@ -686,7 +686,8 @@
     const p = file.path || '';
     return (p.startsWith('http://127.0.0.1') && p.includes('/media/')) ||
       p.startsWith('asset://') ||
-      p.startsWith('http://asset.localhost');
+      p.startsWith('http://asset.localhost') ||
+      p.startsWith('https://asset.localhost');
   }
 
   let mediaCounts = $derived.by(() => {
@@ -1459,7 +1460,7 @@
       return targetPath;
     }
 
-    // 4. Remote Kemono / Coomer / Fanbox attachment URL
+    // 4. Remote Pawchive / OnlyHaven attachment URL
     const remoteUrl = remoteFileUrl(file as Attachment);
     if (!remoteUrl) return '';
 

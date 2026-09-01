@@ -1,5 +1,5 @@
 import type { AccountSession, Creator, Favorite, Post } from '$lib/types/content';
-import { apiGetAccountSession, apiLoginAccount, apiLogoutAccount, apiFetchAccountFavorites } from '$lib/utils/ipc';
+import { apiGetAccountSession, apiFetchAccountFavorites } from '$lib/utils/ipc';
 
 class AccountState {
   session = $state<AccountSession>({ authenticated: false });
@@ -18,34 +18,6 @@ class AccountState {
     } finally {
       this.loading = false;
       this.checked = true;
-    }
-  }
-
-  async login(username: string, password: string) {
-    this.loading = true;
-    try {
-      this.session = await apiLoginAccount(username, password);
-      this.checked = true;
-      this.clearFavorites();
-      if (this.session.authenticated) {
-        void this.fetchFavorites('post', true);
-        void this.fetchFavorites('creator', true);
-      }
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async logout() {
-    this.loading = true;
-    try {
-      this.session = await apiLogoutAccount();
-      this.checked = true;
-      this.clearFavorites();
-      void this.fetchFavorites('post', true);
-      void this.fetchFavorites('creator', true);
-    } finally {
-      this.loading = false;
     }
   }
 

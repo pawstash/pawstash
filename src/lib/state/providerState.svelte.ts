@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ProviderConfig, ProviderHealth, PostRevisionData } from '$lib/types/provider';
+import { getProviderDriver, type ProviderDriver } from '$lib/providers/drivers';
 import { logger } from '$lib/utils/logger';
 
 class ProviderState {
@@ -14,22 +15,8 @@ class ProviderState {
     this.loading = true;
     try {
       const list = await invoke<ProviderConfig[]>('list_providers');
-      let changed = false;
-      const sanitized = list.map((p) => {
-        if (p.id === 'coomer' || p.id === 'onlyhaven') {
-          const cleanFallbacks = p.fallback_urls.filter((u) => !u.includes('coomer'));
-          if (cleanFallbacks.length !== p.fallback_urls.length || p.name !== 'OnlyHaven') {
-            changed = true;
-            return { ...p, name: 'OnlyHaven', fallback_urls: cleanFallbacks };
-          }
-        }
-        return p;
-      });
-      this.providers = sanitized;
-      if (changed) {
-        void this.saveProviders(sanitized);
-      }
-      return sanitized;
+      this.providers = list;
+      return list;
     } catch (e) {
       logger.error('Failed to load providers', e);
       return [];
@@ -121,8 +108,38 @@ class ProviderState {
     return this.providers.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
   }
 
+  getProviderIdForService(service?: string): string {
+    if (!service) return this.providers[0]?.id || '';
+    const s = service.toLowerCase();
+    const match = this.providers.find((p) =>
+      p.services.some((srv) => srv.toLowerCase() === s)
+    );
+    if (match) return match.id;
+    return this.providers[0]?.id || '';
+  }
+
   getProviderById(id: string): ProviderConfig | undefined {
     return this.providers.find((p) => p.id === id);
+  }
+
+  getDriverForService(service?: string): { config: ProviderConfig; driver: ProviderDriver } {
+    const providers = this.getProvidersForService(service);
+    const config = providers[0] || this.providers[0] || {
+      id: '',
+      name: '',
+      enabled: false,
+      api_url: '',
+      fallback_urls: [],
+      session_cookie: '',
+      username: '',
+      services: [],
+      is_custom: false,
+      priority: 1
+    };
+    return {
+      config,
+      driver: getProviderDriver(config.id)
+    };
   }
 
   async loadPostRevisions(service: string, creatorId: string, postId: string): Promise<PostRevisionData[]> {

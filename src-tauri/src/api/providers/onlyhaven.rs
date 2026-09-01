@@ -1,3 +1,18 @@
+use super::traits::{
+    AuthField, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+};
+use crate::api::models::*;
+use async_trait::async_trait;
+use base64::prelude::*;
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::Client;
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
 fn clean_onlyhaven_title(raw: &str) -> String {
     let s = raw
         .replace("&amp;", "&")
@@ -30,19 +45,6 @@ fn clean_onlyhaven_title(raw: &str) -> String {
     let words: Vec<&str> = first_line.split_whitespace().collect();
     words.join(" ")
 }
-
-use super::traits::{ProviderConfig, ProviderHealth, SourceProvider};
-use crate::api::models::*;
-use async_trait::async_trait;
-use base64::prelude::*;
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
-use reqwest::Client;
-use serde::Deserialize;
-use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
@@ -133,7 +135,7 @@ impl From<OnlyHavenCreatorRow> for Creator {
         }
         extra.insert(
             "provider_id".to_string(),
-            Value::String("coomer".to_string()),
+            Value::String("onlyhaven".to_string()),
         );
 
         let name = c.display_name.unwrap_or(c.name);
@@ -146,7 +148,6 @@ impl From<OnlyHavenCreatorRow> for Creator {
             indexed: c.indexed,
             updated: c.updated,
             favorited: c.bookmarked,
-            kemono_favorited: c.bookmarked,
             ever_imported: Some(true),
             extra,
         }
@@ -164,21 +165,37 @@ struct OnlyHavenAttachment {
     id: Option<String>,
     #[serde(default)]
     sha256: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "type", alias = "media_type", alias = "file_type")]
     kind: Option<String>,
-    #[serde(rename = "mimeType", default)]
+    #[serde(
+        rename = "mimeType",
+        alias = "mime_type",
+        alias = "contentType",
+        alias = "content_type",
+        default
+    )]
     mime_type: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "size", alias = "file_size")]
     bytes: Option<u64>,
-    #[serde(rename = "storageKey", default)]
+    #[serde(rename = "storageKey", alias = "storage_key", default)]
     storage_key: Option<String>,
-    #[serde(rename = "originalFilename", default)]
+    #[serde(
+        rename = "originalFilename",
+        alias = "original_filename",
+        alias = "filename",
+        default
+    )]
     original_filename: Option<String>,
-    #[serde(rename = "previewThumbhash", default)]
+    #[serde(
+        rename = "previewThumbhash",
+        alias = "preview_thumbhash",
+        alias = "thumbhash",
+        default
+    )]
     preview_thumbhash: Option<String>,
     #[serde(default)]
     variants: Option<Vec<Value>>,
-    #[serde(default)]
+    #[serde(default, alias = "url")]
     path: Option<String>,
     #[serde(default)]
     name: Option<String>,
@@ -278,6 +295,12 @@ impl OnlyHavenPostRow {
                     format!("/{c}")
                 });
 
+                let variant_name = a
+                    .variants
+                    .as_ref()
+                    .and_then(|v| v.first())
+                    .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
+
                 let mut extra = HashMap::new();
                 if let Some(th) = a.preview_thumbhash {
                     extra.insert("preview_thumbhash".to_string(), Value::String(th));
@@ -300,7 +323,7 @@ impl OnlyHavenPostRow {
                 );
 
                 Attachment {
-                    name: a.original_filename.or(a.name),
+                    name: a.original_filename.or(a.name).or(variant_name),
                     path: clean_path,
                     server: None,
                     size: a.bytes,
@@ -415,9 +438,7 @@ impl OnlyHavenProvider {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Pawstash/OnlyHaven",
-            ),
+            HeaderValue::from_static(crate::downloader::PAWSTASH_USER_AGENT),
         );
 
         let client = Client::builder()
@@ -448,7 +469,10 @@ impl OnlyHavenProvider {
             }
         }
         if endpoints.is_empty() {
-            endpoints.push("https://cum.st".to_string());
+            let primary = self.config.read().unwrap().api_url.clone();
+            if !primary.trim().is_empty() {
+                endpoints.push(primary.trim().trim_end_matches('/').to_string());
+            }
         }
         endpoints
     }
@@ -457,13 +481,30 @@ impl OnlyHavenProvider {
         let endpoints = self.get_endpoints();
         let start_idx = self.current_mirror_idx.load(Ordering::Relaxed) % endpoints.len();
 
+        let cookie = {
+            let conf = self.config.read().unwrap();
+            conf.session_cookie.clone()
+        };
+
         let mut last_err = String::new();
         for i in 0..endpoints.len() {
             let idx = (start_idx + i) % endpoints.len();
             let base = &endpoints[idx];
             let url = format!("{base}{path}");
 
-            match self.client.get(&url).send().await {
+            let mut req = self.client.get(&url);
+            if !cookie.trim().is_empty() {
+                let header_val = if cookie.contains('=') {
+                    cookie.clone()
+                } else {
+                    format!("__Secure-oh.session_token={cookie}")
+                };
+                if let Ok(val) = reqwest::header::HeaderValue::from_str(&header_val) {
+                    req = req.header(reqwest::header::COOKIE, val);
+                }
+            }
+
+            match req.send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
@@ -495,7 +536,7 @@ impl OnlyHavenProvider {
 #[async_trait]
 impl SourceProvider for OnlyHavenProvider {
     fn id(&self) -> &str {
-        "coomer"
+        "onlyhaven"
     }
 
     fn name(&self) -> &str {
@@ -507,10 +548,10 @@ impl SourceProvider for OnlyHavenProvider {
     }
 
     fn supports_service(&self, service: &str) -> bool {
-        matches!(
-            service.to_lowercase().as_str(),
-            "onlyfans" | "fansly" | "patreon" | "candfans"
-        )
+        self.config()
+            .services
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(service))
     }
 
     fn get_active_endpoint(&self) -> String {
@@ -752,8 +793,19 @@ impl SourceProvider for OnlyHavenProvider {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "file"));
-        format!("{base}/media/{key}/original.jpg")
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "e1"));
+
+        let path = if key.starts_with("media/") {
+            key.to_string()
+        } else {
+            format!("media/{key}")
+        };
+
+        if key.contains('.') {
+            format!("{base}/{path}")
+        } else {
+            format!("{base}/{path}/original.jpg")
+        }
     }
 
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
@@ -767,7 +819,7 @@ impl SourceProvider for OnlyHavenProvider {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "img"));
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
         format!("{base}/thumbnail/{key}/preview.webp")
     }
 
@@ -789,7 +841,7 @@ impl SourceProvider for OnlyHavenProvider {
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.trim_end_matches('/').to_string())
-                .unwrap_or_else(|| super::pawchive::derive_subdomain_url(&conf.api_url, "img"))
+                .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"))
         };
 
         let candidate_urls = vec![format!(
@@ -797,7 +849,10 @@ impl SourceProvider for OnlyHavenProvider {
         )];
 
         for url in candidate_urls {
-            let req = self.client.get(&url).header(USER_AGENT, "Pawstash/0.1");
+            let req = self
+                .client
+                .get(&url)
+                .header(USER_AGENT, crate::downloader::PAWSTASH_USER_AGENT);
             if let Ok(resp) = req.send().await {
                 if resp.status().is_success() {
                     let content_type = resp
@@ -856,18 +911,170 @@ impl SourceProvider for OnlyHavenProvider {
         Ok(false)
     }
 
-    async fn login(&self, _username: &str, _password: &str) -> Result<String, String> {
-        Err("OnlyHaven login via credentials not supported".to_string())
+    fn auth_schema(&self) -> ProviderAuthSchema {
+        let base = self.get_active_endpoint();
+        let clean_base = base.trim_end_matches('/');
+        let help_url = if clean_base.is_empty() {
+            None
+        } else {
+            Some(format!("{clean_base}/auth/signin"))
+        };
+
+        ProviderAuthSchema {
+            provider_id: self.id().to_string(),
+            supports_auth: true,
+            supports_remote_favorites: false,
+            supports_push_favorites: false,
+            auth_fields: vec![
+                AuthField {
+                    key: "username".to_string(),
+                    label_key: "settings.username".to_string(),
+                    field_type: "text".to_string(),
+                    placeholder: Some("Username".to_string()),
+                    help_text_key: None,
+                    required: true,
+                },
+                AuthField {
+                    key: "password".to_string(),
+                    label_key: "settings.password".to_string(),
+                    field_type: "password".to_string(),
+                    placeholder: Some("••••••••".to_string()),
+                    help_text_key: None,
+                    required: true,
+                },
+            ],
+            help_url,
+        }
+    }
+
+    async fn login(&self, username: &str, password: &str) -> Result<String, String> {
+        let base = self.get_active_endpoint();
+        let clean_base = base.trim_end_matches('/');
+        let url = format!("{clean_base}/api/auth/sign-in/username");
+
+        let payload = serde_json::json!({
+            "username": username.trim(),
+            "password": password,
+            "callbackURL": "/"
+        });
+
+        let origin = if clean_base.starts_with("http://") || clean_base.starts_with("https://") {
+            clean_base.to_string()
+        } else {
+            format!("https://{clean_base}")
+        };
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Origin", &origin)
+            .header("Referer", format!("{origin}/auth/signin"))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Network error connecting to OnlyHaven auth: {e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_json: Value = resp.json().await.unwrap_or_default();
+            let msg = err_json
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Invalid username or password");
+            return Err(msg.to_string());
+        }
+
+        let mut session_cookie = String::new();
+        for (name, val) in resp.headers().iter() {
+            if name.as_str().eq_ignore_ascii_case("set-cookie") {
+                if let Ok(cookie_str) = val.to_str() {
+                    if cookie_str.contains("__Secure-oh.session_token")
+                        || cookie_str.contains("oh.session_token")
+                    {
+                        let cookie_part = cookie_str.split(';').next().unwrap_or(cookie_str).trim();
+                        session_cookie = cookie_part.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+
+        let body_json: Value = resp.json().await.unwrap_or_default();
+        let returned_user = body_json
+            .get("user")
+            .and_then(|u| u.get("username"))
+            .and_then(|u| u.as_str())
+            .unwrap_or(username.trim())
+            .to_string();
+
+        if session_cookie.is_empty() {
+            if let Some(token) = body_json.get("token").and_then(|t| t.as_str()) {
+                session_cookie = format!("__Secure-oh.session_token={token}");
+            }
+        }
+
+        if session_cookie.is_empty() {
+            return Err(
+                "Login succeeded but no session token was received from server".to_string(),
+            );
+        }
+
+        {
+            let mut conf = self.config.write().unwrap();
+            conf.session_cookie = session_cookie.clone();
+            conf.username = returned_user.clone();
+        }
+
+        Ok(session_cookie)
     }
 
     async fn logout(&self) -> Result<(), String> {
+        let base = self.get_active_endpoint();
+        let clean_base = base.trim_end_matches('/');
+        let url = format!("{clean_base}/api/auth/sign-out");
+        let cookie = {
+            let conf = self.config.read().unwrap();
+            conf.session_cookie.clone()
+        };
+
+        if !cookie.is_empty() {
+            let origin = if clean_base.starts_with("http://") || clean_base.starts_with("https://")
+            {
+                clean_base.to_string()
+            } else {
+                format!("https://{clean_base}")
+            };
+            let mut req = self
+                .client
+                .post(&url)
+                .header("Origin", &origin)
+                .header("Referer", format!("{origin}/"))
+                .json(&serde_json::json!({}));
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&cookie) {
+                req = req.header(reqwest::header::COOKIE, val);
+            }
+            let _ = req.send().await;
+        }
+
+        {
+            let mut conf = self.config.write().unwrap();
+            conf.session_cookie.clear();
+            conf.username.clear();
+        }
         Ok(())
     }
 
     async fn get_account_session(&self) -> Result<AccountSession, String> {
         let conf = self.config.read().unwrap();
+        if conf.session_cookie.trim().is_empty() {
+            return Ok(AccountSession {
+                authenticated: false,
+                username: None,
+            });
+        }
         Ok(AccountSession {
-            authenticated: !conf.session_cookie.trim().is_empty(),
+            authenticated: true,
             username: if conf.username.trim().is_empty() {
                 None
             } else {
@@ -924,17 +1131,23 @@ mod tests {
             session_cookie: "".to_string(),
             username: "".to_string(),
             services: vec!["onlyfans".to_string()],
+            file_prefix: None,
+            image_prefix: None,
             is_custom: false,
         })
         .unwrap();
 
         assert_eq!(
-            provider.resolve_media_url("/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg", None),
-            "https://e1.cum.st/media/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg/original.jpg"
+            provider.resolve_media_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2", None),
+            "https://e1.cum.st/media/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.jpg"
         );
         assert_eq!(
-            provider.resolve_thumbnail_url("/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg"),
-            "https://img.cum.st/thumbnail/74/26/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2.jpg/preview.webp"
+            provider.resolve_media_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4", None),
+            "https://e1.cum.st/media/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2"),
+            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
         );
     }
 }

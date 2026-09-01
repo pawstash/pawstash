@@ -404,25 +404,10 @@ impl AppSettings {
         string!(download_filename_template);
         string!(download_metadata_format);
         if let Some(value) = get("providers_json") {
-            if let Ok(mut providers) =
+            if let Ok(providers) =
                 serde_json::from_str::<Vec<crate::api::provider::ProviderConfig>>(value)
             {
                 if !providers.is_empty() {
-                    for p in &mut providers {
-                        if p.name.contains("Coomer") || p.name.contains("cum.st") {
-                            p.name = "OnlyHaven".into();
-                        }
-                        if p.id == "coomer"
-                            && (p.api_url.contains("coomer.su")
-                                || p.api_url.contains("coomer.party"))
-                        {
-                            p.api_url = "https://cum.st".into();
-                            p.name = "OnlyHaven".into();
-                            if !p.fallback_urls.iter().any(|u| u.contains("coomer.su")) {
-                                p.fallback_urls.push("https://coomer.su".into());
-                            }
-                        }
-                    }
                     self.providers = providers;
                 }
             }
@@ -538,6 +523,31 @@ impl AppSettings {
         }
         if self.providers.is_empty() {
             self.providers = crate::api::provider_manager::ProviderManager::default_configs();
+        }
+        for p in &mut self.providers {
+            if p.id == "pawchive" {
+                if p.services.is_empty() {
+                    p.services = crate::api::providers::default_pawchive_services();
+                }
+                if p.file_prefix.is_none() {
+                    p.file_prefix = Some("file".into());
+                }
+                if p.image_prefix.is_none() {
+                    p.image_prefix = Some("img".into());
+                }
+            } else if p.id == "onlyhaven" || p.api_url.contains("cum.st") {
+                p.id = "onlyhaven".to_string();
+                p.name = "OnlyHaven".to_string();
+                if p.services.is_empty() {
+                    p.services = crate::api::providers::default_onlyhaven_services();
+                }
+                if p.file_prefix.is_none() {
+                    p.file_prefix = Some("e1".into());
+                }
+                if p.image_prefix.is_none() {
+                    p.image_prefix = Some("img".into());
+                }
+            }
         }
         if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
             if !self.session_cookie.is_empty() {

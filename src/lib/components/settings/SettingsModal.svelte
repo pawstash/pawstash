@@ -63,7 +63,6 @@
   import { syncState } from '$lib/state/syncState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import IconUser from '~icons/fluent/person-24-regular';
-  import pawchiveLogo from '$lib/components/content/pawchive-favicon.png';
   import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import IconArrowReset from '~icons/fluent/arrow-reset-24-regular';
@@ -895,34 +894,6 @@
                     {/if}
                   {:else}
                     {i18n.t('profile.offline_session')}
-                  {/if}
-                </span>
-              </div>
-            </div>
-
-            <div class="mobile-hero-divider"></div>
-
-            <div class="mobile-hero-pillar">
-              <div class="relative flex items-center justify-center">
-                <img src={pawchiveLogo} alt="Pawchive" class="w-10 h-10 object-contain" />
-                <span
-                  class="mobile-hero-dot"
-                  class:active={accountState.session.authenticated}
-                  class:offline={!accountState.session.authenticated}
-                ></span>
-              </div>
-              <div class="mobile-pillar-meta">
-                <span class="mobile-pillar-tag">Pawchive</span>
-                <span class="mobile-pillar-name truncate">
-                  {accountState.session.authenticated && accountState.session.username
-                    ? `@${accountState.session.username}`
-                    : i18n.t('profile.not_connected')}
-                </span>
-                <span class="mobile-pillar-sub truncate">
-                  {#if accountState.session.authenticated && (configState.settings.sync_pawchive_session || syncState.status.configured)}
-                    {i18n.t('profile.favorites_synced')}
-                  {:else}
-                    {i18n.t('profile.local_favorites')}
                   {/if}
                 </span>
               </div>
@@ -2204,13 +2175,6 @@
     color: rgba(255, 255, 255, 0.45);
     font-weight: 300;
     max-width: 100%;
-  }
-
-  .mobile-hero-divider {
-    width: 1px;
-    height: 38px;
-    background: rgba(255, 255, 255, 0.08);
-    flex-shrink: 0;
   }
 
   .mobile-hero-footer {

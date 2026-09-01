@@ -718,7 +718,6 @@ impl ContentRepository {
                     indexed: None,
                     updated: None,
                     favorited: None,
-                    kemono_favorited: None,
                     ever_imported: None,
                     extra: Default::default(),
                 })
@@ -840,6 +839,20 @@ impl ContentRepository {
             }
         }
         Ok(favorites)
+    }
+
+    pub fn remove_account_favorites(&self, account_id: &str) -> Result<usize, String> {
+        if account_id.trim().is_empty() {
+            return Ok(0);
+        }
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let affected = connection
+            .execute(
+                "DELETE FROM content_pins WHERE account_id = ?1 AND reason = 'favorite'",
+                params![account_id.trim()],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(affected)
     }
 
     pub fn store_artwork_data_url(
@@ -1210,7 +1223,7 @@ mod tests {
             relation_id: None,
             indexed: None,
             updated: None,
-            kemono_favorited: None,
+            favorited: None,
             ever_imported: None,
             extra: Default::default(),
         };
@@ -1222,7 +1235,7 @@ mod tests {
             relation_id: None,
             indexed: None,
             updated: None,
-            kemono_favorited: None,
+            favorited: None,
             ever_imported: None,
             extra: Default::default(),
         };

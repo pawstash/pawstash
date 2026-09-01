@@ -32,7 +32,7 @@ pub fn update_download_notification(
             Ok(())
         });
         if let Err(e) = res {
-            eprintln!("[Pawstash] update_download_notification error: {e}");
+            tracing::error!("update_download_notification error: {e}");
         }
     }
 
