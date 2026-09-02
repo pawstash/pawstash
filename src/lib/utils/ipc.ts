@@ -17,6 +17,7 @@ import type {
   Comment,
   Creator,
   CreatorProfile,
+  DeepLinkTarget,
   Fancard,
   Favorite,
   FavoriteType,
@@ -294,5 +295,5 @@ export const apiLogoutProviderSession = (providerId: string, removeSessionFavori
 export const apiSyncProviderFavorites = (providerId: string, direction: 'pull' | 'push' | 'both') =>
   invoke<FavoritesSyncResult>('sync_provider_favorites', { providerId, direction });
 
-
-
+export const apiResolveDeepLink = (url: string) =>
+  invoke<DeepLinkTarget>('resolve_deep_link', { url });

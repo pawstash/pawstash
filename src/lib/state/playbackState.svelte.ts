@@ -28,7 +28,7 @@ class PlaybackState {
         const now = Date.now();
         const cleaned: Record<string, PlaybackEntry> = {};
         for (const [key, entry] of Object.entries(parsed)) {
-          if (entry && entry.time > 0 && (now - (entry.updatedAt || 0) < MAX_AGE_MS)) {
+          if (entry && (entry.time > 0 || (entry.duration && entry.duration > 0)) && (now - (entry.updatedAt || 0) < MAX_AGE_MS)) {
             cleaned[key] = entry;
           }
         }
@@ -59,6 +59,27 @@ class PlaybackState {
       return undefined;
     }
     return entry.time;
+  }
+
+  getDuration(mediaKey?: string | null): number | undefined {
+    if (!mediaKey) return undefined;
+    this.load();
+    const entry = this.entries[mediaKey];
+    return entry?.duration && entry.duration > 0 ? entry.duration : undefined;
+  }
+
+  saveDuration(mediaKey?: string | null, duration?: number) {
+    if (!mediaKey || !duration || duration <= 0) return;
+    this.load();
+    const existing = this.entries[mediaKey];
+    const floored = Math.floor(duration);
+    if (existing?.duration === floored) return;
+    this.entries[mediaKey] = {
+      time: existing?.time ?? 0,
+      duration: floored,
+      updatedAt: Date.now()
+    };
+    this.persist();
   }
 
   saveTime(mediaKey?: string | null, currentTime?: number, duration?: number) {

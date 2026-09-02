@@ -23,6 +23,7 @@
   import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
+  import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from '$lib/components/content/MediaViewer.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import type { FilterMap } from '$lib/types/filter';
@@ -174,8 +175,62 @@
     return { service: item.service, creatorId: item.creator_id, postId: item.post_id, key: `${item.service}:${item.creator_id}:${item.post_id}` };
   }
 
-  function openPost(identity?: DownloadIdentity, initialMedia?: string, openViewer?: boolean) {
-    if (identity) navigationState.openPost(identity.service, identity.creatorId, identity.postId, initialMedia, openViewer);
+  let viewerIndex = $state<number | null>(null);
+
+  function mediaViewerKindFromFilename(filename: string): MediaViewerKind {
+    const ext = filename.includes('.') ? (filename.split('.').pop() || '').toLowerCase() : '';
+    if (/^(avif|bmp|gif|jpe?g|png|webp)$/.test(ext)) return 'image';
+    if (/^(m4v|mkv|mov|mp4|webm)$/.test(ext)) return 'video';
+    if (/^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(ext)) return 'audio';
+    return 'file';
+  }
+
+  let viewerDownloads = $derived.by(() =>
+    sortedDownloads.filter((item) => {
+      const kind = mediaViewerKindFromFilename(item.filename);
+      return kind === 'image' || kind === 'video' || kind === 'audio';
+    })
+  );
+
+  let viewerItems = $derived.by((): MediaViewerItem[] =>
+    viewerDownloads.map((item) => ({
+      id: item.media_id || item.id || item.filename,
+      name: item.filename,
+      kind: mediaViewerKindFromFilename(item.filename),
+      url: previewUrl(item) || '',
+      poster: itemThumbnailUrl(item),
+      size: item.total_bytes || item.downloaded_bytes,
+      downloadStatus: item.status,
+      downloadedBytes: item.downloaded_bytes,
+      totalBytes: item.total_bytes,
+      downloadedPath: item.final_path
+    }))
+  );
+
+  function openPost(identity?: DownloadIdentity) {
+    if (identity) navigationState.openPost(identity.service, identity.creatorId, identity.postId);
+  }
+
+  function handleItemOpen(item: DownloadItem, openInPost?: boolean) {
+    const identity = parseIdentity(item);
+
+    if (openInPost) {
+      openPost(identity);
+      return;
+    }
+
+    const kind = mediaViewerKindFromFilename(item.filename);
+    const isMedia = kind === 'image' || kind === 'video' || kind === 'audio';
+
+    if (isMedia) {
+      const targetIdx = viewerDownloads.findIndex((d) => d.id === item.id);
+      if (targetIdx >= 0) {
+        viewerIndex = targetIdx;
+        return;
+      }
+    }
+
+    openPost(identity);
   }
 
   function previewItem(items: DownloadItem[]) {
@@ -210,6 +265,7 @@
   function deriveCdnThumbnailUrl(url?: string): string | undefined {
     if (!url) return undefined;
     const cleanUrl = url.split(/[?#]/)[0];
+    if (/\.(m4v|mkv|mov|mp4|webm)$/i.test(cleanUrl)) return undefined;
     if (cleanUrl.includes('/data/')) {
       return cleanUrl
         .replace('/data/', '/thumbnail/data/')
@@ -225,12 +281,11 @@
   }
 
   function itemThumbnailUrl(item: DownloadItem): string | undefined {
-    const cdnThumb = deriveCdnThumbnailUrl(item.url);
-    if (cdnThumb) return cdnThumb;
-
     const filename = (item.filename || '').toLowerCase();
     const isImage = /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(filename);
     if (isImage) {
+      const cdnThumb = deriveCdnThumbnailUrl(item.url);
+      if (cdnThumb) return cdnThumb;
       return previewUrl(item);
     }
 
@@ -548,13 +603,12 @@
         {/each}
       {:else}
         {#each sortedDownloads as item (item.id)}
-          {@const identity = parseIdentity(item)}
           <DownloadItemCard
             {item}
             previewUrl={previewUrl(item)}
             thumbnailUrl={itemThumbnailUrl(item)}
             postTitle={item.post_title}
-            onopen={identity ? (openViewer) => openPost(identity, item.media_id || item.filename || item.url, openViewer) : undefined}
+            onopen={(openInPost) => handleItemOpen(item, openInPost)}
             orderedKeys={downloadKeys}
             itemsMap={downloadsMap}
           />
@@ -620,6 +674,31 @@
     <span>{i18n.t('downloads.remove')}</span>
   </Button>
 </SelectionActionBar>
+
+{#if viewerIndex !== null && viewerItems.length > 0}
+  <MediaViewer
+    items={viewerItems}
+    initialIndex={viewerIndex}
+    onclose={() => viewerIndex = null}
+    onopenpost={(_, idx) => {
+      viewerIndex = null;
+      const d = viewerDownloads[idx];
+      if (d) {
+        openPost(parseIdentity(d));
+      }
+    }}
+    ondelete={async (_, idx) => {
+      const d = viewerDownloads[idx];
+      if (d) {
+        await downloadState.remove(d.id);
+        notify.success(i18n.t('downloads.remove') || 'Removed', d.filename);
+        if (viewerDownloads.length <= 1) {
+          viewerIndex = null;
+        }
+      }
+    }}
+  />
+{/if}
 
 <style>
   .downloads-tabs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; }

@@ -147,6 +147,20 @@ class MainActivity : TauriActivity() {
 
   private fun handleDeepLinkIntent(intent: Intent?) {
     if (intent == null) return
+
+    // 1. Check for external deep links / universal links (e.g. pawstash://... or https://...)
+    val dataUri = intent.dataString
+    if (!dataUri.isNullOrBlank()) {
+      pendingDeepLinkPayload = dataUri
+      try {
+        onDeepLinkReceived(dataUri)
+      } catch (e: Throwable) {
+        // If Tauri JNI isn't attached yet, will be retrieved on startup via getPendingDeepLink
+      }
+      return
+    }
+
+    // 2. Check for internal notification intent extras
     val action = intent.getStringExtra("deep_link_action") ?: return
     val service = intent.getStringExtra("deep_link_service") ?: ""
     val creatorId = intent.getStringExtra("deep_link_creator_id") ?: ""

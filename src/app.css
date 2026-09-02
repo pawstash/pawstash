@@ -165,7 +165,8 @@
     --z-titlebar: 50;
     --z-overlay: 100;
     --z-modal: 200;
-    --z-tooltip: 500;
+    --z-viewer: 2147483000;
+    --z-tooltip: 2147483647;
     --z-toast: 1000;
 
     --scrollbar-size: 6px;
@@ -1287,4 +1288,34 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   font-weight: var(--floating-card-desc-weight, 430);
   line-height: var(--floating-card-desc-line-height, 1.25);
   color: var(--floating-card-desc-color, rgba(255, 255, 255, 0.55));
+}
+
+.app-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  padding: 5px 9px;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+  background-color: var(--bg-dropdown);
+  border: var(--border-width) solid var(--border-color-hover);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--floating-shadow);
+  backdrop-filter: var(--floating-backdrop);
+  -webkit-backdrop-filter: var(--floating-backdrop);
+  pointer-events: none;
+  max-width: min(420px, 90vw);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  transition: opacity var(--duration-fast) var(--ease-expo),
+              transform var(--duration-fast) var(--ease-expo);
+  opacity: 0;
+  transform: translateY(2px);
+}
+
+.app-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
 }

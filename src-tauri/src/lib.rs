@@ -25,7 +25,7 @@ use std::sync::Arc;
 use subscriptions::SubscriptionManager;
 use sync::manager::SyncManager;
 use sync::repository::SyncRepository;
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 #[cfg(target_os = "linux")]
 fn setup_platform() {
@@ -82,10 +82,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_os::init());
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_deep_link::init());
 
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            if let Some(url) = argv.into_iter().nth(1) {
+                if !url.trim().is_empty() {
+                    let _ = app.emit("deep-link:opened", url);
+                }
+            }
+        }));
 
     builder
         .setup(move |app| {
@@ -174,6 +188,14 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let _ = setup_desktop_tray(app);
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let _ = app.deep_link().register("pawstash");
+                let app_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let _ = app_handle.emit("deep-link:opened", url.to_string());
+                    }
+                });
             }
 
             #[cfg(target_os = "android")]
@@ -302,7 +324,8 @@ pub fn run() {
             get_debug_log_path,
             read_recent_logs,
             open_logs_folder,
-            clear_logs
+            clear_logs,
+            resolve_deep_link
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

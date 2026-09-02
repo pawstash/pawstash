@@ -159,3 +159,29 @@ export interface AccountSession {
 }
 
 export type FavoriteType = 'post' | 'artist';
+
+export type DeepLinkTarget =
+  | {
+      type: 'post';
+      payload: {
+        provider_id: string;
+        service: string;
+        creator_id: string;
+        post_id: string;
+      };
+    }
+  | {
+      type: 'creator';
+      payload: {
+        provider_id: string;
+        service: string;
+        creator_id: string;
+      };
+    }
+  | {
+      type: 'search';
+      payload: {
+        provider_id?: string;
+        query: string;
+      };
+    };

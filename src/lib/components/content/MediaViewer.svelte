@@ -10,6 +10,7 @@
     poster?: string;
     width?: number;
     height?: number;
+    duration?: number;
     html?: string;
     downloadStatus?: 'queued' | 'resolving' | 'downloading' | 'paused' | 'verifying' | 'completed' | 'failed' | 'cancelled' | 'missing';
     downloadedBytes?: number;
@@ -22,6 +23,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { portal } from '$lib/actions/portal';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
@@ -32,6 +34,7 @@
   import { logMediaError } from '$lib/utils/logger';
   import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
   import { apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -45,6 +48,8 @@
   import IconCheck from '~icons/fluent/checkmark-20-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconOpen from '~icons/fluent/open-24-regular';
+  import IconDelete from '~icons/fluent/delete-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconVideoOff from '~icons/fluent/video-off-24-regular';
   import IconPlay from '~icons/fluent/play-24-regular';
@@ -56,9 +61,11 @@
     initialTime?: number;
     onclose: (finalIndex?: number, finalTime?: number) => void;
     ondownload?: (item: MediaViewerItem, index: number) => void | Promise<void>;
+    onopenpost?: (item: MediaViewerItem, index: number) => void;
+    ondelete?: (item: MediaViewerItem, index: number) => void | Promise<void>;
   }
 
-  let { items, initialIndex = 0, initialTime = 0, onclose, ondownload }: Props = $props();
+  let { items, initialIndex = 0, initialTime = 0, onclose, ondownload, onopenpost, ondelete }: Props = $props();
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
@@ -71,12 +78,32 @@
       index = Math.max(0, Math.min(items.length - 1, initialIndex));
     }
   });
+
+  $effect(() => {
+    if (items.length === 0) {
+      close();
+    } else if (index >= items.length) {
+      index = items.length - 1;
+    }
+  });
+
+  async function handleDelete() {
+    if (!current || !ondelete) return;
+    const itemToDelete = current;
+    const idxToDelete = index;
+    await ondelete(itemToDelete, idxToDelete);
+  }
+
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);
   let swipeOffset = $state(0);
+  let swipeOpacity = $state(1);
   let dismissOffsetY = $state(0);
   let isDismissing = $state(false);
+  let isSwiping = $state(false);
+  let slidePhase = $state<'idle' | 'out' | 'in'>('idle');
+  let slideTimer: ReturnType<typeof setTimeout> | undefined;
   let dismissScale = $derived(1 - Math.min(0.25, Math.abs(dismissOffsetY) * 0.0005));
   let dismissOpacity = $derived(Math.max(0.1, 1 - Math.abs(dismissOffsetY) / 350));
   let controlsVisible = $state(true);
@@ -98,6 +125,13 @@
     if (video.videoWidth > 0 && video.videoHeight > 0) {
       loadedWidth = video.videoWidth;
       loadedHeight = video.videoHeight;
+      aspectRatios[index] = video.videoWidth / video.videoHeight;
+      if (!current?.poster && !videoThumbnails[index]) {
+        captureVideoFrame(video, index);
+      }
+    }
+    if (video.duration && isFinite(video.duration) && video.duration > 0) {
+      activeVideoDuration = video.duration;
     }
     if (!hasAppliedInitialTime && initialTime > 0 && index === initialIndex) {
       hasAppliedInitialTime = true;
@@ -130,6 +164,8 @@
 
   onDestroy(() => {
     unregisterBack();
+    if (slideTimer) clearTimeout(slideTimer);
+    if (scrollRafId) cancelAnimationFrame(scrollRafId);
   });
 
   type PointerPoint = { x: number; y: number; startX: number; startY: number; startedAt: number };
@@ -145,17 +181,214 @@
   let currentDownloadBytes = $derived(Math.max(current?.totalBytes || 0, current?.downloadedBytes || 0, current?.size || 0));
   let currentDownloadProgress = $derived(current?.totalBytes ? Math.min(100, Math.round((current.downloadedBytes || 0) / current.totalBytes * 100)) : 0);
   let transform = $derived(`translate3d(${translateX + swipeOffset}px, ${translateY + dismissOffsetY}px, 0) scale(${scale * dismissScale})`);
-  let visibleThumbnails = $derived.by(() => {
-    const count = Math.min(9, items.length);
-    const start = Math.max(0, Math.min(index - Math.floor(count / 2), items.length - count));
-    return items.slice(start, start + count).map((item, offset) => ({ item, index: start + offset }));
+
+  let filmstripContainer = $state<HTMLDivElement>();
+  let thumbnailRefs = $state<Record<number, HTMLButtonElement>>({});
+  let aspectRatios = $state<Record<number, number>>({});
+  let posterFailed = $state<Record<number, boolean>>({});
+  let videoThumbnails = $state<Record<number, string>>({});
+  let activeVideoDuration = $state(0);
+
+  function formatVideoDuration(seconds?: number): string {
+    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return '';
+    const total = Math.floor(seconds);
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hrs > 0) {
+      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function getVideoDuration(item: MediaViewerItem, itemIndex: number): number | undefined {
+    if (item.duration && item.duration > 0) return item.duration;
+    if (itemIndex === index && activeVideoDuration > 0) return activeVideoDuration;
+    const key = item.id || item.name || item.url;
+    return playbackState.getDuration(key);
+  }
+
+  function requestVideoThumbnail(itemIndex: number) {
+    const it = items[itemIndex];
+    if (!it || it.kind !== 'video' || videoThumbnails[itemIndex]) return;
+    const key = it.id || it.name || it.url;
+    const videoUrl = it.url;
+    if (!videoUrl) return;
+    getVideoThumbnail(key, videoUrl).then((thumb) => {
+      if (thumb) {
+        videoThumbnails = { ...videoThumbnails, [itemIndex]: thumb };
+      }
+    });
+  }
+
+  $effect(() => {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === 'video') {
+        if (!it.poster || posterFailed[i]) {
+          requestVideoThumbnail(i);
+        }
+      }
+    }
   });
+
+  function captureVideoFrame(video: HTMLVideoElement, itemIndex: number) {
+    try {
+      if (!video.videoWidth || !video.videoHeight) return;
+      const canvas = document.createElement('canvas');
+      const w = 240;
+      const h = Math.max(80, Math.round(w * (video.videoHeight / video.videoWidth)));
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      if (dataUrl && dataUrl.length > 100) {
+        videoThumbnails = { ...videoThumbnails, [itemIndex]: dataUrl };
+        const it = items[itemIndex];
+        const key = it?.id || it?.name || it?.url;
+        if (key) {
+          invoke('store_video_thumbnail', { key, dataUrl }).catch(() => {});
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleMainVideoLoaded(event: Event) {
+    const vid = event.currentTarget as HTMLVideoElement;
+    if (vid.videoWidth && vid.videoHeight) {
+      aspectRatios[index] = vid.videoWidth / vid.videoHeight;
+      if (!current?.poster && !videoThumbnails[index]) {
+        captureVideoFrame(vid, index);
+      }
+    }
+  }
+  let isFilmstripPointerDown = false;
+  let isFilmstripDragging = false;
+  let filmstripStartX = 0;
+  let filmstripStartScrollLeft = 0;
+  let filmstripActivePointerId: number | null = null;
+  let scrollRafId: number | null = null;
+  let targetScrollLeft = 0;
+
+  $effect(() => {
+    const activeBtn = thumbnailRefs[index];
+    if (activeBtn && filmstripContainer && !isFilmstripDragging) {
+      activeBtn.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center'
+      });
+    }
+  });
+
+  function handleThumbImageLoad(event: Event, itemIndex: number) {
+    const img = event.currentTarget as HTMLImageElement;
+    if (img.naturalWidth && img.naturalHeight) {
+      aspectRatios[itemIndex] = img.naturalWidth / img.naturalHeight;
+    }
+  }
+
+  function getThumbAspectRatio(item: MediaViewerItem, itemIndex: number): string {
+    const ratio = (item.width && item.height)
+      ? (item.width / item.height)
+      : (aspectRatios[itemIndex] ?? 1);
+    // Clamp between 0.4 (tall portrait) and 2.4 (panoramic landscape)
+    const clamped = Math.max(0.4, Math.min(2.4, ratio));
+    return `${clamped} / 1`;
+  }
+
+  function handleFilmstripWheel(event: WheelEvent) {
+    if (!filmstripContainer) return;
+    const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    if (delta !== 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      filmstripContainer.scrollLeft += delta;
+    }
+  }
+
+  function onFilmstripPointerDown(e: PointerEvent) {
+    if (!filmstripContainer || e.button !== 0) return;
+    isFilmstripPointerDown = true;
+    isFilmstripDragging = false;
+    filmstripStartX = e.clientX;
+    filmstripStartScrollLeft = filmstripContainer.scrollLeft;
+    targetScrollLeft = filmstripStartScrollLeft;
+    filmstripActivePointerId = e.pointerId;
+  }
+
+  function onFilmstripPointerMove(e: PointerEvent) {
+    if (!isFilmstripPointerDown || !filmstripContainer) return;
+    const deltaX = e.clientX - filmstripStartX;
+
+    if (!isFilmstripDragging) {
+      if (Math.abs(deltaX) > 6) {
+        isFilmstripDragging = true;
+        if (filmstripActivePointerId !== null) {
+          try {
+            filmstripContainer.setPointerCapture(filmstripActivePointerId);
+          } catch {
+          }
+        }
+      } else {
+        return;
+      }
+    }
+
+    targetScrollLeft = filmstripStartScrollLeft - deltaX;
+    if (!scrollRafId) {
+      scrollRafId = requestAnimationFrame(() => {
+        if (filmstripContainer) {
+          filmstripContainer.scrollLeft = targetScrollLeft;
+        }
+        scrollRafId = null;
+      });
+    }
+  }
+
+  function onFilmstripPointerUp(e: PointerEvent) {
+    if (!isFilmstripPointerDown) return;
+    isFilmstripPointerDown = false;
+
+    if (isFilmstripDragging) {
+      if (filmstripContainer && filmstripActivePointerId !== null) {
+        try {
+          filmstripContainer.releasePointerCapture(filmstripActivePointerId);
+        } catch {
+        }
+      }
+      if (scrollRafId) {
+        cancelAnimationFrame(scrollRafId);
+        scrollRafId = null;
+      }
+      if (filmstripContainer) {
+        filmstripContainer.scrollLeft = targetScrollLeft;
+      }
+      setTimeout(() => {
+        isFilmstripDragging = false;
+      }, 50);
+    } else {
+      isFilmstripDragging = false;
+    }
+
+    filmstripActivePointerId = null;
+  }
+
+  function handleThumbnailClick(itemIndex: number) {
+    if (isFilmstripDragging) return;
+    select(itemIndex);
+  }
 
   function resetTransform() {
     scale = MIN_SCALE;
     translateX = 0;
     translateY = 0;
     swipeOffset = 0;
+    swipeOpacity = 1;
     dismissOffsetY = 0;
     isDismissing = false;
     pointers.clear();
@@ -191,14 +424,79 @@
     requestAnimationFrame(() => clampTranslation());
   }
 
-  function navigate(delta: number) {
+  function transitionSlide(direction: 1 | -1) {
     if (items.length < 2) return;
-    index = (index + delta + items.length) % items.length;
+
+    if (slideTimer) {
+      clearTimeout(slideTimer);
+      slideTimer = undefined;
+    }
+
+    const stageWidth = stage?.clientWidth || window.innerWidth;
+    const exitDist = Math.min(stageWidth * 0.45, 360);
+    const enterDist = Math.min(stageWidth * 0.35, 280);
+
+    slidePhase = 'out';
+    isSwiping = false;
+    swipeOffset = direction === 1 ? -exitDist : exitDist;
+    swipeOpacity = 0;
+
+    slideTimer = setTimeout(() => {
+      index = (index + direction + items.length) % items.length;
+      resetTransform();
+
+      // Instantly position incoming item at opposite edge
+      isSwiping = true;
+      slidePhase = 'idle';
+      swipeOffset = direction === 1 ? enterDist : -enterDist;
+      swipeOpacity = 0;
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          isSwiping = false;
+          slidePhase = 'in';
+          swipeOffset = 0;
+          swipeOpacity = 1;
+
+          slideTimer = setTimeout(() => {
+            slidePhase = 'idle';
+            slideTimer = undefined;
+          }, 180);
+        });
+      });
+    }, 120);
+  }
+
+  function navigate(delta: number, animate = false) {
+    if (items.length < 2) return;
+    if (animate) {
+      transitionSlide(delta > 0 ? 1 : -1);
+    } else {
+      if (slideTimer) {
+        clearTimeout(slideTimer);
+        slideTimer = undefined;
+      }
+      slidePhase = 'idle';
+      isSwiping = false;
+      swipeOffset = 0;
+      swipeOpacity = 1;
+      index = (index + delta + items.length) % items.length;
+      resetTransform();
+    }
   }
 
   function select(nextIndex: number) {
     if (nextIndex === index) return;
+    if (slideTimer) {
+      clearTimeout(slideTimer);
+      slideTimer = undefined;
+    }
+    slidePhase = 'idle';
+    isSwiping = false;
+    swipeOffset = 0;
+    swipeOpacity = 1;
     index = nextIndex;
+    resetTransform();
   }
 
   function handleImageLoad(event: Event) {
@@ -318,14 +616,18 @@
       if (pointers.size === 1 && Math.abs(totalDeltaY) > 8 && Math.abs(totalDeltaY) > Math.abs(totalDeltaX) * 1.1) {
         dismissOffsetY = totalDeltaY;
         swipeOffset = 0;
+        swipeOpacity = 1;
         event.preventDefault();
         return;
       }
 
       if (dismissOffsetY === 0 && items.length > 1) {
         // Allow horizontal swipe drag
-        if (Math.abs(totalDeltaX) > 6 || Math.abs(swipeOffset) > 0) {
-          swipeOffset = Math.max(-180, Math.min(180, totalDeltaX));
+        if (Math.abs(totalDeltaX) > 4 || Math.abs(swipeOffset) > 0) {
+          isSwiping = true;
+          slidePhase = 'idle';
+          swipeOffset = totalDeltaX;
+          swipeOpacity = Math.max(0.4, 1 - Math.abs(totalDeltaX) / 800);
           event.preventDefault();
         }
       }
@@ -354,19 +656,28 @@
       }
     }
 
-    if (scale <= MIN_SCALE + 0.05 && items.length > 1) {
+    if (scale <= MIN_SCALE + 0.05 && items.length > 1 && swipeOffset !== 0) {
       const deltaX = event.clientX - point.startX;
       const deltaY = event.clientY - point.startY;
       const elapsed = Math.max(1, performance.now() - point.startedAt);
-      const velocity = Math.abs(deltaX) / elapsed;
+      const velocityX = Math.abs(deltaX) / elapsed;
 
-      // Navigate if dragged > 40px or swift swipe gesture (>18px with velocity)
-      if ((Math.abs(deltaX) > 40 || (Math.abs(deltaX) > 18 && velocity > 0.14)) && Math.abs(deltaX) > Math.abs(deltaY) * 0.7) {
-        navigate(deltaX < 0 ? 1 : -1);
+      const isSwipe = (Math.abs(deltaX) > 36 || (Math.abs(deltaX) > 16 && velocityX > 0.18)) && Math.abs(deltaX) > Math.abs(deltaY) * 0.7;
+
+      if (isSwipe) {
+        transitionSlide(deltaX < 0 ? 1 : -1);
+      } else {
+        // Snap back to center
+        isSwiping = false;
+        swipeOffset = 0;
+        swipeOpacity = 1;
       }
+    } else {
+      isSwiping = false;
+      swipeOffset = 0;
+      swipeOpacity = 1;
     }
 
-    swipeOffset = 0;
     if (pointers.size === 0) clampTranslation();
   }
 
@@ -420,10 +731,10 @@
       close();
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      navigate(-1);
+      navigate(-1, false);
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
-      navigate(1);
+      navigate(1, false);
     } else if (event.key === '+' || event.key === '=') {
       event.preventDefault();
       setScale(scale * 1.25);
@@ -504,19 +815,19 @@
 >
   <header class="media-viewer-topbar media-viewer-controls">
     <div class="media-viewer-identity">
-      <strong title={current?.name}>{current?.name || i18n.t('post.file')}</strong>
+      <strong use:tooltip={current?.name || i18n.t('post.file')}>{current?.name || i18n.t('post.file')}</strong>
       <span>{currentResolution ? `${currentResolution} · ` : ''}{index + 1} / {items.length}{current?.size ? ` · ${formatBytes(current.size)}` : ''}</span>
     </div>
 
     <div class="media-viewer-actions">
       {#if current?.kind === 'image'}
-        <Button variant="ghost" class="viewer-icon-btn desktop-zoom-control" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} title={i18n.t('post.viewer_zoom_out')} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
-        <button class="zoom-value desktop-zoom-control" type="button" onclick={resetTransform} use:tooltip={i18n.t('post.viewer_reset')} aria-label={i18n.t('post.viewer_reset')}>{Math.round(scale * 100)}%</button>
-        <Button variant="ghost" class="viewer-icon-btn desktop-zoom-control" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} title={i18n.t('post.viewer_zoom_in')} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
+        <Button variant="ghost" class="viewer-icon-btn viewer-zoom-btn" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} title={i18n.t('post.viewer_zoom_out')} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
+        <button class="zoom-value viewer-zoom-btn" type="button" onclick={resetTransform} use:tooltip={i18n.t('post.viewer_reset')} aria-label={i18n.t('post.viewer_reset')}>{Math.round(scale * 100)}%</button>
+        <Button variant="ghost" class="viewer-icon-btn viewer-zoom-btn" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} title={i18n.t('post.viewer_zoom_in')} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
       {/if}
       {#if ondownload && current}
         <Button
-          variant={currentDownloaded ? 'accent' : 'ghost'}
+          variant="ghost"
           class={`viewer-icon-btn viewer-download-icon${currentDownloaded ? ' is-downloaded' : ''}${currentDownloadActive ? ' is-downloading' : ''}`}
           onclick={requestDownload}
           disabled={currentDownloadActive}
@@ -524,6 +835,28 @@
           aria-label={i18n.t(currentDownloaded ? 'post.downloaded' : currentDownloadActive ? 'post.downloading' : 'post.download')}
         >
           {#if currentDownloaded}<IconCheck />{:else if currentDownloadActive}<IconLoading />{:else}<IconDownload />{/if}
+        </Button>
+      {/if}
+      {#if onopenpost && current}
+        <Button
+          variant="ghost"
+          class="viewer-icon-btn"
+          onclick={() => onopenpost(current, index)}
+          tooltip={i18n.t('downloads.open_in_post')}
+          aria-label={i18n.t('downloads.open_in_post')}
+        >
+          <IconOpen />
+        </Button>
+      {/if}
+      {#if ondelete && current}
+        <Button
+          variant="ghost"
+          class="viewer-icon-btn viewer-delete-btn"
+          onclick={handleDelete}
+          tooltip={i18n.t('downloads.remove')}
+          aria-label={i18n.t('downloads.remove')}
+        >
+          <IconDelete />
         </Button>
       {/if}
       <Button variant="ghost" class="viewer-icon-btn viewer-fullscreen-btn" onclick={toggleFullscreen} title={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')} aria-label={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')}>
@@ -537,7 +870,6 @@
     bind:this={stage}
     class="media-viewer-stage"
     class:image-interactive={current?.kind === 'image'}
-    class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
     class:can-swipe={items.length > 1 && scale <= MIN_SCALE}
     role="group"
     aria-label={current?.name || i18n.t('post.file')}
@@ -549,19 +881,20 @@
     onpointercancel={finishPointer}
   >
     {#if current}
-      {#key current.id}
-        <div
-          bind:this={fitFrame}
-          class="media-fit-frame"
-          class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-          class:file-frame={!['image', 'video'].includes(current.kind)}
-        >
+      <div
+        bind:this={fitFrame}
+        class="media-fit-frame"
+        class:is-swiping={isSwiping}
+        class:is-sliding-out={slidePhase === 'out'}
+        class:is-sliding-in={slidePhase === 'in'}
+        class:file-frame={!['image', 'video'].includes(current.kind)}
+        style:opacity={isDismissing ? dismissOpacity : swipeOpacity}
+      >
         {#if current.kind === 'image'}
           <img
             bind:this={mediaElement}
             class="media-viewer-media image-media"
             class:zoomed={scale > MIN_SCALE}
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
             src={current.url || current.poster}
             alt={current.name}
             draggable="false"
@@ -578,8 +911,7 @@
         {:else if current.html}
           <div
             class="viewer-embed-state"
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <div class="viewer-embed-iframe-wrapper">
               {@html current.html}
@@ -589,8 +921,7 @@
           {@const failure = current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined })}
           <div
             class="viewer-file-state"
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <IconVideoOff class="w-12 h-12 text-white/50 mb-2" />
             <strong class="text-white text-base font-semibold">{current.name}</strong>
@@ -600,7 +931,7 @@
                 {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(current.name) })}
               </p>
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
@@ -610,7 +941,7 @@
             {:else if failure.preset === 'unsupported_codec'}
               <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
@@ -623,7 +954,7 @@
                 <p class="text-white/50 font-mono text-xs mt-1">{failure.message}</p>
               {/if}
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="primary" class="mt-3" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
@@ -653,16 +984,16 @@
           <video
             bind:this={videoElement}
             class="media-viewer-media"
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
             src={current.url}
-            poster={current.poster}
+            poster={current.poster || videoThumbnails[index]}
             controls
             autoplay
             playsinline
             preload="auto"
             use:panicCapture
             onkeydown={handleGlobalPanicKey}
+            onplaying={handleMainVideoLoaded}
             onerror={async (e) => {
               const el = e.currentTarget as HTMLVideoElement;
               logMediaError('video', el.src, current.name, el.error);
@@ -686,8 +1017,7 @@
         {:else if current.kind === 'audio'}
           <div
             class="viewer-file-state"
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <IconMusic />
             <strong>{current.name}</strong>
@@ -705,8 +1035,7 @@
         {:else}
           <div
             class="viewer-file-state"
-            class:is-swiping={swipeOffset !== 0 || dismissOffsetY !== 0}
-            style:transform={swipeOffset !== 0 || dismissOffsetY !== 0 ? `translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <IconDocument />
             <strong>{current.name}</strong>
@@ -730,71 +1059,130 @@
           </div>
         {/if}
         </div>
-      {/key}
-    {/if}
+      {/if}
   </div>
 
   {#if items.length > 1}
-    <Button variant="ghost" class="viewer-nav viewer-prev media-viewer-controls" onclick={() => navigate(-1)} title={i18n.t('post.previous')} aria-label={i18n.t('post.previous')}><IconChevronLeft /></Button>
-    <Button variant="ghost" class="viewer-nav viewer-next media-viewer-controls" onclick={() => navigate(1)} title={i18n.t('post.next')} aria-label={i18n.t('post.next')}><IconChevronRight /></Button>
+    <Button variant="ghost" class="viewer-nav viewer-prev media-viewer-controls" onclick={() => navigate(-1, false)} title={i18n.t('post.previous')} aria-label={i18n.t('post.previous')}><IconChevronLeft /></Button>
+    <Button variant="ghost" class="viewer-nav viewer-next media-viewer-controls" onclick={() => navigate(1, false)} title={i18n.t('post.next')} aria-label={i18n.t('post.next')}><IconChevronRight /></Button>
   {/if}
 
-  <footer class="media-viewer-bottom media-viewer-controls">
-    {#if current?.kind === 'image'}
-      <div class="mobile-zoom-controls">
-        <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
-        <Button variant="ghost" class="viewer-reset-btn" onclick={resetTransform}><IconArrowReset /><span>{Math.round(scale * 100)}%</span></Button>
-        <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
-      </div>
-    {/if}
+  {#if current?.kind === 'image' || items.length > 1}
+    <footer class="media-viewer-bottom media-viewer-controls">
+      {#if current?.kind === 'image'}
+        <div class="mobile-zoom-controls">
+          <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
+          <Button variant="ghost" class="viewer-reset-btn" onclick={resetTransform}><IconArrowReset /><span>{Math.round(scale * 100)}%</span></Button>
+          <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
+        </div>
+      {/if}
 
-    {#if items.length > 1 && current?.kind !== 'image'}
-      <div class="mobile-paging-controls">
-        <Button variant="ghost" class="viewer-icon-btn" onclick={() => navigate(-1)} aria-label={i18n.t('post.previous')}><IconChevronLeft /></Button>
-        <span>{index + 1} / {items.length}</span>
-        <Button variant="ghost" class="viewer-icon-btn" onclick={() => navigate(1)} aria-label={i18n.t('post.next')}><IconChevronRight /></Button>
-      </div>
-    {/if}
-
-    {#if items.length > 1}
-      <div class="viewer-filmstrip" aria-label={i18n.t('post.viewer_thumbnails')}>
-        {#each visibleThumbnails as thumbnail (thumbnail.item.id)}
-          <button class:active={thumbnail.index === index} type="button" onclick={() => select(thumbnail.index)} aria-label={`${thumbnail.index + 1}: ${thumbnail.item.name}`}>
-            {#if thumbnail.item.kind === 'image'}
-              <img
-                src={thumbnail.item.poster || thumbnail.item.url}
-                alt=""
-                loading="lazy"
-                onerror={(e) => {
-                  const target = e.currentTarget as HTMLImageElement;
-                  if (thumbnail.item.url && target.src !== thumbnail.item.url) {
-                    target.src = thumbnail.item.url;
-                  }
-                }}
-              />
-            {:else if thumbnail.item.kind === 'video'}
-              <IconVideo />
-            {:else if thumbnail.item.kind === 'audio'}
-              <IconMusic />
-            {:else}
-              <IconDocument />
-            {/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </footer>
+      {#if items.length > 1}
+        <div class="viewer-filmstrip-wrapper">
+          <div
+            bind:this={filmstripContainer}
+            class="viewer-filmstrip"
+            role="region"
+            aria-label={i18n.t('post.viewer_thumbnails')}
+            onwheel={handleFilmstripWheel}
+            onpointerdown={onFilmstripPointerDown}
+            onpointermove={onFilmstripPointerMove}
+            onpointerup={onFilmstripPointerUp}
+            onpointercancel={onFilmstripPointerUp}
+          >
+            {#each items as item, itemIndex (item.id || itemIndex)}
+              <button
+                bind:this={thumbnailRefs[itemIndex]}
+                class="filmstrip-item"
+                class:active={itemIndex === index}
+                type="button"
+                onclick={() => handleThumbnailClick(itemIndex)}
+                aria-label={`${itemIndex + 1}: ${item.name}`}
+                use:tooltip={item.name || i18n.t('post.file')}
+              >
+                <div
+                  class="filmstrip-thumb"
+                  style:aspect-ratio={getThumbAspectRatio(item, itemIndex)}
+                >
+                  {#if item.kind === 'image'}
+                    <img
+                      src={item.poster || item.url}
+                      alt=""
+                      loading="lazy"
+                      draggable="false"
+                      onload={(e) => handleThumbImageLoad(e, itemIndex)}
+                      onerror={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        if (item.url && target.src !== item.url) {
+                          target.src = item.url;
+                        }
+                      }}
+                    />
+                  {:else if (!posterFailed[itemIndex] && item.poster) || videoThumbnails[itemIndex]}
+                    {@const thumbSrc = (!posterFailed[itemIndex] && item.poster) ? item.poster : videoThumbnails[itemIndex]}
+                    {#if thumbSrc}
+                      <img
+                        src={thumbSrc}
+                        alt=""
+                        loading="lazy"
+                        draggable="false"
+                        onload={(e) => handleThumbImageLoad(e, itemIndex)}
+                        onerror={() => {
+                          if (!posterFailed[itemIndex] && item.poster) {
+                            posterFailed = { ...posterFailed, [itemIndex]: true };
+                            requestVideoThumbnail(itemIndex);
+                          }
+                        }}
+                      />
+                      {@const duration = getVideoDuration(item, itemIndex)}
+                      <span class="filmstrip-badge" aria-hidden="true">
+                        <IconVideo />
+                        {#if duration}
+                          <span class="filmstrip-duration">{formatVideoDuration(duration)}</span>
+                        {/if}
+                      </span>
+                    {:else}
+                      <div class="filmstrip-fallback">
+                        <IconVideo />
+                      </div>
+                    {/if}
+                  {:else if item.kind === 'video'}
+                    {@const duration = getVideoDuration(item, itemIndex)}
+                    <div class="filmstrip-fallback">
+                      <IconVideo />
+                      {#if duration}
+                        <span class="filmstrip-badge" aria-hidden="true">
+                          <IconVideo />
+                          <span class="filmstrip-duration">{formatVideoDuration(duration)}</span>
+                        </span>
+                      {/if}
+                    </div>
+                  {:else if item.kind === 'audio'}
+                    <div class="filmstrip-fallback">
+                      <IconMusic />
+                    </div>
+                  {:else}
+                    <div class="filmstrip-fallback">
+                      <IconDocument />
+                    </div>
+                  {/if}
+                </div>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </footer>
+  {/if}
 </div>
 
 <style>
   .media-viewer {
     position: fixed;
     inset: 0;
-    z-index: 2147483000;
+    z-index: var(--z-viewer, 2147483000);
     overflow: hidden;
-    background:
-      radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.035), transparent 45%),
-      rgba(3, 3, 4, 0.985);
+    background: rgba(0, 0, 0, 0.96);
     color: var(--text-primary, #fff);
     outline: none;
     animation: viewer-enter 180ms var(--ease-expo, ease-out);
@@ -828,21 +1216,21 @@
 
   .media-viewer-topbar {
     top: 0;
-    min-height: 76px;
+    min-height: 72px;
     justify-content: space-between;
     gap: 16px;
     padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left));
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.78), transparent);
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.15) 60%, transparent 100%);
   }
 
   .media-viewer-bottom {
     bottom: 0;
-    min-height: 88px;
+    min-height: 84px;
     justify-content: center;
     flex-direction: column;
     gap: 10px;
     padding: 12px max(18px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-    background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.15) 60%, transparent 100%);
   }
 
   .media-viewer-identity {
@@ -861,19 +1249,27 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     user-select: text;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
   }
 
   .media-viewer-identity span {
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.7);
     font-size: 12px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .media-viewer-actions,
-  .mobile-zoom-controls {
+  .media-viewer-actions {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+  }
+
+  .mobile-zoom-controls {
+    display: none !important;
   }
 
   :global(.media-viewer .viewer-icon-btn),
@@ -881,42 +1277,67 @@
     height: 44px !important;
     min-height: 44px !important;
     border: 0 !important;
-    background: rgba(24, 24, 28, 0.82) !important;
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    color: rgba(255, 255, 255, 0.85) !important;
+    transition: color 150ms ease, background 150ms ease, transform 150ms ease !important;
   }
 
   :global(.media-viewer .viewer-icon-btn) {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     width: 44px !important;
     min-width: 44px !important;
     padding: 0 !important;
-    border-radius: 50% !important;
+    border-radius: var(--radius-full, 9999px) !important;
   }
 
   :global(.media-viewer .viewer-icon-btn:hover),
   :global(.media-viewer .viewer-reset-btn:hover) {
-    background: rgba(48, 48, 54, 0.94) !important;
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: #fff !important;
+  }
+
+  :global(.media-viewer .viewer-delete-btn:hover) {
+    color: var(--color-danger, #ef4444) !important;
+    background: rgba(239, 68, 68, 0.15) !important;
+  }
+
+  :global(.media-viewer .viewer-icon-btn:active),
+  :global(.media-viewer .viewer-reset-btn:active) {
+    background: rgba(255, 255, 255, 0.2) !important;
+    transform: scale(0.94) !important;
   }
 
   :global(.media-viewer .viewer-icon-btn svg),
   :global(.media-viewer .viewer-reset-btn svg) {
-    width: 20px !important;
-    height: 20px !important;
+    width: 22px !important;
+    height: 22px !important;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
   }
 
   .zoom-value {
     height: 36px;
-    min-width: 58px;
-    padding: 0 10px;
+    min-width: 48px;
+    padding: 0 8px;
     border: 0;
     border-radius: var(--radius-full);
-    background: rgba(24, 24, 28, 0.82);
-    color: rgba(255, 255, 255, 0.8);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
     font-family: var(--font-sans);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    transition: color 150ms ease, background 150ms ease;
+  }
+
+  .zoom-value:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
   }
 
   .media-viewer-stage {
@@ -931,8 +1352,7 @@
     cursor: grab;
   }
 
-  .media-viewer-stage.can-swipe:active,
-  .media-viewer-stage.is-swiping {
+  .media-viewer-stage.can-swipe:active {
     cursor: grabbing;
   }
 
@@ -944,6 +1364,20 @@
     justify-content: center;
     min-width: 0;
     min-height: 0;
+    transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease-out;
+    will-change: transform, opacity;
+  }
+
+  .media-fit-frame.is-swiping {
+    transition: none !important;
+  }
+
+  .media-fit-frame.is-sliding-out {
+    transition: transform 120ms ease-in, opacity 120ms ease-in !important;
+  }
+
+  .media-fit-frame.is-sliding-in {
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease-out !important;
   }
 
   .media-viewer-stage.image-interactive {
@@ -978,11 +1412,7 @@
     cursor: grabbing;
   }
 
-  .image-media.is-swiping,
-  .media-viewer-media.is-swiping,
-  .viewer-file-state.is-swiping {
-    transition: none !important;
-  }
+
 
   .media-viewer-media:is(video) {
     width: min(100%, 1600px);
@@ -994,31 +1424,36 @@
     position: absolute !important;
     top: 50%;
     z-index: 20;
-    width: 52px !important;
-    height: 52px !important;
-    min-width: 52px !important;
+    width: 56px !important;
+    height: 56px !important;
+    min-width: 56px !important;
     padding: 0 !important;
     border: 0 !important;
     border-radius: 50% !important;
-    background: rgba(24, 24, 28, 0.78) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    color: rgba(255, 255, 255, 0.75) !important;
     transform: translateY(-50%);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    transition: opacity 180ms ease, transform 180ms ease, background 150ms ease !important;
+    transition: opacity 180ms ease, transform 180ms ease, background 150ms ease, color 150ms ease !important;
   }
 
   :global(.viewer-nav:hover) {
-    background: rgba(48, 48, 54, 0.94) !important;
-    transform: translateY(-50%) scale(1.06) !important;
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: #fff !important;
+    transform: translateY(-50%) scale(1.08) !important;
   }
 
   :global(.viewer-nav:active) {
+    background: rgba(255, 255, 255, 0.2) !important;
     transform: translateY(-50%) scale(0.96) !important;
   }
 
   :global(.viewer-nav svg) {
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
     transition: transform 150ms var(--ease-expo, ease-out);
   }
 
@@ -1028,52 +1463,144 @@
   :global(.viewer-prev) { left: max(18px, env(safe-area-inset-left)); }
   :global(.viewer-next) { right: max(18px, env(safe-area-inset-right)); }
 
-  .viewer-filmstrip {
+  .viewer-filmstrip-wrapper {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    max-width: min(760px, 80vw);
-    box-sizing: border-box;
-    padding: 4px 4px 0;
-    overflow-x: hidden;
-    overflow-y: hidden;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    mask-image: linear-gradient(to right, transparent 0%, black 28px, black calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 28px, black calc(100% - 28px), transparent 100%);
   }
 
-  .viewer-filmstrip button {
-    width: 48px;
-    height: 48px;
-    flex: 0 0 48px;
+  .viewer-filmstrip {
+    display: flex;
+    align-items: center;
+    justify-content: safe center;
+    gap: 6px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 36px 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    user-select: none;
+    -webkit-overflow-scrolling: touch;
+    cursor: grab;
+    will-change: scroll-position;
+    contain: content;
+  }
+
+  .viewer-filmstrip:active {
+    cursor: grabbing;
+  }
+
+  .viewer-filmstrip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filmstrip-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .filmstrip-thumb {
+    position: relative;
+    height: 58px;
+    min-width: 36px;
+    max-width: 140px;
     display: grid;
     place-items: center;
     overflow: hidden;
     padding: 0;
-    border: 2px solid transparent;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-    opacity: 0.62;
-    transition: opacity 140ms ease, border-color 140ms ease, transform 140ms ease;
+    border: 0;
+    border-radius: 6px;
+    background: rgba(20, 20, 24, 0.7);
+    color: rgba(255, 255, 255, 0.65);
+    opacity: 0.55;
+    transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    contain: layout paint;
   }
 
-  .viewer-filmstrip button:hover,
-  .viewer-filmstrip button.active {
-    opacity: 1;
+  .filmstrip-item:hover .filmstrip-thumb {
+    opacity: 0.88;
+    background: rgba(255, 255, 255, 0.1);
     transform: translateY(-2px);
   }
 
-  .viewer-filmstrip button.active {
-    border-color: transparent;
-    box-shadow: inset 0 0 0 2px var(--accent-primary);
+  .filmstrip-item.active .filmstrip-thumb {
+    opacity: 1;
+    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 16px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+    transform: translateY(-2px) scale(1.04);
+    z-index: 2;
   }
 
-  .viewer-filmstrip img {
+  .filmstrip-thumb img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    pointer-events: none;
+    display: block;
   }
 
+  .filmstrip-fallback {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: rgba(255, 255, 255, 0.5);
+    pointer-events: none;
+  }
+
+  .filmstrip-fallback :global(svg) {
+    width: 24px;
+    height: 24px;
+  }
+
+  .filmstrip-badge {
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    height: 18px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.82);
+    backdrop-filter: blur(4px);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 550;
+    line-height: 1;
+    pointer-events: none;
+    letter-spacing: 0.02em;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  .filmstrip-badge :global(svg) {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .filmstrip-duration {
+    font-variant-numeric: tabular-nums;
+  }
   .viewer-embed-state {
     width: 100%;
     height: 100%;
@@ -1128,20 +1655,17 @@
 
   .viewer-file-state span { color: rgba(255, 255, 255, 0.55); font-size: 13px; }
   .viewer-file-state audio { width: min(420px, 80vw); }
-  .mobile-zoom-controls { display: none; }
-  .mobile-paging-controls { display: none; }
 
   :global(.media-viewer .viewer-download-icon.is-downloaded) {
-    background: color-mix(in srgb, var(--accent-primary) 72%, #000 28%) !important;
-    color: #fff !important;
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-      0 8px 24px rgba(0, 0, 0, 0.28) !important;
+    background: transparent !important;
+    color: var(--accent-primary) !important;
+    box-shadow: none !important;
   }
 
   :global(.media-viewer .viewer-download-icon.is-downloaded svg) {
-    color: #fff !important;
+    color: var(--accent-primary) !important;
     stroke-width: 2.25;
+    filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.6));
   }
 
   :global(.media-viewer .viewer-download-icon.is-downloading:disabled),
@@ -1155,10 +1679,33 @@
     max-width: 100%;
     height: 44px !important;
     border-radius: var(--radius-full) !important;
+    background: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #fff !important;
+    box-shadow: none !important;
+    transition: background 150ms ease, border-color 150ms ease !important;
+  }
+
+  :global(.media-viewer .viewer-download-pill:hover) {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
   }
 
   :global(.media-viewer .viewer-download-pill.is-downloaded) {
+    border-color: var(--accent-primary) !important;
     color: var(--accent-primary) !important;
+  }
+
+  :global(.media-viewer .viewer-ghost-action) {
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    background: transparent !important;
+    color: #fff !important;
+    box-shadow: none !important;
+  }
+
+  :global(.media-viewer .viewer-ghost-action:hover) {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-color: rgba(255, 255, 255, 0.4) !important;
   }
 
   .controls-hidden .media-viewer-topbar {
@@ -1187,63 +1734,102 @@
 
   @media (max-width: 700px), (pointer: coarse) {
     .media-viewer-topbar {
-      min-height: 64px;
-      padding-top: max(10px, env(safe-area-inset-top));
-      padding-right: max(10px, env(safe-area-inset-right));
-      padding-left: max(14px, env(safe-area-inset-left));
+      min-height: 58px;
+      padding-top: max(8px, env(safe-area-inset-top));
+      padding-right: max(8px, env(safe-area-inset-right));
+      padding-left: max(12px, env(safe-area-inset-left));
     }
 
     .media-viewer-stage {
       padding: 0;
     }
 
-    .media-fit-frame { inset: 68px 0 92px; }
+    .media-fit-frame { inset: 60px 0 102px; }
 
-    .media-viewer-actions { gap: 4px; }
-    .desktop-zoom-control { display: none !important; }
+    .media-viewer-actions { gap: 3px; }
     :global(.viewer-nav) { display: none !important; }
-    .mobile-zoom-controls { display: flex; }
-    .mobile-paging-controls {
-      display: flex;
+    :global(.media-viewer .viewer-zoom-btn) { display: none !important; }
+
+    :global(.media-viewer .viewer-icon-btn) {
+      width: 38px !important;
+      min-width: 38px !important;
+      height: 38px !important;
+      min-height: 38px !important;
+    }
+
+    :global(.media-viewer .viewer-icon-btn svg) {
+      width: 20px !important;
+      height: 20px !important;
+    }
+
+    .mobile-zoom-controls {
+      display: flex !important;
       align-items: center;
-      gap: 10px;
-    }
-    .mobile-paging-controls span {
-      min-width: 54px;
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 12px;
-      font-weight: 600;
-      text-align: center;
-    }
-
-    :global(.media-viewer .viewer-reset-btn) {
-      min-width: 82px !important;
-      padding: 0 14px !important;
-      border-radius: var(--radius-full) !important;
-    }
-
-    .media-viewer-bottom {
-      min-height: 76px;
-      padding-top: 8px;
+      justify-content: center;
       gap: 8px;
     }
 
-    .viewer-filmstrip { display: none; }
+    :global(.media-viewer .viewer-reset-btn) {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      min-width: 80px !important;
+      height: 38px !important;
+      padding: 0 12px !important;
+      border-radius: var(--radius-full) !important;
+      font-size: 12.5px !important;
+      font-weight: 600 !important;
+    }
+
+    .media-viewer-bottom {
+      min-height: auto;
+      padding: 4px max(8px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+      gap: 6px;
+    }
+
+    .viewer-filmstrip-wrapper {
+      max-width: 100vw;
+      mask-image: linear-gradient(to right, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%);
+      -webkit-mask-image: linear-gradient(to right, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%);
+    }
+
+    .viewer-filmstrip {
+      gap: 8px;
+      padding: 6px 16px 8px;
+    }
+
+    .filmstrip-thumb {
+      height: 64px;
+      min-width: 40px;
+      max-width: 140px;
+      flex: 0 0 auto;
+      border-radius: 6px;
+    }
+
     .media-viewer-identity strong { font-size: 13px; }
-    .media-viewer-identity { max-width: calc(100vw - 160px); }
+    .media-viewer-identity { max-width: calc(100vw - 145px); }
   }
 
   @media (max-width: 380px) {
-    .media-viewer-identity { max-width: calc(100vw - 112px); }
-    .media-viewer-actions :global(.viewer-fullscreen-btn) { display: none !important; }
+    .media-viewer-identity { max-width: calc(100vw - 110px); }
+    :global(.media-viewer .viewer-fullscreen-btn) { display: none !important; }
+    .filmstrip-thumb {
+      height: 56px;
+      min-width: 34px;
+      max-width: 120px;
+      border-radius: 6px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .media-viewer,
     .media-viewer-controls,
+    .media-fit-frame,
     .image-media,
     :global(.viewer-nav),
-    .viewer-filmstrip button {
+    .filmstrip-item,
+    .filmstrip-thumb {
       animation: none !important;
       transition: none !important;
     }

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { playbackState } from '$lib/state/playbackState.svelte';
 
 const thumbnailMemoryCache = new Map<string, string>();
 const pendingRequests = new Map<string, Promise<string | undefined>>();
@@ -23,7 +24,7 @@ async function processQueue() {
   }
 
   try {
-    const dataUrl = await extractFrame(item.videoUrl);
+    const dataUrl = await extractFrame(item.videoUrl, item.key);
     if (dataUrl) {
       thumbnailMemoryCache.set(item.key, dataUrl);
       try {
@@ -44,7 +45,7 @@ async function processQueue() {
   }
 }
 
-function extractFrame(videoUrl: string): Promise<string | undefined> {
+function extractFrame(videoUrl: string, key?: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.muted = true;
@@ -105,6 +106,9 @@ function extractFrame(videoUrl: string): Promise<string | undefined> {
     };
 
     video.onloadedmetadata = () => {
+      if (key && video.duration && isFinite(video.duration) && video.duration > 0) {
+        playbackState.saveDuration(key, video.duration);
+      }
       const seekTime = video.duration > 1 ? 0.5 : Math.max(0.1, (video.duration || 1) / 2);
       video.currentTime = seekTime;
     };

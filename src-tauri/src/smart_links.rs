@@ -1,4 +1,28 @@
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "payload")]
+pub enum DeepLinkTarget {
+    #[serde(rename = "post")]
+    Post {
+        provider_id: String,
+        service: String,
+        creator_id: String,
+        post_id: String,
+    },
+    #[serde(rename = "creator")]
+    Creator {
+        provider_id: String,
+        service: String,
+        creator_id: String,
+    },
+    #[serde(rename = "search")]
+    Search {
+        provider_id: Option<String>,
+        query: String,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalPostLink {
@@ -484,6 +508,296 @@ pub fn parse_pawchive_post_url(
         .then_some((service, creator_id, post_id))
 }
 
+fn extract_domain_root(url_or_host: &str) -> Option<String> {
+    let host = if let Ok(parsed) = Url::parse(url_or_host) {
+        parsed.host_str()?.to_string()
+    } else {
+        url_or_host
+            .split('/')
+            .next()?
+            .split(':')
+            .next()?
+            .to_string()
+    };
+    let clean = host
+        .trim_start_matches("www.")
+        .trim_start_matches("api.")
+        .to_ascii_lowercase();
+    let parts: Vec<&str> = clean.split('.').collect();
+    if parts.len() > 2 {
+        Some(parts[parts.len() - 2..].join("."))
+    } else {
+        Some(clean)
+    }
+}
+
+fn matches_provider_domain(
+    host: &str,
+    provider: &crate::api::providers::traits::ProviderConfig,
+) -> bool {
+    let target_clean = host.trim_start_matches("www.").to_ascii_lowercase();
+    let candidate_urls = std::iter::once(&provider.api_url).chain(provider.fallback_urls.iter());
+
+    for cand in candidate_urls {
+        if let Some(cand_root) = extract_domain_root(cand) {
+            if target_clean == cand_root || target_clean.ends_with(&format!(".{cand_root}")) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn find_provider_for_service(
+    service: &str,
+    configured_providers: &[crate::api::providers::traits::ProviderConfig],
+) -> String {
+    let srv_clean = service.trim().to_ascii_lowercase();
+    configured_providers
+        .iter()
+        .find(|p| {
+            p.enabled
+                && p.services
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&srv_clean))
+        })
+        .or_else(|| {
+            configured_providers.iter().find(|p| {
+                p.services
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&srv_clean))
+            })
+        })
+        .map(|p| p.id.clone())
+        .unwrap_or_else(|| {
+            if srv_clean == "onlyfans" || srv_clean == "fansly" {
+                "onlyhaven".to_string()
+            } else {
+                "pawchive".to_string()
+            }
+        })
+}
+
+pub fn parse_deep_link(
+    raw: &str,
+    configured_providers: &[crate::api::providers::traits::ProviderConfig],
+) -> Result<DeepLinkTarget, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("Empty deep link URL".to_string());
+    }
+
+    let url = Url::parse(raw).map_err(|e| format!("Invalid deep link URL: {e}"))?;
+
+    // 1. Custom Scheme: pawstash://
+    if url.scheme().eq_ignore_ascii_case("pawstash") {
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let segments: Vec<&str> = url
+            .path_segments()
+            .map(|s| s.filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default();
+
+        // 1.1 pawstash://open?url=...
+        if host == "open" {
+            let inner_url = url
+                .query_pairs()
+                .find(|(k, _)| k == "url")
+                .map(|(_, v)| v.into_owned())
+                .ok_or_else(|| "Missing 'url' parameter in pawstash://open".to_string())?;
+            return parse_deep_link(&inner_url, configured_providers);
+        }
+
+        // 1.2 pawstash://search?q=...
+        if host == "search" {
+            let query = url
+                .query_pairs()
+                .find(|(k, _)| k == "q" || k == "query")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let provider_id = url
+                .query_pairs()
+                .find(|(k, _)| k == "provider" || k == "provider_id")
+                .map(|(_, v)| v.into_owned());
+            return Ok(DeepLinkTarget::Search { provider_id, query });
+        }
+
+        // 1.3 pawstash://post/{service}/{creator_id}/{post_id}
+        if host == "post" || host == "posts" {
+            if segments.len() >= 3 {
+                let service = segments[0].to_string();
+                let creator_id = segments[1].to_string();
+                let post_id = segments[2].to_string();
+                let provider_id = url
+                    .query_pairs()
+                    .find(|(k, _)| k == "provider" || k == "provider_id")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_else(|| find_provider_for_service(&service, configured_providers));
+                return Ok(DeepLinkTarget::Post {
+                    provider_id,
+                    service,
+                    creator_id,
+                    post_id,
+                });
+            } else if segments.len() == 2 {
+                let service = segments[0].to_string();
+                let post_id = segments[1].to_string();
+                let provider_id = url
+                    .query_pairs()
+                    .find(|(k, _)| k == "provider" || k == "provider_id")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_else(|| find_provider_for_service(&service, configured_providers));
+                return Ok(DeepLinkTarget::Post {
+                    provider_id,
+                    service,
+                    creator_id: String::new(),
+                    post_id,
+                });
+            }
+        }
+
+        // 1.4 pawstash://creator/{service}/{creator_id}
+        if (host == "creator" || host == "creators" || host == "user") && segments.len() >= 2 {
+            let service = segments[0].to_string();
+            let creator_id = segments[1].to_string();
+            let provider_id = url
+                .query_pairs()
+                .find(|(k, _)| k == "provider" || k == "provider_id")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_else(|| find_provider_for_service(&service, configured_providers));
+            return Ok(DeepLinkTarget::Creator {
+                provider_id,
+                service,
+                creator_id,
+            });
+        }
+
+        // 1.5 pawstash://{provider_id}/post/{service}/{creator_id}/{post_id} or pawstash://{provider_id}/{service}/user/{creator_id}/post/{post_id}
+        if let Some(prov) = configured_providers
+            .iter()
+            .find(|p| p.id.eq_ignore_ascii_case(&host))
+        {
+            if segments.len() >= 4 && (segments[0] == "post" || segments[0] == "posts") {
+                return Ok(DeepLinkTarget::Post {
+                    provider_id: prov.id.clone(),
+                    service: segments[1].to_string(),
+                    creator_id: segments[2].to_string(),
+                    post_id: segments[3].to_string(),
+                });
+            }
+            if segments.len() >= 5 && segments[1] == "user" && segments[3] == "post" {
+                return Ok(DeepLinkTarget::Post {
+                    provider_id: prov.id.clone(),
+                    service: segments[0].to_string(),
+                    creator_id: segments[2].to_string(),
+                    post_id: segments[4].to_string(),
+                });
+            }
+            if segments.len() >= 3 && segments[1] == "user" {
+                return Ok(DeepLinkTarget::Creator {
+                    provider_id: prov.id.clone(),
+                    service: segments[0].to_string(),
+                    creator_id: segments[2].to_string(),
+                });
+            }
+        }
+
+        return Err(format!("Unrecognized pawstash scheme format: {raw}"));
+    }
+
+    // 2. Direct Web URLs (HTTP / HTTPS)
+    if matches!(url.scheme(), "http" | "https") {
+        let host = url
+            .host_str()
+            .ok_or_else(|| "URL has no host".to_string())?
+            .to_ascii_lowercase();
+        let segments: Vec<&str> = url
+            .path_segments()
+            .map(|s| s.filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default();
+
+        // 2.1 Check if host matches any configured provider's dynamic domain / mirror
+        if let Some(prov) = configured_providers
+            .iter()
+            .find(|p| matches_provider_domain(&host, p))
+        {
+            // Case A: /{service}/user/{creator_id}/post/{post_id} or /{service}/server/{creator_id}/post/{post_id}
+            if segments.len() >= 5
+                && matches!(segments[1], "user" | "server" | "channel")
+                && segments[3] == "post"
+            {
+                return Ok(DeepLinkTarget::Post {
+                    provider_id: prov.id.clone(),
+                    service: segments[0].to_string(),
+                    creator_id: segments[2].to_string(),
+                    post_id: segments[4].to_string(),
+                });
+            }
+
+            // Case B: /posts/{service}/{creator_id}/{post_id} (OnlyHaven / generic posts)
+            if segments.len() >= 4 && (segments[0] == "posts" || segments[0] == "post") {
+                return Ok(DeepLinkTarget::Post {
+                    provider_id: prov.id.clone(),
+                    service: segments[1].to_string(),
+                    creator_id: segments[2].to_string(),
+                    post_id: segments[3].to_string(),
+                });
+            }
+
+            // Case C: /{service}/user/{creator_id} or /creators/{service}/{creator_id}
+            if segments.len() >= 3 && (segments[1] == "user" || segments[0] == "creators") {
+                let service = if segments[0] == "creators" {
+                    segments[1]
+                } else {
+                    segments[0]
+                };
+                let creator_id = segments[2];
+                return Ok(DeepLinkTarget::Creator {
+                    provider_id: prov.id.clone(),
+                    service: service.to_string(),
+                    creator_id: creator_id.to_string(),
+                });
+            }
+
+            // Case D: /posts?q=... or /search?q=...
+            if (segments.is_empty() || segments[0] == "posts" || segments[0] == "search")
+                && (url.query_pairs().any(|(k, _)| k == "q" || k == "query"))
+            {
+                let query = url
+                    .query_pairs()
+                    .find(|(k, _)| k == "q" || k == "query")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                return Ok(DeepLinkTarget::Search {
+                    provider_id: Some(prov.id.clone()),
+                    query,
+                });
+            }
+        }
+
+        // 2.2 Check external creator / post links (Patreon, Fanbox, Fantia, Boosty, OnlyFans, Fansly, etc.)
+        if let Some(ext_post) = parse_external_post_link(raw) {
+            let provider_id = find_provider_for_service(&ext_post.service, configured_providers);
+            return Ok(DeepLinkTarget::Post {
+                provider_id,
+                service: ext_post.service,
+                creator_id: ext_post.creator_hint.unwrap_or_default(),
+                post_id: ext_post.post_id,
+            });
+        }
+
+        if let Some(ext_creator) = parse_external_creator_link(raw) {
+            let provider_id = find_provider_for_service(&ext_creator.service, configured_providers);
+            return Ok(DeepLinkTarget::Creator {
+                provider_id,
+                service: ext_creator.service,
+                creator_id: ext_creator.creator_hint,
+            });
+        }
+    }
+
+    Err(format!("Unsupported link format: {raw}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,6 +880,191 @@ mod tests {
         assert_eq!(
             parse_pawchive_post_url(&url, "patreon", "130382350"),
             Some(("patreon".into(), "981501".into(), "130382350".into()))
+        );
+    }
+
+    #[test]
+    fn test_parse_deep_link_custom_scheme() {
+        let providers = vec![
+            crate::api::providers::traits::ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: true,
+                api_url: "https://pawchive.pw".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into(), "fanbox".into()],
+                is_custom: false,
+                priority: 0,
+            },
+            crate::api::providers::traits::ProviderConfig {
+                id: "onlyhaven".into(),
+                name: "OnlyHaven".into(),
+                enabled: true,
+                api_url: "https://cum.st".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 1,
+            },
+        ];
+
+        // 1. Direct scheme post
+        let res =
+            parse_deep_link("pawstash://post/patreon/12516244/168022069", &providers).unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Post {
+                provider_id: "pawchive".into(),
+                service: "patreon".into(),
+                creator_id: "12516244".into(),
+                post_id: "168022069".into()
+            }
+        );
+
+        // 2. Direct scheme creator
+        let res = parse_deep_link("pawstash://creator/fanbox/51803217", &providers).unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Creator {
+                provider_id: "pawchive".into(),
+                service: "fanbox".into(),
+                creator_id: "51803217".into()
+            }
+        );
+
+        // 3. Direct scheme search
+        let res = parse_deep_link("pawstash://search?q=art", &providers).unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Search {
+                provider_id: None,
+                query: "art".into()
+            }
+        );
+
+        // 4. pawstash://open?url=...
+        let res = parse_deep_link(
+            "pawstash://open?url=https%3A%2F%2Fpawchive.pw%2Ffanbox%2Fuser%2F51803217%2Fpost%2F12531297",
+            &providers,
+        )
+        .unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Post {
+                provider_id: "pawchive".into(),
+                service: "fanbox".into(),
+                creator_id: "51803217".into(),
+                post_id: "12531297".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_deep_link_dynamic_provider_domains() {
+        let providers = vec![
+            crate::api::providers::traits::ProviderConfig {
+                id: "custom_pawchive".into(),
+                name: "Custom Pawchive Mirror".into(),
+                enabled: true,
+                api_url: "https://mirror.pw".into(),
+                fallback_urls: vec!["https://backup-mirror.net".into()],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into(), "fanbox".into()],
+                is_custom: true,
+                priority: 0,
+            },
+            crate::api::providers::traits::ProviderConfig {
+                id: "onlyhaven".into(),
+                name: "OnlyHaven".into(),
+                enabled: true,
+                api_url: "https://cum.st".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 1,
+            },
+        ];
+
+        // Matched against custom user-configured mirror
+        let res = parse_deep_link(
+            "https://backup-mirror.net/patreon/user/123/post/456",
+            &providers,
+        )
+        .unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Post {
+                provider_id: "custom_pawchive".into(),
+                service: "patreon".into(),
+                creator_id: "123".into(),
+                post_id: "456".into()
+            }
+        );
+
+        // Matched against OnlyHaven web post link
+        let res = parse_deep_link(
+            "https://cum.st/posts/onlyfans/14644822/2702157105",
+            &providers,
+        )
+        .unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Post {
+                provider_id: "onlyhaven".into(),
+                service: "onlyfans".into(),
+                creator_id: "14644822".into(),
+                post_id: "2702157105".into()
+            }
+        );
+
+        // Matched against OnlyHaven creator link
+        let res = parse_deep_link("https://cum.st/creators/onlyfans/14644822", &providers).unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Creator {
+                provider_id: "onlyhaven".into(),
+                service: "onlyfans".into(),
+                creator_id: "14644822".into()
+            }
+        );
+
+        // Matched against external Patreon post link
+        let res = parse_deep_link(
+            "https://www.patreon.com/posts/my-post-130382350",
+            &providers,
+        )
+        .unwrap();
+        assert_eq!(
+            res,
+            DeepLinkTarget::Post {
+                provider_id: "custom_pawchive".into(),
+                service: "patreon".into(),
+                creator_id: "".into(),
+                post_id: "130382350".into()
+            }
         );
     }
 }

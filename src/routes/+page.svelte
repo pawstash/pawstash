@@ -30,6 +30,7 @@
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
   import { initFrontendLogging } from '$lib/utils/logger';
+  import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
   import { Toaster } from 'svelte-sonner';
 
   navigationState.init();
@@ -55,23 +56,32 @@
     document.addEventListener('touchstart', preventPinchZoom, { passive: false });
     document.addEventListener('touchmove', preventPinchZoom, { passive: false });
 
-    function handleDeepLinkJson(jsonStr: string | null) {
-      if (!jsonStr) return;
+    function handleDeepLinkPayload(payloadStr: string | null) {
+      if (!payloadStr) return;
+      if (
+        payloadStr.startsWith('pawstash://') ||
+        payloadStr.startsWith('http://') ||
+        payloadStr.startsWith('https://')
+      ) {
+        void handleDeepLinkUrl(payloadStr);
+        return;
+      }
       try {
-        const payload = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+        const payload = typeof payloadStr === 'string' ? JSON.parse(payloadStr) : payloadStr;
         if (payload.action === 'open_post' && payload.service && payload.creatorId && payload.postId) {
           navigationState.openPost(payload.service, payload.creatorId, payload.postId, undefined, true);
         } else if (payload.action === 'open_downloads') {
           navigationState.navigateRoot('downloads');
         }
       } catch (e) {
-        console.warn('Failed to parse deep link JSON:', e);
+        console.warn('Failed to parse deep link payload:', e);
       }
     }
 
-    void apiGetPendingDeepLink().then(handleDeepLinkJson).catch(() => {});
+    const cleanupDeepLink = initDeepLinkListener();
+    void apiGetPendingDeepLink().then(handleDeepLinkPayload).catch(() => {});
     const unlistenDeepLink = listen<string>('open-post-deep-link', (event) => {
-      handleDeepLinkJson(event.payload);
+      handleDeepLinkPayload(event.payload);
     });
     const unlistenPanic = listen('panic-mode', () => {
       document.querySelectorAll('video, audio').forEach((el) => {
@@ -105,6 +115,7 @@
     return () => {
       document.removeEventListener('touchstart', preventPinchZoom);
       document.removeEventListener('touchmove', preventPinchZoom);
+      cleanupDeepLink();
       void unlistenDeepLink.then((u) => u());
       void unlistenPanic.then((u) => u());
     };

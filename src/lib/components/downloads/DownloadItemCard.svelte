@@ -24,6 +24,7 @@
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
+  import { playbackState } from '$lib/state/playbackState.svelte';
 
   interface Props {
     item: DownloadItem;
@@ -46,8 +47,35 @@
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let percent = $derived(item.total_bytes > 0 ? Math.min(100, Math.round(item.downloaded_bytes / item.total_bytes * 100)) : 0);
   let active = $derived(['queued', 'resolving', 'downloading', 'verifying'].includes(item.status));
-  let extension = $derived((item.filename.split('.').pop() || '').toLowerCase());
+  let extension = $derived(item.filename.includes('.') ? (item.filename.split('.').pop() || '').toLowerCase() : '');
   let mediaKind = $derived(/^(avif|bmp|gif|jpe?g|png|webp)$/.test(extension) ? 'image' : /^(m4v|mkv|mov|mp4|webm)$/.test(extension) ? 'video' : /^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(extension) ? 'audio' : 'file');
+
+  function formatVideoDuration(seconds?: number): string {
+    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return '';
+    const total = Math.floor(seconds);
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hrs > 0) {
+      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  let videoDuration = $derived.by(() => {
+    if (mediaKind !== 'video') return undefined;
+    const key = item.media_id || item.id || item.filename;
+    return playbackState.getDuration(key);
+  });
+
+  let metaBadge = $derived.by(() => {
+    const ext = extension ? extension.toUpperCase() : '';
+    if (mediaKind === 'video' && videoDuration && videoDuration > 0) {
+      const dur = formatVideoDuration(videoDuration);
+      return ext ? `${ext} · ${dur}` : dur;
+    }
+    return ext;
+  });
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
   let selected = $derived(isSelectionActive && selectionState.isSelected(item.id));
@@ -278,6 +306,13 @@
       disablepictureinpicture
       disableremoteplayback
       autoplay
+      onloadedmetadata={(e) => {
+        const vid = e.currentTarget as HTMLVideoElement;
+        if (vid.duration && isFinite(vid.duration) && vid.duration > 0) {
+          const key = item.media_id || item.id || item.filename;
+          if (key) playbackState.saveDuration(key, vid.duration);
+        }
+      }}
       onerror={() => { previewFailed = true; showVideo = false; }}
     ></video>
   {/if}
@@ -317,6 +352,9 @@
       <div class="grid-tile-meta-stats">
         {#if item.status !== 'completed' && item.total_bytes > 0}<span>{percent}%</span>{/if}
         {#if item.speed_bps > 0}<span>{formatBytes(item.speed_bps)}/s</span>{/if}
+        {#if metaBadge}
+          <span class="download-format-badge">{metaBadge}</span>
+        {/if}
       </div>
     </div>
   </div>
@@ -328,6 +366,14 @@
 
 <style>
   :global(.grid-tile-hover-video) { pointer-events: none !important; }
+  .download-format-badge {
+    font-variant-numeric: tabular-nums;
+    font-size: calc(10px * var(--grid-scale, 1));
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.75);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
   .download-placeholder { gap: calc(8px * var(--grid-scale, 1)); color: rgba(255,255,255,.28); }
   .download-placeholder :global(svg) { width: calc(34px * var(--grid-scale, 1)); height: calc(34px * var(--grid-scale, 1)); }
   .download-placeholder span { font-size: calc(9px * var(--grid-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

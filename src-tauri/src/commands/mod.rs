@@ -2561,11 +2561,12 @@ pub extern "C" fn Java_app_pawstash_client_MainActivity_onDeepLinkReceived(
     json_jstr: jni::objects::JString,
 ) {
     if let Ok(json) = env.get_string(&json_jstr) {
-        let json_str = json.to_string_lossy().to_string();
+        let payload_str = json.to_string_lossy().to_string();
         if let Ok(lock) = APP_HANDLE.read() {
             if let Some(handle) = lock.as_ref() {
                 use tauri::Emitter;
-                let _ = handle.emit("open-post-deep-link", json_str);
+                let _ = handle.emit("open-post-deep-link", payload_str.clone());
+                let _ = handle.emit("deep-link:opened", payload_str);
             }
         }
     }
@@ -2856,4 +2857,13 @@ pub fn open_logs_folder() -> Result<(), String> {
 #[tauri::command]
 pub fn clear_logs() -> Result<(), String> {
     crate::logging::clear_log_file()
+}
+
+#[tauri::command]
+pub async fn resolve_deep_link(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<crate::smart_links::DeepLinkTarget, String> {
+    let configs = state.provider_manager.get_provider_configs().await;
+    crate::smart_links::parse_deep_link(&url, &configs)
 }

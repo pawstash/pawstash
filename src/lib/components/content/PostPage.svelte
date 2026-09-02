@@ -853,10 +853,13 @@
     const width = typeof file.width === 'number' && file.width > 0 ? file.width : undefined;
     const height = typeof file.height === 'number' && file.height > 0 ? file.height : undefined;
     const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
+    const mediaIndex = media.findIndex((m) => isSameAttachment(m, file));
+    const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
+    const key = job?.media_id || job?.id || job?.filename || file.path || file.name || `vid_${itemIndex}`;
     return {
-      id: file.path || `${file.name || 'media'}:${itemIndex}`,
+      id: key,
       url,
-      poster: attachmentThumbnailUrl(file, service),
+      poster: cachedVideoThumb || attachmentThumbnailUrl(file, service),
       name: file.name || i18n.t('post.file'),
       kind: isEmbed ? 'video' : mediaViewerKind(file, url),
       size: getEffectiveFileSize(file) || file.size,
@@ -1144,8 +1147,8 @@
       if (videoThumbnails[i]) continue;
 
       const localJob = attachmentDownload(file);
-      if (localJob && localJob.status === 'completed' && localJob.final_path && url) {
-        const key = localJob.media_id || localJob.id || localJob.filename || file.path || file.name || `vid_${i}`;
+      if (url) {
+        const key = localJob?.media_id || localJob?.id || localJob?.filename || file.path || file.name || `vid_${i}`;
         getVideoThumbnail(key, url).then((thumb) => {
           if (thumb) {
             videoThumbnails = { ...videoThumbnails, [i]: thumb };
