@@ -50,9 +50,9 @@
       } catch {
         authSchemas[p.id] = {
           provider_id: p.id,
-          supports_auth: p.id === 'pawchive',
-          supports_remote_favorites: p.id === 'pawchive',
-          supports_push_favorites: p.id === 'pawchive',
+          supports_auth: p.id === 'pawchive' || p.id === 'coomer',
+          supports_remote_favorites: p.id === 'pawchive' || p.id === 'coomer',
+          supports_push_favorites: p.id === 'pawchive' || p.id === 'coomer',
           auth_fields: []
         };
       }
@@ -62,7 +62,7 @@
   async function handleToggleEnabled(provider: ProviderConfig, enabled: boolean) {
     const updated: ProviderConfig = { ...provider, enabled };
     await providerState.updateProvider(updated);
-    contentState.posts = {};
+    contentState.clearAllCache();
     void feedState.refresh();
     void creatorsState.refresh();
   }
@@ -72,7 +72,7 @@
     if (!trimmed || trimmed === provider.api_url) return;
     const updated: ProviderConfig = { ...provider, api_url: trimmed };
     await providerState.updateProvider(updated);
-    contentState.posts = {};
+    contentState.clearAllCache();
     void feedState.refresh();
     void creatorsState.refresh();
   }
@@ -88,7 +88,7 @@
           pushed: res.pushed_count
         })
       );
-      contentState.posts = {};
+      contentState.clearAllCache();
       void feedState.refresh();
       void creatorsState.refresh();
     } catch (e: any) {
@@ -106,7 +106,7 @@
       await apiLogoutProviderSession(p.id, removeFavorites);
       await providerState.loadProviders();
       notify.success(i18n.t('settings.auth_logout_success', { provider: formatProviderName(p.name) }));
-      contentState.posts = {};
+      contentState.clearAllCache();
       void feedState.refresh();
       void creatorsState.refresh();
     } catch (e: any) {

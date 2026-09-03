@@ -165,8 +165,18 @@ export const apiSearchPosts = (query: string) =>
 export const apiListLibraryCollections = () =>
   invoke<LibraryCollection[]>('list_library_collections');
 
-export const apiCreateLibraryStash = (name: string) =>
-  invoke<LibraryCollection>('create_library_stash', { name });
+export const apiCreateLibraryStash = (name: string, color?: string | null) =>
+  invoke<LibraryCollection>('create_library_stash', { name, color: color ?? null });
+
+export const apiUpdateLibraryStash = (
+  collectionId: string,
+  updates: { name?: string; color?: string | null }
+) =>
+  invoke<LibraryCollection>('update_library_stash', {
+    collectionId,
+    name: updates.name ?? null,
+    color: updates.color !== undefined ? updates.color : null
+  });
 
 export const apiDeleteLibraryStash = (collectionId: string) =>
   invoke<boolean>('delete_library_stash', { collectionId });

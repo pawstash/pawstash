@@ -222,7 +222,9 @@ pub async fn probe_download_sizes(
         temp_path: String::new(),
         final_path: String::new(),
         filename: String::new(),
-        session_cookie: (!settings.session_cookie.is_empty()).then_some(settings.session_cookie),
+        session_cookie: urls
+            .first()
+            .and_then(|u| settings.resolve_cookie_for_url(u)),
         proxy_mode: settings.proxy_mode,
         proxy_url: settings.proxy_url,
         proxy_username: settings.proxy_username,
@@ -471,11 +473,27 @@ pub async fn fetch_creators(state: State<'_, AppState>) -> Result<Vec<Creator>, 
             Ok(creators)
         }
         Err(error) => {
+            let enabled_services: std::collections::HashSet<String> = state
+                .provider_manager
+                .get_provider_configs()
+                .await
+                .into_iter()
+                .filter(|p| p.enabled)
+                .flat_map(|p| p.services)
+                .map(|s| s.to_lowercase())
+                .collect();
             let cached = state.content.list_creators()?;
-            if cached.is_empty() {
+            let filtered: Vec<Creator> = cached
+                .into_iter()
+                .filter(|c| {
+                    enabled_services.is_empty()
+                        || enabled_services.contains(&c.service.to_lowercase())
+                })
+                .collect();
+            if filtered.is_empty() {
                 Err(error)
             } else {
-                Ok(cached)
+                Ok(filtered)
             }
         }
     }
@@ -635,10 +653,7 @@ pub async fn fetch_creator_profile(
             if let Ok(Some(cached)) = state.content.get_creator(&service, &creator_id) {
                 return Ok(cached);
             }
-            state
-                .content
-                .get_creator(&service, &creator_id)?
-                .ok_or(error)
+            Err(error)
         }
     }
 }
@@ -1517,9 +1532,24 @@ pub fn list_library_collections(
 #[tauri::command]
 pub fn create_library_stash(
     name: String,
+    color: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<LibraryCollection, String> {
-    state.library.create_stash(&name)
+    state.library.create_stash(&name, color.as_deref())
+}
+
+#[tauri::command]
+pub fn update_library_stash(
+    collection_id: String,
+    name: Option<String>,
+    color: Option<Option<String>>,
+    state: State<'_, AppState>,
+) -> Result<LibraryCollection, String> {
+    state.library.update_stash(
+        &collection_id,
+        name.as_deref(),
+        color.as_ref().map(|c| c.as_deref()),
+    )
 }
 
 #[tauri::command]

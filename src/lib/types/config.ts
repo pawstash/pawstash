@@ -46,4 +46,6 @@ export interface AppSettings {
   smart_merge_attachments?: boolean;
   pawchive_hide_ai?: boolean;
   persist_in_app_favorites_locally?: boolean;
+  disable_blur_placeholders?: boolean;
+  card_view_mode?: 'detailed' | 'lite';
 }

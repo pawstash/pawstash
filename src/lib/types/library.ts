@@ -7,6 +7,7 @@ export interface LibraryCollection {
   parent_id?: string;
   item_count: number;
   is_system: boolean;
+  color?: string | null;
 }
 
 export interface LibraryPostIdentity {

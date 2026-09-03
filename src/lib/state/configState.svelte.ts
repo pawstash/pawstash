@@ -43,7 +43,8 @@ export class ConfigState {
     download_metadata_format: 'txt',
     panic_button_enabled: true,
     panic_button_shortcut: 'H',
-    persist_in_app_favorites_locally: true
+    persist_in_app_favorites_locally: true,
+    card_view_mode: 'detailed'
   });
 
   updateSettings(newSettings: AppSettings) {

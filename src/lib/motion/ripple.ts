@@ -16,7 +16,9 @@ export function ripple(node: HTMLElement, enabled = true) {
     document.head.appendChild(_rippleStyle);
   }
 
-  node.style.position = node.style.position || 'relative';
+  if (window.getComputedStyle(node).position === 'static') {
+    node.style.position = 'relative';
+  }
   node.style.overflow = 'hidden';
 
   function spawn(e: PointerEvent) {

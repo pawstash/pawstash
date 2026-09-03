@@ -102,6 +102,8 @@
   let dismissOffsetY = $state(0);
   let isDismissing = $state(false);
   let isSwiping = $state(false);
+  let wasDragging = false;
+  let dragResetTimer: ReturnType<typeof setTimeout> | undefined;
   let slidePhase = $state<'idle' | 'out' | 'in'>('idle');
   let slideTimer: ReturnType<typeof setTimeout> | undefined;
   let dismissScale = $derived(1 - Math.min(0.25, Math.abs(dismissOffsetY) * 0.0005));
@@ -165,6 +167,7 @@
   onDestroy(() => {
     unregisterBack();
     if (slideTimer) clearTimeout(slideTimer);
+    if (dragResetTimer) clearTimeout(dragResetTimer);
     if (scrollRafId) cancelAnimationFrame(scrollRafId);
   });
 
@@ -527,7 +530,7 @@
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.002);
       setScale(scale * factor, event.clientX, event.clientY);
-      registerActivity();
+      if (controlsVisible) registerActivity();
       return;
     }
 
@@ -540,7 +543,7 @@
         if (now - wheelNavThrottle > 320) {
           wheelNavThrottle = now;
           navigate(delta > 0 ? 1 : -1);
-          registerActivity();
+          if (controlsVisible) registerActivity();
         }
         return;
       }
@@ -551,18 +554,18 @@
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.0015);
       setScale(scale * factor, event.clientX, event.clientY);
-      registerActivity();
+      if (controlsVisible) registerActivity();
     }
   }
 
   function handleDoubleClick(event: MouseEvent) {
     if (current?.kind !== 'image') return;
     setScale(scale > 1.05 ? 1 : 2.5, event.clientX, event.clientY);
-    registerActivity();
+    if (controlsVisible) registerActivity();
   }
 
   function handlePointerDown(event: PointerEvent) {
-    registerActivity();
+    if (controlsVisible) registerActivity();
     const target = event.target as HTMLElement;
     // Don't intercept clicks on buttons or interactive media controls
     if (target.closest('button, input, select, audio, .media-viewer-controls')) return;
@@ -638,6 +641,17 @@
     const point = pointers.get(event.pointerId);
     pointers.delete(event.pointerId);
     if (!point) return;
+
+    const deltaX = event.clientX - point.startX;
+    const deltaY = event.clientY - point.startY;
+    const moved = Math.hypot(deltaX, deltaY);
+    if (moved > 6 || isSwiping || dismissOffsetY !== 0) {
+      wasDragging = true;
+      if (dragResetTimer) clearTimeout(dragResetTimer);
+      dragResetTimer = setTimeout(() => {
+        wasDragging = false;
+      }, 120);
+    }
 
     if (dismissOffsetY !== 0) {
       const deltaY = event.clientY - point.startY;
@@ -748,14 +762,22 @@
       event.preventDefault();
       void toggleFullscreen();
     }
-    registerActivity();
+    if (controlsVisible) registerActivity();
   }
 
   function handleViewerClick(event: MouseEvent) {
+    if (wasDragging) {
+      wasDragging = false;
+      return;
+    }
     const target = event.target as HTMLElement;
-    if (target.closest('button, video, audio, .media-viewer-media')) return;
+    if (target.closest('button, input, select, textarea, video, audio, .media-viewer-controls')) return;
     controlsVisible = !controlsVisible;
-    if (controlsVisible) registerActivity();
+    if (controlsVisible) {
+      registerActivity();
+    } else if (controlsTimer) {
+      clearTimeout(controlsTimer);
+    }
   }
 
   $effect(() => {
@@ -763,7 +785,9 @@
     resetTransform();
     loadedWidth = 0;
     loadedHeight = 0;
-    registerActivity();
+    if (controlsVisible) {
+      registerActivity();
+    }
 
     for (const neighbor of [items[index - 1], items[index + 1]]) {
       if (neighbor?.kind === 'image') {
@@ -809,7 +833,7 @@
   aria-modal="true"
   aria-label={i18n.t('post.viewer_title')}
   tabindex="-1"
-  onmousemove={registerActivity}
+  onmousemove={() => { if (controlsVisible) registerActivity(); }}
   onclick={handleViewerClick}
   onkeydown={handleKeydown}
 >

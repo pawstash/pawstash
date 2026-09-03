@@ -204,6 +204,11 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
   if (isAttachmentVideo(file, file.path)) {
     const thumb = (file as any)?.thumbnail || (file as any)?.preview || (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
     if (thumb && typeof thumb === 'string') return thumb;
+    const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
+    const { config, driver } = resolveDriver(service, explicitProv);
+    if (config.id === 'onlyhaven') {
+      return driver.resolveThumbnailUrl(config, file.path);
+    }
     return '';
   }
   if (file.path.startsWith('/cloud_stream/')) {
@@ -220,23 +225,47 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
 
 export function postThumbnailUrl(post: Post): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
+  if (media?.path) {
+    const explicitProv = (post as any)?.provider_id || (post.extra as any)?.provider_id || (media as any)?.provider_id || (media?.extra as any)?.provider_id;
+    const { config, driver } = resolveDriver(post.service, explicitProv);
+    if (isAttachmentVideo(media, media.path) && config.id !== 'onlyhaven') {
+      const thumb = (media as any)?.thumbnail || (media as any)?.preview || (media.extra as any)?.thumbnail || (media.extra as any)?.preview;
+      if (thumb && typeof thumb === 'string') return thumb;
+      return null;
+    }
+    return driver.resolveThumbnailUrl(config, media.path);
+  }
+
   const thumbhash = (media as any)?.preview_thumbhash ||
     (media?.extra as any)?.preview_thumbhash ||
     (post.file as any)?.preview_thumbhash ||
     (post.file?.extra as any)?.preview_thumbhash ||
     (post.attachments?.[0] as any)?.preview_thumbhash ||
-    (post.attachments?.[0]?.extra as any)?.preview_thumbhash;
+    (post.attachments?.[0]?.extra as any)?.preview_thumbhash ||
+    (post.extra as any)?.preview_thumbhash;
 
   if (thumbhash) {
     const dataUrl = thumbHashToUrl(thumbhash);
     if (dataUrl) return dataUrl;
   }
 
-  if (!media?.path) return null;
+  return null;
+}
 
-  const explicitProv = (post as any)?.provider_id || (post.extra as any)?.provider_id;
-  const { config, driver } = resolveDriver(post.service, explicitProv);
-  return driver.resolveThumbnailUrl(config, media.path);
+export function postPlaceholderUrl(post: Post): string | null {
+  const media = post.file?.path ? post.file : post.attachments?.[0];
+  const thumbhash = (media as any)?.preview_thumbhash ||
+    (media?.extra as any)?.preview_thumbhash ||
+    (post.file as any)?.preview_thumbhash ||
+    (post.file?.extra as any)?.preview_thumbhash ||
+    (post.attachments?.[0] as any)?.preview_thumbhash ||
+    (post.attachments?.[0]?.extra as any)?.preview_thumbhash ||
+    (post.extra as any)?.preview_thumbhash;
+
+  if (thumbhash) {
+    return thumbHashToUrl(thumbhash);
+  }
+  return null;
 }
 
 export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: string }, service: string): string {
@@ -247,14 +276,16 @@ export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: stri
 }
 
 export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: string; ihash?: string }, service: string): string {
+  if (card.hash && card.hash.length >= 4) {
+    const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
+    const { config, driver } = resolveDriver(service);
+    return driver.resolveFancardThumbnailUrl(config, service, { hash: card.hash, ext });
+  }
   if (card.ihash) {
     const dataUrl = thumbHashToUrl(card.ihash);
     if (dataUrl) return dataUrl;
   }
-  if (!card.hash || card.hash.length < 4) return '';
-  const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
-  const { config, driver } = resolveDriver(service);
-  return driver.resolveFancardThumbnailUrl(config, service, { hash: card.hash, ext });
+  return '';
 }
 
 export function postAttachmentCount(post: Post): number {
@@ -345,6 +376,10 @@ export function isAttachmentImage(file?: Attachment | null, url?: string | null)
     ''
   ).toLowerCase();
   if (mime.includes('image')) return true;
+
+  if ((file as any)?.preview_thumbhash || (file?.extra as any)?.preview_thumbhash) {
+    if (!isAttachmentVideo(file, url) && !isAttachmentAudio(file, url)) return true;
+  }
 
   return false;
 }
@@ -559,9 +594,111 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
 
 export function extractCloudLinks(raw: string): string[] {
   if (!raw) return [];
-  const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
+  const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|mediafire\.com|catbox\.moe|gofile\.io|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
   const matches = raw.match(regex) || [];
   return [...new Set(matches)];
+}
+
+export interface PostFileCounts {
+  images: number;
+  videos: number;
+  audios: number;
+  archives: number;
+  documents: number;
+  clouds: number;
+  attachments: number;
+  total: number;
+}
+
+export function getPostFileCounts(post: Post): PostFileCounts {
+  const counts: PostFileCounts = {
+    images: 0,
+    videos: 0,
+    audios: 0,
+    archives: 0,
+    documents: 0,
+    clouds: 0,
+    attachments: 0,
+    total: 0
+  };
+
+  if (!post) return counts;
+
+  const knownAttachments = post.attachment_count ?? 0;
+  const hasLoadedAttachments = Array.isArray(post.attachments) && post.attachments.length > 0;
+
+  if (!hasLoadedAttachments && knownAttachments > 0) {
+    counts.attachments = knownAttachments;
+    counts.total = knownAttachments;
+    return counts;
+  }
+
+  const items: Attachment[] = [];
+  const seenKeys = new Set<string>();
+
+  const registerItem = (att?: Attachment | null) => {
+    if (!att) return;
+    const key = (
+      att.path ||
+      att.name ||
+      (att.extra as any)?.storage_key ||
+      (att as any)?.id ||
+      ''
+    ).toLowerCase();
+    if (key) {
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+    }
+    items.push(att);
+  };
+
+  registerItem(post.file);
+  if (Array.isArray(post.attachments)) {
+    for (const a of post.attachments) {
+      registerItem(a);
+    }
+  }
+
+  for (const item of items) {
+    const filename = (item.name || item.path || '').toLowerCase();
+    if (isAttachmentVideo(item, item.path || item.name)) {
+      counts.videos++;
+    } else if (isAttachmentAudio(item, item.path || item.name)) {
+      counts.audios++;
+    } else if (/\.(zip|rar|7z|tar|gz|tar\.gz|tar\.xz|bz2|xz|cbz|cbr)(?:$|[?#])/i.test(filename)) {
+      counts.archives++;
+    } else if (/\.(pdf|epub|txt|doc|docx|psd|clip|blend|fbx|obj|stl)(?:$|[?#])/i.test(filename)) {
+      counts.documents++;
+    } else if (isAttachmentImage(item, item.path || item.name)) {
+      counts.images++;
+    } else {
+      if ((item as any)?.preview_thumbhash || (item?.extra as any)?.preview_thumbhash) {
+        counts.images++;
+      } else {
+        counts.documents++;
+      }
+    }
+  }
+
+  if (post.embed && typeof post.embed === 'object') {
+    const embedStr = JSON.stringify(post.embed).toLowerCase();
+    if (embedStr.includes('youtube') || embedStr.includes('vimeo') || embedStr.includes('redgifs') || embedStr.includes('video')) {
+      if (counts.videos === 0) {
+        counts.videos++;
+      }
+    } else if (embedStr.includes('soundcloud') || embedStr.includes('spotify') || embedStr.includes('bandcamp') || embedStr.includes('audio')) {
+      if (counts.audios === 0) {
+        counts.audios++;
+      }
+    }
+  }
+
+  const contentText = (post.content || post.substring || '') + ' ' + JSON.stringify(post.embed || {});
+  const cloudLinks = extractCloudLinks(contentText);
+  counts.clouds = cloudLinks.length;
+
+  counts.total = counts.images + counts.videos + counts.audios + counts.archives + counts.documents + counts.clouds;
+  return counts;
 }
 
 export interface DownloadTarget {

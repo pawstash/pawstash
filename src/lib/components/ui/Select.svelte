@@ -15,6 +15,7 @@
     value: string | number;
     label: string;
     icon?: any;
+    color?: string;
   }
 
   interface Props {
@@ -35,6 +36,7 @@
     ariaLabel?: string;
     disabled?: boolean;
     align?: 'left' | 'right';
+    open?: boolean;
     trigger?: Snippet<[{ toggle: () => void; open: boolean; selectedLabel: string }]>;
   }
 
@@ -56,10 +58,19 @@
     ariaLabel,
     disabled = false,
     align = 'left',
+    open = $bindable(false),
     trigger
   }: Props = $props();
 
   let isOpen = $state(false);
+
+  $effect(() => {
+    isOpen = open;
+  });
+
+  $effect(() => {
+    open = isOpen;
+  });
   let containerEl = $state<HTMLDivElement | null>(null);
   let triggerEl = $state<HTMLButtonElement | HTMLDivElement | null>(null);
   let dropdownEl = $state<HTMLDivElement | null>(null);
@@ -323,6 +334,9 @@
               onclick={() => selectOption(opt.value)}
               use:ripple
             >
+              {#if opt.color}
+                <span class="option-color-dot" style:background={opt.color}></span>
+              {/if}
               <span class="option-label">{opt.label}</span>
               {#if active}
                 <IconCheckmark class="w-[15px] h-[15px] option-check" />
@@ -599,6 +613,15 @@
 
   .select-option.is-selected:hover {
     background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  }
+
+  .option-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 6px;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
   }
 
   .option-label {

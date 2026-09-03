@@ -76,6 +76,14 @@ pub struct AppSettings {
     pub smart_merge_attachments: bool,
     pub pawchive_hide_ai: bool,
     pub persist_in_app_favorites_locally: bool,
+    #[serde(default)]
+    pub disable_blur_placeholders: bool,
+    #[serde(default = "default_card_view_mode")]
+    pub card_view_mode: String,
+}
+
+fn default_card_view_mode() -> String {
+    "detailed".to_string()
 }
 
 impl Default for AppSettings {
@@ -138,6 +146,8 @@ impl Default for AppSettings {
             smart_merge_attachments: true,
             pawchive_hide_ai: false,
             persist_in_app_favorites_locally: true,
+            disable_blur_placeholders: false,
+            card_view_mode: "detailed".to_string(),
         }
     }
 }
@@ -535,6 +545,20 @@ impl AppSettings {
                 if p.image_prefix.is_none() {
                     p.image_prefix = Some("img".into());
                 }
+            } else if p.id == "coomer" || p.api_url.contains("coomer") {
+                p.id = "coomer".to_string();
+                if p.name.is_empty() {
+                    p.name = "Coomer".to_string();
+                }
+                if p.services.is_empty() {
+                    p.services = crate::api::providers::default_coomer_services();
+                }
+                if p.file_prefix.is_none() {
+                    p.file_prefix = Some("c1".into());
+                }
+                if p.image_prefix.is_none() {
+                    p.image_prefix = Some("img".into());
+                }
             } else if p.id == "onlyhaven" || p.api_url.contains("cum.st") {
                 p.id = "onlyhaven".to_string();
                 p.name = "OnlyHaven".to_string();
@@ -547,6 +571,12 @@ impl AppSettings {
                 if p.image_prefix.is_none() {
                     p.image_prefix = Some("img".into());
                 }
+            }
+        }
+        if !self.providers.iter().any(|p| p.id == "coomer") {
+            let defaults = crate::api::provider_manager::ProviderManager::default_configs();
+            if let Some(coomer) = defaults.into_iter().find(|p| p.id == "coomer") {
+                self.providers.push(coomer);
             }
         }
         if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
@@ -563,6 +593,62 @@ impl AppSettings {
                     self.pawchive_username = pawchive.username.clone();
                 }
             }
+        }
+    }
+
+    pub fn resolve_cookie_for_url(&self, url: &str) -> Option<String> {
+        let parsed = reqwest::Url::parse(url).ok()?;
+        let host = parsed.host_str()?.to_lowercase();
+
+        for p in &self.providers {
+            if p.session_cookie.trim().is_empty() {
+                continue;
+            }
+            if let Ok(api_u) = reqwest::Url::parse(&p.api_url) {
+                if let Some(api_h) = api_u.host_str() {
+                    let domain = api_h.trim_start_matches("www.").trim_start_matches("api.");
+                    let root_domain = domain
+                        .split('.')
+                        .rev()
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    if host == api_h
+                        || host.ends_with(&format!(".{domain}"))
+                        || (!root_domain.is_empty() && host.ends_with(&format!(".{root_domain}")))
+                    {
+                        return Some(p.session_cookie.clone());
+                    }
+                }
+            }
+            for fb in &p.fallback_urls {
+                if let Ok(fb_u) = reqwest::Url::parse(fb) {
+                    if let Some(fb_h) = fb_u.host_str() {
+                        let domain = fb_h.trim_start_matches("www.").trim_start_matches("api.");
+                        if host == fb_h || host.ends_with(&format!(".{domain}")) {
+                            return Some(p.session_cookie.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(ref file_u_str) = p.file_url {
+                if let Ok(file_u) = reqwest::Url::parse(file_u_str) {
+                    if let Some(file_h) = file_u.host_str() {
+                        if host == file_h {
+                            return Some(p.session_cookie.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.session_cookie.trim().is_empty() {
+            Some(self.session_cookie.clone())
+        } else {
+            None
         }
     }
 }
@@ -645,5 +731,27 @@ mod tests {
         assert!(restored.sync_pawchive_session);
         assert_eq!(restored.sync_pull_interval_seconds, 120);
         assert_eq!(restored.sync_push_interval_seconds, 30);
+    }
+
+    #[test]
+    fn test_resolve_cookie_for_url_multi_provider() {
+        let mut settings = AppSettings {
+            session_cookie: "pawchive_global_cookie".into(),
+            ..AppSettings::default()
+        };
+        settings.normalize();
+        if let Some(coomer) = settings.providers.iter_mut().find(|p| p.id == "coomer") {
+            coomer.session_cookie = "coomer_session_secret".into();
+        }
+
+        assert_eq!(
+            settings.resolve_cookie_for_url("https://c1.coomer.st/data/ab/cd/video.mp4"),
+            Some("coomer_session_secret".into())
+        );
+
+        assert_eq!(
+            settings.resolve_cookie_for_url("https://file.pawchive.pw/data/ab/cd/video.mp4"),
+            Some("pawchive_global_cookie".into())
+        );
     }
 }

@@ -35,6 +35,7 @@
         host.includes('iframe.ly') ||
         host.includes('mega.nz') ||
         host.includes('pawchive') ||
+        host.includes('coomer') ||
         host.includes('cum.st') ||
         host.includes('onlyhaven')
       );
@@ -67,6 +68,7 @@
       if (host.includes('qiwi.gg')) return 'qiwi';
       if (host.includes('send.cm')) return 'sendcm';
       if (host.includes('pawchive')) return 'pawchive';
+      if (host.includes('coomer')) return 'coomer';
       if (host.includes('cum.st') || host.includes('onlyhaven')) return 'onlyhaven';
       if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
       if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
@@ -280,7 +282,7 @@
   }
 
   const POST_PLATFORMS = new Set([
-    'patreon', 'fanbox', 'discord', 'onlyfans', 'fansly', 'pawchive', 'onlyhaven'
+    'patreon', 'fanbox', 'discord', 'onlyfans', 'fansly', 'candfans', 'pawchive', 'onlyhaven', 'coomer'
   ]);
 
   const CLOUD_PLATFORMS = new Set(['mega', 'dropbox', 'pixeldrain', 'googledrive']);
@@ -500,6 +502,7 @@
   .rich-content-root :global(a[data-link-platform='dropbox']) { --smart-link-color: #3b82f6; }
   .rich-content-root :global(a[data-link-platform='pixeldrain']) { --smart-link-color: #a855f7; }
   .rich-content-root :global(a[data-link-platform='googledrive']) { --smart-link-color: #10b981; }
+  .rich-content-root :global(a[data-link-platform='coomer']) { --smart-link-color: #f59e0b; }
 
   .rich-content-root :global(a[data-link-platform]:not([data-link-platform='external'])) {
     color: var(--smart-link-color);

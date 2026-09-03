@@ -204,10 +204,11 @@
     </button>
     <div class="grid-tile-meta">
       <span>{formatBytes(totalBytes)}</span>
-      <div class="grid-tile-meta-stats">
-        <span>{completedItems.length}/{items.length}</span>
-        {#if completedItems.length !== items.length}<span>{progress}%</span>{/if}
-      </div>
+      {#if completedItems.length !== items.length}
+        <div class="grid-tile-meta-stats">
+          <span>{progress}%</span>
+        </div>
+      {/if}
     </div>
   </div>
 

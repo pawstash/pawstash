@@ -15,6 +15,7 @@ pub struct LibraryCollection {
     pub parent_id: Option<String>,
     pub item_count: u64,
     pub is_system: bool,
+    pub color: Option<String>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct LibraryPostIdentity {
@@ -56,7 +57,15 @@ impl LibraryRepository {
 
     pub fn list_collections(&self) -> Result<Vec<LibraryCollection>, String> {
         let c = self.connection.lock().map_err(|e| e.to_string())?;
-        let mut s=c.prepare("SELECT c.id,c.kind,c.name,c.parent_id,c.is_system,COUNT(cp.post_id) FROM collections c LEFT JOIN collection_posts cp ON cp.collection_id=c.id GROUP BY c.id ORDER BY c.is_system DESC,c.position,c.name COLLATE NOCASE").map_err(|e|e.to_string())?;
+        let mut s = c
+            .prepare(
+                "SELECT c.id, c.kind, c.name, c.parent_id, c.is_system, COUNT(cp.post_id), c.color \
+                 FROM collections c \
+                 LEFT JOIN collection_posts cp ON cp.collection_id=c.id \
+                 GROUP BY c.id \
+                 ORDER BY c.is_system DESC, c.position, c.name COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
         let result = s
             .query_map([], |r| {
                 Ok(LibraryCollection {
@@ -66,6 +75,7 @@ impl LibraryRepository {
                     parent_id: r.get(3)?,
                     is_system: r.get::<_, i64>(4)? != 0,
                     item_count: r.get::<_, i64>(5)?.max(0) as u64,
+                    color: r.get(6)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -73,11 +83,16 @@ impl LibraryRepository {
             .map_err(|e| e.to_string());
         result
     }
-    pub fn create_stash(&self, name: &str) -> Result<LibraryCollection, String> {
+    pub fn create_stash(
+        &self,
+        name: &str,
+        color: Option<&str>,
+    ) -> Result<LibraryCollection, String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 100 {
             return Err("Stash name must contain between 1 and 100 characters".into());
         }
+        let clean_color = color.map(|s| s.trim()).filter(|s| !s.is_empty());
         let id = Uuid::new_v4().to_string();
         let c = self.connection.lock().map_err(|e| e.to_string())?;
         let pos: i64 = c
@@ -88,8 +103,8 @@ impl LibraryRepository {
             )
             .map_err(|e| e.to_string())?;
         c.execute(
-            "INSERT INTO collections(id,kind,name,position,is_system) VALUES(?1,'stash',?2,?3,0)",
-            params![id, name, pos],
+            "INSERT INTO collections(id,kind,name,position,is_system,color) VALUES(?1,'stash',?2,?3,0,?4)",
+            params![id, name, pos, clean_color],
         )
         .map_err(|e| e.to_string())?;
         Ok(LibraryCollection {
@@ -99,7 +114,57 @@ impl LibraryRepository {
             parent_id: None,
             item_count: 0,
             is_system: false,
+            color: clean_color.map(String::from),
         })
+    }
+
+    pub fn update_stash(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        color: Option<Option<&str>>,
+    ) -> Result<LibraryCollection, String> {
+        if id == INBOX_COLLECTION_ID {
+            return Err("The Inbox collection cannot be modified".into());
+        }
+        let c = self.connection.lock().map_err(|e| e.to_string())?;
+        if let Some(n) = name {
+            let n = n.trim();
+            if n.is_empty() || n.chars().count() > 100 {
+                return Err("Stash name must contain between 1 and 100 characters".into());
+            }
+            c.execute(
+                "UPDATE collections SET name=?1, updated_at=CURRENT_TIMESTAMP WHERE id=?2 AND is_system=0",
+                params![n, id],
+            ).map_err(|e| e.to_string())?;
+        }
+        if let Some(col_opt) = color {
+            let clean_col = col_opt.map(|s| s.trim()).filter(|s| !s.is_empty());
+            c.execute(
+                "UPDATE collections SET color=?1, updated_at=CURRENT_TIMESTAMP WHERE id=?2 AND is_system=0",
+                params![clean_col, id],
+            ).map_err(|e| e.to_string())?;
+        }
+
+        let mut s = c.prepare(
+            "SELECT c.id, c.kind, c.name, c.parent_id, c.is_system, COUNT(cp.post_id), c.color \
+             FROM collections c \
+             LEFT JOIN collection_posts cp ON cp.collection_id=c.id \
+             WHERE c.id=?1 \
+             GROUP BY c.id",
+        ).map_err(|e| e.to_string())?;
+        s.query_row(params![id], |r| {
+            Ok(LibraryCollection {
+                id: r.get(0)?,
+                kind: r.get(1)?,
+                name: r.get(2)?,
+                parent_id: r.get(3)?,
+                is_system: r.get::<_, i64>(4)? != 0,
+                item_count: r.get::<_, i64>(5)?.max(0) as u64,
+                color: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())
     }
     pub fn delete_stash(&self, id: &str) -> Result<bool, String> {
         if id == INBOX_COLLECTION_ID {
@@ -352,9 +417,9 @@ mod tests {
     #[test]
     fn reorder_stashes_persists_order() {
         let r = LibraryRepository::in_memory();
-        let s1 = r.create_stash("First").unwrap();
-        let s2 = r.create_stash("Second").unwrap();
-        let s3 = r.create_stash("Third").unwrap();
+        let s1 = r.create_stash("First", None).unwrap();
+        let s2 = r.create_stash("Second", Some("#3b82f6")).unwrap();
+        let s3 = r.create_stash("Third", None).unwrap();
 
         let initial = r.list_collections().unwrap();
         let initial_stashes: Vec<_> = initial.iter().filter(|c| c.kind == "stash").collect();

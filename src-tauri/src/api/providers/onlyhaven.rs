@@ -4,6 +4,7 @@ use super::traits::{
 use crate::api::models::*;
 use async_trait::async_trait;
 use base64::prelude::*;
+use futures_util::future::join_all;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
@@ -275,12 +276,21 @@ enum OnlyHavenSinglePostResponse {
 impl OnlyHavenPostRow {
     fn into_post(self, default_user: &str, provider_id: &str) -> Post {
         let user = self.creator_id.unwrap_or_else(|| default_user.to_string());
-        let attachments: Vec<Attachment> = self
-            .attachments
-            .unwrap_or_default()
+        let raw_attachments = self.attachments.unwrap_or_default();
+        let total_raw = raw_attachments.len();
+        let locked_count = raw_attachments
+            .iter()
+            .filter(|a| a.locked.unwrap_or(false))
+            .count();
+        let is_locked = locked_count > 0 && (locked_count == total_raw);
+        let locked_thumbhash = raw_attachments
+            .iter()
+            .find_map(|a| a.preview_thumbhash.clone());
+
+        let attachments: Vec<Attachment> = raw_attachments
             .into_iter()
-            .filter(|a| !a.locked.unwrap_or(false))
             .map(|a| {
+                let is_att_locked = a.locked.unwrap_or(false);
                 let storage_key = a
                     .storage_key
                     .clone()
@@ -302,6 +312,9 @@ impl OnlyHavenPostRow {
                     .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
 
                 let mut extra = HashMap::new();
+                if is_att_locked {
+                    extra.insert("locked".to_string(), Value::Bool(true));
+                }
                 if let Some(th) = a.preview_thumbhash {
                     extra.insert("preview_thumbhash".to_string(), Value::String(th));
                 }
@@ -332,7 +345,17 @@ impl OnlyHavenPostRow {
             })
             .collect();
 
-        let file = attachments.first().cloned();
+        let file = attachments
+            .iter()
+            .find(|a| {
+                !a.extra
+                    .get("locked")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    && a.path.is_some()
+            })
+            .cloned()
+            .or_else(|| attachments.first().cloned());
         let att_count = attachments.len() as u64;
         let published_str = self.published.map(|ts| ts.to_string());
         let added_str = self.added.map(|ts| ts.to_string());
@@ -363,6 +386,20 @@ impl OnlyHavenPostRow {
             extra.insert("creator_name".to_string(), Value::String(cn.clone()));
             extra.insert("creatorName".to_string(), Value::String(cn.clone()));
             extra.insert("username".to_string(), Value::String(cn.clone()));
+        }
+        if is_locked {
+            extra.insert("is_locked".to_string(), Value::Bool(true));
+        }
+        if locked_count > 0 {
+            extra.insert(
+                "locked_attachments_count".to_string(),
+                Value::Number(locked_count.into()),
+            );
+        }
+        if let Some(th) = locked_thumbhash {
+            if !extra.contains_key("preview_thumbhash") {
+                extra.insert("preview_thumbhash".to_string(), Value::String(th));
+            }
         }
         extra.insert(
             "provider_id".to_string(),
@@ -395,6 +432,9 @@ impl OnlyHavenPostRow {
             _ => None,
         });
 
+        let post_prev = next;
+        let post_next = prev;
+
         let mut post = Post {
             id: self.id,
             user,
@@ -416,8 +456,8 @@ impl OnlyHavenPostRow {
             preview_state: None,
             has_full: Some(true),
             detail_fetched: Some(false),
-            next,
-            prev,
+            next: post_next,
+            prev: post_prev,
             favorite_count: self.bookmarked,
             attachment_count: Some(att_count),
             extra,
@@ -609,10 +649,52 @@ impl SourceProvider for OnlyHavenProvider {
     }
 
     async fn fetch_creators(&self) -> Result<Vec<Creator>, String> {
-        let path = "/api/v1/creators";
-        let res: OnlyHavenListResponse<OnlyHavenCreatorRow> = self.request(path).await?;
-        let rows = res.creators.unwrap_or_default();
-        Ok(rows.into_iter().map(Creator::from).collect())
+        let mut all_rows: Vec<OnlyHavenCreatorRow> = Vec::new();
+        let chunk_size = 10;
+        let max_pages = 30; // Up to 1,500 creators concurrently fetched
+
+        for batch_start in (0..max_pages).step_by(chunk_size) {
+            let tasks: Vec<_> = (batch_start..std::cmp::min(batch_start + chunk_size, max_pages))
+                .map(|page| {
+                    let offset = page * 50;
+                    let path = format!("/api/v1/creators?n=50&o={offset}");
+                    async move {
+                        let res: Result<OnlyHavenListResponse<OnlyHavenCreatorRow>, String> =
+                            self.request(&path).await;
+                        res.map(|r| r.creators.unwrap_or_default())
+                    }
+                })
+                .collect();
+
+            let results: Vec<Result<Vec<OnlyHavenCreatorRow>, String>> = join_all(tasks).await;
+            let mut stop = false;
+            for res in results {
+                match res {
+                    Ok(rows) => {
+                        if rows.len() < 50 {
+                            stop = true;
+                        }
+                        all_rows.extend(rows);
+                    }
+                    Err(_) => {
+                        stop = true;
+                    }
+                }
+            }
+            if stop || all_rows.is_empty() {
+                break;
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut creators = Vec::new();
+        for row in all_rows {
+            let key = format!("{}:{}", row.service.to_lowercase(), row.id.to_lowercase());
+            if seen.insert(key) {
+                creators.push(Creator::from(row));
+            }
+        }
+        Ok(creators)
     }
 
     async fn fetch_creator_profile(
@@ -1149,5 +1231,50 @@ mod tests {
             provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2"),
             "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
         );
+    }
+
+    #[test]
+    fn test_onlyhaven_prev_next_normalization() {
+        let raw_json = r#"{
+            "id": "950597293931769856",
+            "service": "fansly",
+            "creatorId": "665110462043533312",
+            "title": null,
+            "caption": "💙",
+            "prev": { "id": "949880048393932800" },
+            "next": null
+        }"#;
+        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
+        let post = row.into_post("665110462043533312", "onlyhaven");
+        assert_eq!(post.prev, None);
+        assert_eq!(post.next.as_deref(), Some("949880048393932800"));
+    }
+
+    #[test]
+    fn test_onlyhaven_locked_attachments_preserved() {
+        let raw_json = r#"{
+            "id": "917213282249502720",
+            "service": "fansly",
+            "creatorId": "717101518569873409",
+            "title": null,
+            "caption": "Audio RP",
+            "attachments": [
+                {
+                    "locked": true,
+                    "position": 0,
+                    "externalId": "917212607612474548",
+                    "type": "audio",
+                    "priceCents": 15000
+                }
+            ]
+        }"#;
+        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
+        let post = row.into_post("717101518569873409", "onlyhaven");
+        let attachments = post.attachments.expect("attachments should be present");
+        assert_eq!(attachments.len(), 1);
+        let att = &attachments[0];
+        assert_eq!(att.extra.get("locked").and_then(Value::as_bool), Some(true));
+        assert_eq!(att.extra.get("kind").and_then(Value::as_str), Some("audio"));
+        assert!(post.file.is_some());
     }
 }

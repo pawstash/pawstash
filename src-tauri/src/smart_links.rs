@@ -151,7 +151,7 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
-    if (host_matches(&host, "cum.st") || host.contains("pawchive"))
+    if (host_matches(&host, "cum.st") || host.contains("pawchive") || host.contains("coomer"))
         && segments.len() >= 5
         && matches!(segments[1], "user" | "server" | "channel")
         && segments[3] == "post"
@@ -247,7 +247,7 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
         .filter(|segment| !segment.is_empty())
         .collect();
 
-    if (host_matches(&host, "cum.st") || host.contains("pawchive"))
+    if (host_matches(&host, "cum.st") || host.contains("pawchive") || host.contains("coomer"))
         && segments.len() >= 3
         && matches!(segments[1], "user" | "server" | "channel")
     {
@@ -1065,6 +1065,28 @@ mod tests {
                 creator_id: "".into(),
                 post_id: "130382350".into()
             }
+        );
+
+        let coomer_post_link = parse_external_post_link(
+            "https://coomer.st/onlyfans/user/hotcurvyjasmine/post/2037748208",
+        );
+        assert_eq!(
+            coomer_post_link,
+            Some(ExternalPostLink {
+                service: "onlyfans".into(),
+                post_id: "2037748208".into(),
+                creator_hint: Some("hotcurvyjasmine".into()),
+            })
+        );
+
+        let coomer_creator_link =
+            parse_external_creator_link("https://coomer.st/fansly/user/800702847065796609");
+        assert_eq!(
+            coomer_creator_link,
+            Some(ExternalCreatorLink {
+                service: "fansly".into(),
+                creator_hint: "800702847065796609".into(),
+            })
         );
     }
 }

@@ -14,7 +14,8 @@ import {
   apiRemoveLibraryPostFromStash,
   apiRenameLibraryStash,
   apiReorderLibraryStashes,
-  apiSaveLibraryPost
+  apiSaveLibraryPost,
+  apiUpdateLibraryStash
 } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 
@@ -249,10 +250,16 @@ export class LibraryState {
     return this.isSaved(post) ? this.remove(post) : this.save(post);
   }
 
-  async createStash(name: string) {
-    const collection = await apiCreateLibraryStash(name);
+  async createStash(name: string, color?: string | null) {
+    const collection = await apiCreateLibraryStash(name, color);
     this.collections = [...this.collections, collection];
     return collection;
+  }
+
+  async updateStash(collectionId: string, updates: { name?: string; color?: string | null }) {
+    const updated = await apiUpdateLibraryStash(collectionId, updates);
+    this.collections = this.collections.map((c) => (c.id === collectionId ? updated : c));
+    return updated;
   }
 
   async renameStash(collectionId: string, name: string) {

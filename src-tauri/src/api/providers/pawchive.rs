@@ -192,7 +192,7 @@ impl PawchiveClient {
         );
         headers.insert(
             ACCEPT,
-            HeaderValue::from_static("application/json, text/plain, */*"),
+            HeaderValue::from_static("text/css, application/json, text/plain, */*"),
         );
         if let Some(cookie) = Self::cookie_header(&settings.session_cookie) {
             headers.insert(COOKIE, cookie);
@@ -1114,12 +1114,21 @@ impl PawchiveClient {
 }
 
 pub struct PawchiveProvider {
+    id: String,
+    name: String,
     config: Arc<RwLock<ProviderConfig>>,
     client: Arc<PawchiveClient>,
 }
 
 impl PawchiveProvider {
     pub fn new(config: ProviderConfig) -> Result<Self, String> {
+        let id = config.id.clone();
+        let name = if config.name.trim().is_empty() {
+            "Pawchive".to_string()
+        } else {
+            config.name.clone()
+        };
+
         let app_settings = AppSettings {
             api_domain: config.api_url.clone(),
             file_domain: config.file_url.clone().unwrap_or_default(),
@@ -1130,6 +1139,8 @@ impl PawchiveProvider {
 
         let client = Arc::new(PawchiveClient::new(app_settings)?);
         Ok(Self {
+            id,
+            name,
             config: Arc::new(RwLock::new(config)),
             client,
         })
@@ -1139,11 +1150,11 @@ impl PawchiveProvider {
 #[async_trait]
 impl SourceProvider for PawchiveProvider {
     fn id(&self) -> &str {
-        "pawchive"
+        &self.id
     }
 
     fn name(&self) -> &str {
-        "Pawchive"
+        &self.name
     }
 
     fn config(&self) -> ProviderConfig {
@@ -1203,7 +1214,15 @@ impl SourceProvider for PawchiveProvider {
     }
 
     async fn fetch_creators(&self) -> Result<Vec<Creator>, String> {
-        self.client.fetch_creators().await
+        let mut list = self.client.fetch_creators().await?;
+        let prov_id = self.id().to_string();
+        for c in &mut list {
+            c.extra.insert(
+                "provider_id".to_string(),
+                serde_json::Value::String(prov_id.clone()),
+            );
+        }
+        Ok(list)
     }
 
     async fn fetch_creator_profile(
@@ -1215,6 +1234,11 @@ impl SourceProvider for PawchiveProvider {
             .client
             .fetch_creator_profile(service, creator_id)
             .await?;
+        let mut extra = prof.extra;
+        extra.insert(
+            "provider_id".to_string(),
+            serde_json::Value::String(self.id().to_string()),
+        );
         Ok(Creator {
             id: prof.id,
             name: prof.name,
@@ -1225,7 +1249,7 @@ impl SourceProvider for PawchiveProvider {
             updated: None,
             favorited: prof.favorited,
             ever_imported: prof.ever_imported,
-            extra: prof.extra,
+            extra,
         })
     }
 
@@ -1270,9 +1294,18 @@ impl SourceProvider for PawchiveProvider {
         offset: u32,
         query: Option<&str>,
     ) -> Result<Vec<Post>, String> {
-        self.client
+        let mut posts = self
+            .client
             .fetch_creator_posts(service, creator_id, query, offset)
-            .await
+            .await?;
+        let prov_id = self.id().to_string();
+        for p in &mut posts {
+            p.extra.insert(
+                "provider_id".to_string(),
+                serde_json::Value::String(prov_id.clone()),
+            );
+        }
+        Ok(posts)
     }
 
     async fn fetch_post(
@@ -1282,7 +1315,13 @@ impl SourceProvider for PawchiveProvider {
         post_id: &str,
     ) -> Result<Option<Post>, String> {
         match self.client.fetch_post(service, creator_id, post_id).await {
-            Ok(post) => Ok(Some(post)),
+            Ok(mut post) => {
+                post.extra.insert(
+                    "provider_id".to_string(),
+                    serde_json::Value::String(self.id().to_string()),
+                );
+                Ok(Some(post))
+            }
             Err(e) if e.contains("404") => Ok(None),
             Err(e) => Err(e),
         }
@@ -1304,7 +1343,15 @@ impl SourceProvider for PawchiveProvider {
         query: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        self.client.fetch_recent_posts(query, offset).await
+        let mut posts = self.client.fetch_recent_posts(query, offset).await?;
+        let prov_id = self.id().to_string();
+        for p in &mut posts {
+            p.extra.insert(
+                "provider_id".to_string(),
+                serde_json::Value::String(prov_id.clone()),
+            );
+        }
+        Ok(posts)
     }
 
     async fn fetch_popular_posts(
@@ -1313,7 +1360,18 @@ impl SourceProvider for PawchiveProvider {
         date: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        self.client.fetch_popular_posts(period, date, offset).await
+        let mut posts = self
+            .client
+            .fetch_popular_posts(period, date, offset)
+            .await?;
+        let prov_id = self.id().to_string();
+        for p in &mut posts {
+            p.extra.insert(
+                "provider_id".to_string(),
+                serde_json::Value::String(prov_id.clone()),
+            );
+        }
+        Ok(posts)
     }
 
     async fn fetch_post_comments(
@@ -1367,7 +1425,7 @@ impl SourceProvider for PawchiveProvider {
         };
 
         ProviderAuthSchema {
-            provider_id: "pawchive".to_string(),
+            provider_id: self.id().to_string(),
             supports_auth: true,
             supports_remote_favorites: true,
             supports_push_favorites: true,
@@ -1400,6 +1458,8 @@ impl SourceProvider for PawchiveProvider {
             .trim_start_matches("data/")
             .trim_start_matches('/');
 
+        let default_file_prefix = conf.file_prefix.as_deref().unwrap_or("file");
+
         if let Some(srv) = server.filter(|s| !s.trim().is_empty()) {
             let srv = srv.trim();
             let base = if srv.starts_with("http://") || srv.starts_with("https://") {
@@ -1412,7 +1472,9 @@ impl SourceProvider for PawchiveProvider {
                     .as_deref()
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "file"));
+                    .unwrap_or_else(|| {
+                        super::traits::derive_subdomain_url(&conf.api_url, default_file_prefix)
+                    });
 
                 if let Ok(parsed) = Url::parse(&file_base) {
                     let host = parsed.host_str().unwrap_or("");
@@ -1444,7 +1506,7 @@ impl SourceProvider for PawchiveProvider {
             return format!("{base}/data/{clean}");
         }
 
-        let base = super::traits::derive_subdomain_url(&conf.api_url, "file");
+        let base = super::traits::derive_subdomain_url(&conf.api_url, default_file_prefix);
         format!("{base}/data/{clean}")
     }
 
@@ -1455,6 +1517,8 @@ impl SourceProvider for PawchiveProvider {
             .trim_start_matches("data/")
             .trim_start_matches('/');
 
+        let default_image_prefix = conf.image_prefix.as_deref().unwrap_or("img");
+
         if let Some(img_url) = conf.image_url.as_deref().filter(|s| !s.trim().is_empty()) {
             let base = if img_url.starts_with("http://") || img_url.starts_with("https://") {
                 img_url.trim_end_matches('/').to_string()
@@ -1464,7 +1528,7 @@ impl SourceProvider for PawchiveProvider {
             return format!("{base}/thumbnail/data/{clean}");
         }
 
-        let base = super::traits::derive_subdomain_url(&conf.api_url, "img");
+        let base = super::traits::derive_subdomain_url(&conf.api_url, default_image_prefix);
         format!("{base}/thumbnail/data/{clean}")
     }
 
@@ -1658,6 +1722,42 @@ mod tests {
             fallback_provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
             "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
         );
+    }
+
+    #[test]
+    fn test_coomer_provider_parametric_configuration() {
+        let coomer_conf = ProviderConfig {
+            id: "coomer".into(),
+            name: "Coomer".into(),
+            enabled: true,
+            api_url: "https://coomer.st".into(),
+            fallback_urls: vec!["https://coomer.su".into()],
+            file_url: Some("https://c1.coomer.st".into()),
+            image_url: Some("https://img.coomer.st".into()),
+            file_prefix: Some("c1".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: String::new(),
+            username: String::new(),
+            services: vec!["onlyfans".into(), "fansly".into(), "candfans".into()],
+            is_custom: false,
+            priority: 2,
+        };
+        let provider = PawchiveProvider::new(coomer_conf).unwrap();
+        assert_eq!(provider.id(), "coomer");
+        assert_eq!(provider.name(), "Coomer");
+        assert_eq!(
+            provider.resolve_media_url("/data/12/34/clip.mp4", None),
+            "https://c1.coomer.st/data/12/34/clip.mp4"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("/data/12/34/clip.jpg"),
+            "https://img.coomer.st/thumbnail/data/12/34/clip.jpg"
+        );
+        let auth = provider.auth_schema();
+        assert_eq!(auth.provider_id, "coomer");
+        assert!(auth.supports_auth);
+        assert!(auth.supports_remote_favorites);
+        assert!(auth.supports_push_favorites);
     }
 
     #[test]

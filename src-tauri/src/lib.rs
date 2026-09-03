@@ -275,6 +275,7 @@ pub fn run() {
             search_posts,
             list_library_collections,
             create_library_stash,
+            update_library_stash,
             delete_library_stash,
             rename_library_stash,
             reorder_library_stashes,

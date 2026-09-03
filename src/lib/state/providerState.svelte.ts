@@ -104,18 +104,16 @@ class ProviderState {
     const matches = this.providers
       .filter((p) => p.enabled && (p.services.length === 0 || p.services.some((srv) => srv.toLowerCase() === s)))
       .sort((a, b) => a.priority - b.priority);
-    if (matches.length > 0) return matches;
-    return this.providers.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
+    return matches;
   }
 
   getProviderIdForService(service?: string): string {
-    if (!service) return this.providers[0]?.id || '';
+    if (!service) return this.providers.find((p) => p.enabled)?.id || '';
     const s = service.toLowerCase();
     const match = this.providers.find((p) =>
-      p.services.some((srv) => srv.toLowerCase() === s)
+      p.enabled && (p.services.length === 0 || p.services.some((srv) => srv.toLowerCase() === s))
     );
-    if (match) return match.id;
-    return this.providers[0]?.id || '';
+    return match?.id || '';
   }
 
   getProviderById(id: string): ProviderConfig | undefined {

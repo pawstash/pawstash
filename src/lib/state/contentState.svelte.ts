@@ -205,7 +205,7 @@ export class ContentState {
     if (entry.loaded || entry.loading) return;
 
     const cachedName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
-    const profile = entry.profile && entry.profile.name !== creatorId ? entry.profile : {
+    const placeholderProfile: CreatorProfile = entry.profile && entry.profile.name !== creatorId ? entry.profile : {
       id: creatorId,
       name: cachedName || entry.profile?.name || creatorId,
       service,
@@ -220,27 +220,23 @@ export class ContentState {
 
     this.creators[key] = {
       ...entry,
-      profile,
+      profile: placeholderProfile,
       loading: true,
       error: null
     };
 
     try {
-      void apiFetchCreatorProfile(service, creatorId).then((p) => {
-        if (p && p.name && p.name !== creatorId) {
-          const cur = this.creators[key] ?? entry;
-          this.creators[key] = {
-            ...cur,
-            profile: p
-          };
-        }
-      }).catch(() => {});
+      const [profileResult, postsResult] = await Promise.allSettled([
+        apiFetchCreatorProfile(service, creatorId),
+        apiFetchCreatorPosts(service, creatorId, undefined, 0)
+      ]);
 
-      const posts = await apiFetchCreatorPosts(service, creatorId, undefined, 0);
-      const cur = this.creators[key] ?? entry;
-      let finalProfile = cur.profile || profile;
+      let finalProfile: CreatorProfile = placeholderProfile;
+      if (profileResult.status === 'fulfilled' && profileResult.value) {
+        finalProfile = profileResult.value;
+      }
 
-      if (finalProfile && (finalProfile.name === creatorId || !finalProfile.name)) {
+      if (finalProfile.name === creatorId || !finalProfile.name) {
         const foundName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
         if (foundName && foundName !== creatorId) {
           finalProfile = { ...finalProfile, name: foundName };
@@ -260,6 +256,12 @@ export class ContentState {
         }
       }
 
+      if (postsResult.status === 'rejected') {
+        throw postsResult.reason;
+      }
+
+      const posts = postsResult.value;
+      const cur = this.creators[key] ?? entry;
       this.creators[key] = {
         ...cur,
         profile: finalProfile,
@@ -294,20 +296,44 @@ export class ContentState {
     };
 
     try {
-      void apiFetchCreatorProfile(service, creatorId).then((p) => {
-        if (p && p.name && p.name !== creatorId) {
-          const cur = this.creators[key] ?? entry;
-          this.creators[key] = {
-            ...cur,
-            profile: p
-          };
-        }
-      }).catch(() => {});
+      const [profileResult, postsResult] = await Promise.allSettled([
+        apiFetchCreatorProfile(service, creatorId),
+        apiFetchCreatorPosts(service, creatorId, undefined, 0)
+      ]);
 
-      const posts = await apiFetchCreatorPosts(service, creatorId, undefined, 0);
+      let finalProfile: CreatorProfile = entry.profile || {
+        id: creatorId,
+        name: creatorId,
+        service,
+        public_id: undefined,
+        relation_id: undefined,
+        indexed: undefined,
+        updated: undefined,
+        favorited: 0,
+        ever_imported: false,
+        extra: {}
+      };
+
+      if (profileResult.status === 'fulfilled' && profileResult.value) {
+        finalProfile = profileResult.value;
+      }
+
+      if (finalProfile.name === creatorId || !finalProfile.name) {
+        const foundName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
+        if (foundName && foundName !== creatorId) {
+          finalProfile = { ...finalProfile, name: foundName };
+        }
+      }
+
+      if (postsResult.status === 'rejected') {
+        throw postsResult.reason;
+      }
+
+      const posts = postsResult.value;
       const cur = this.creators[key] ?? entry;
       this.creators[key] = {
         ...cur,
+        profile: finalProfile,
         posts,
         offset: PAGE_SIZE,
         hasMore: posts.length === PAGE_SIZE,
@@ -358,6 +384,18 @@ export class ContentState {
       logger.error(`Failed to load more posts for creator ${service}:${creatorId} at offset ${entry.offset}`, error);
     }
   }
+
+  clearCreatorsCache() {
+    this.creators = {};
+    logger.info('[Content] Cleared creators cache');
+  }
+
+  clearAllCache() {
+    this.posts = {};
+    this.creators = {};
+    logger.info('[Content] Cleared all content cache');
+  }
 }
 
 export const contentState = new ContentState();
+

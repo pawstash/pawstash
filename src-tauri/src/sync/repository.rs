@@ -41,6 +41,8 @@ pub struct CollectionRecord {
     pub position: i64,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -240,7 +242,7 @@ impl SyncRepository {
         // 1. Collections (non-system)
         let collections = collect(
             &tx,
-            "SELECT id,kind,parent_id,name,position,created_at,updated_at FROM collections WHERE is_system=0",
+            "SELECT id,kind,parent_id,name,position,created_at,updated_at,color FROM collections WHERE is_system=0",
             |r| {
                 Ok(CollectionRecord {
                     id: r.get(0)?,
@@ -250,6 +252,7 @@ impl SyncRepository {
                     position: r.get(4)?,
                     created_at: r.get(5)?,
                     updated_at: r.get(6)?,
+                    color: r.get(7)?,
                 })
             },
         )?;
@@ -965,13 +968,13 @@ impl SyncRepository {
                 let rec: CollectionRecord =
                     serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
                 tx.execute(
-                    "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at)
-                     VALUES(?1,?2,?3,?4,?5,0,?6,?7)
+                    "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at,color)
+                     VALUES(?1,?2,?3,?4,?5,0,?6,?7,?8)
                      ON CONFLICT(id) DO UPDATE SET
                        kind=excluded.kind, parent_id=excluded.parent_id, name=excluded.name,
-                       position=excluded.position, updated_at=excluded.updated_at
+                       position=excluded.position, updated_at=excluded.updated_at, color=excluded.color
                        WHERE collections.updated_at <= excluded.updated_at",
-                    params![rec.id, rec.kind, rec.parent_id, rec.name, rec.position, rec.created_at, rec.updated_at],
+                    params![rec.id, rec.kind, rec.parent_id, rec.name, rec.position, rec.created_at, rec.updated_at, rec.color],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -1221,6 +1224,7 @@ mod tests {
             position: 0,
             created_at: "2026-08-15T00:00:00Z".into(),
             updated_at: "2026-08-15T00:00:00Z".into(),
+            color: None,
         };
         let bytes = serde_json::to_vec(&col).unwrap();
 

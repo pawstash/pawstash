@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS collections (
     position INTEGER NOT NULL DEFAULT 0,
     is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    color TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_collections_parent_position ON collections(parent_id, position, id);
 
@@ -263,7 +264,29 @@ pub fn prepare_connection(connection: &mut Connection) -> Result<(), String> {
 }
 
 pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
-    connection.execute_batch(SCHEMA).map_err(|e| e.to_string())
+    connection
+        .execute_batch(SCHEMA)
+        .map_err(|e| e.to_string())?;
+
+    let has_color: bool = connection
+        .prepare("PRAGMA table_info(collections)")
+        .and_then(|mut stmt| {
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let name: String = row.get(1)?;
+                if name == "color" {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .unwrap_or(false);
+
+    if !has_color {
+        let _ = connection.execute("ALTER TABLE collections ADD COLUMN color TEXT", []);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

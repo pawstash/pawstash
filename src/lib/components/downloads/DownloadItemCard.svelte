@@ -213,6 +213,7 @@
             class:active={playMenuOpen}
             type="button"
             onclick={(e) => { e.stopPropagation(); toggle(e); }}
+            use:ripple
             use:tooltip={i18n.t('downloads.open_externally')}
             aria-label={i18n.t('downloads.open_externally')}
           >

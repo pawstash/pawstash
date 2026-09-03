@@ -13,6 +13,7 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import {
     apiFetchCreatorArtworkDataUrl,
+    apiFetchCreatorProfile,
     apiFetchCreatorPosts,
     apiFetchCreatorLinks,
     apiFetchSimilarCreators,
@@ -501,6 +502,15 @@
 
   $effect(() => {
     if (creatorName === creatorId) {
+      void apiFetchCreatorProfile(service, creatorId).then((p) => {
+        if (p && p.name && p.name !== creatorId) {
+          const key = creatorCacheKey(service, creatorId);
+          const cur = contentState.creators[key];
+          if (cur) {
+            contentState.creators[key] = { ...cur, profile: p };
+          }
+        }
+      }).catch(() => {});
       void creatorsState.load();
     }
   });

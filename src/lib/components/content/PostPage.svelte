@@ -44,6 +44,7 @@
   import RichContent from './RichContent.svelte';
   import PostPoll from './PostPoll.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
+  import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
   import IconCloud from '~icons/fluent/cloud-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
@@ -161,42 +162,91 @@
     return creatorPosts.findIndex((p) => normalizePostId(p.id) === currentId);
   });
 
-  let effectivePrevId = $derived.by(() => {
+  const currentNormId = $derived(normalizePostId(postId));
+
+  let candidateNewerId = $derived.by(() => {
     const fromPost = normalizePostId(post?.prev);
-    if (fromPost) return fromPost;
+    if (fromPost && fromPost !== currentNormId) return fromPost;
     if (currentPostIndexInCreator > 0) {
-      return normalizePostId(creatorPosts[currentPostIndexInCreator - 1].id);
+      const cand = normalizePostId(creatorPosts[currentPostIndexInCreator - 1]?.id);
+      if (cand && cand !== currentNormId) return cand;
     }
     return '';
   });
 
-  let effectiveNextId = $derived.by(() => {
+  let candidateOlderId = $derived.by(() => {
     const fromPost = normalizePostId(post?.next);
-    if (fromPost) return fromPost;
+    if (fromPost && fromPost !== currentNormId) return fromPost;
     if (currentPostIndexInCreator >= 0 && currentPostIndexInCreator < creatorPosts.length - 1) {
-      return normalizePostId(creatorPosts[currentPostIndexInCreator + 1].id);
+      const cand = normalizePostId(creatorPosts[currentPostIndexInCreator + 1]?.id);
+      if (cand && cand !== currentNormId) return cand;
     }
     return '';
+  });
+
+  let effectiveNewerId = $derived.by(() => {
+    if (candidateNewerId && candidateOlderId && candidateNewerId === candidateOlderId) {
+      if (currentPostIndexInCreator === 0) {
+        return '';
+      }
+      if (currentPostIndexInCreator === creatorPosts.length - 1) {
+        return candidateNewerId;
+      }
+      return '';
+    }
+    return candidateNewerId;
+  });
+
+  let effectiveOlderId = $derived.by(() => {
+    if (candidateNewerId && candidateOlderId && candidateNewerId === candidateOlderId) {
+      if (currentPostIndexInCreator === 0) {
+        return candidateOlderId;
+      }
+      if (currentPostIndexInCreator === creatorPosts.length - 1) {
+        return '';
+      }
+      return candidateOlderId;
+    }
+    return candidateOlderId;
   });
 
   let newerPost = $derived.by(() => {
-    if (!effectivePrevId) return null;
-    const prevKey = postCacheKey(service, creatorId, effectivePrevId);
-    const cached = contentState.posts[prevKey]?.post;
-    if (cached?.title) return cached;
-    return creatorPosts.find((p) => String(p.id) === effectivePrevId) ?? cached ?? null;
+    if (!effectiveNewerId) return null;
+    const key = postCacheKey(service, creatorId, effectiveNewerId);
+    const cached = contentState.posts[key]?.post;
+    return cached ?? creatorPosts.find((p) => normalizePostId(p.id) === effectiveNewerId) ?? null;
   });
 
   let olderPost = $derived.by(() => {
-    if (!effectiveNextId) return null;
-    const nextKey = postCacheKey(service, creatorId, effectiveNextId);
-    const cached = contentState.posts[nextKey]?.post;
-    if (cached?.title) return cached;
-    return creatorPosts.find((p) => String(p.id) === effectiveNextId) ?? cached ?? null;
+    if (!effectiveOlderId) return null;
+    const key = postCacheKey(service, creatorId, effectiveOlderId);
+    const cached = contentState.posts[key]?.post;
+    return cached ?? creatorPosts.find((p) => normalizePostId(p.id) === effectiveOlderId) ?? null;
   });
 
-  let leftPostTitle = $derived(newerPost?.title?.trim() || i18n.t('post.next'));
-  let rightPostTitle = $derived(olderPost?.title?.trim() || i18n.t('post.previous'));
+  function extractAdjacentTitle(targetPost: Post | null, fallbackLabel: string): string {
+    if (!targetPost) return fallbackLabel;
+    const clean = cleanPostTitle(targetPost.title);
+    if (clean) return clean;
+    const rawText = targetPost.content || targetPost.substring || '';
+    if (rawText) {
+      const stripped = cleanPostTitle(rawText);
+      if (stripped) {
+        return stripped.length > 50 ? `${stripped.slice(0, 50)}...` : stripped;
+      }
+    }
+    if (targetPost.published) {
+      return formatDate(targetPost.published);
+    }
+    return fallbackLabel;
+  }
+
+  let leftPostTitle = $derived(
+    extractAdjacentTitle(olderPost, i18n.t('post.previous') || 'Previous')
+  );
+  let rightPostTitle = $derived(
+    extractAdjacentTitle(newerPost, i18n.t('post.next') || 'Next')
+  );
   
   let richContent = $derived(post?.content || post?.substring || '');
   let postTags = $derived(parseTags(post?.tags));
@@ -1234,18 +1284,27 @@
   $effect(() => {
     const currentService = service;
     const currentCreatorId = creatorId;
-    const prevId = effectivePrevId;
-    const nextId = effectiveNextId;
+    const oldId = effectiveOlderId;
+    const newId = effectiveNewerId;
     if (currentService && currentCreatorId) {
-      if (prevId) {
+      if (oldId) {
         untrack(() => {
-          void contentState.loadPost(currentService, currentCreatorId, prevId);
+          void contentState.loadPost(currentService, currentCreatorId, oldId);
         });
       }
-      if (nextId) {
+      if (newId) {
         untrack(() => {
-          void contentState.loadPost(currentService, currentCreatorId, nextId);
+          void contentState.loadPost(currentService, currentCreatorId, newId);
         });
+      }
+    }
+  });
+
+  $effect(() => {
+    if (service && creatorId) {
+      const key = creatorCacheKey(service, creatorId);
+      if (!contentState.creators[key]?.loaded && !contentState.creators[key]?.loading) {
+        void contentState.loadCreator(service, creatorId);
       }
     }
   });
@@ -1392,9 +1451,6 @@
         notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
       } else {
         notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'));
-      }
-      if (post.favorite_count !== undefined) {
-        post.favorite_count = Math.max(0, post.favorite_count + (targetState ? 1 : -1));
       }
       if (targetState) {
         accountState.addPostFavoriteOptimistic(post);
@@ -2368,7 +2424,7 @@
                           onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
                           use:tooltip={i18n.t('post.viewer_open')}
                           aria-label={i18n.t('post.viewer_open')}
-                        ><IconEye /></button>
+                        ><IconFullscreen /></button>
                       {/if}
 
                       {#if postEmbed.url}
@@ -2631,7 +2687,7 @@
                             onclick={(e) => openMediaViewer(file!, activeGalleryItems, e.currentTarget.parentElement?.querySelector('video'))}
                             use:tooltip={i18n.t('post.viewer_open')}
                             aria-label={i18n.t('post.viewer_open')}
-                          ><IconEye /></button>
+                          ><IconFullscreen /></button>
                         {:else}
                           <button
                             class="media-open-surface"
@@ -2704,7 +2760,7 @@
                           onclick={() => openMediaViewer(file!, activeGalleryItems)}
                           use:tooltip={i18n.t('post.viewer_open')}
                           aria-label={i18n.t('post.viewer_open')}
-                        ><IconEye /></button>
+                        ><IconFullscreen /></button>
                       {/if}
                       {@render mediaDownloadAction(file!, index)}
                     {:else}
@@ -2843,10 +2899,10 @@
           <div class="footer-nav-left">
             <Button
               variant="ghost"
-              disabled={!effectivePrevId}
-              onclick={() => effectivePrevId && navigationState.openPost(service, creatorId, effectivePrevId)}
+              disabled={!effectiveOlderId}
+              onclick={() => effectiveOlderId && navigationState.openPost(service, creatorId, effectiveOlderId)}
               class="footer-nav-btn"
-              title={i18n.t('post.next') || 'Next'}
+              title={i18n.t('post.previous') || 'Previous'}
             >
               <IconChevronLeft class="w-[18px] h-[18px]" />
               <span>{leftPostTitle}</span>
@@ -2856,10 +2912,10 @@
           <div class="footer-nav-right">
             <Button
               variant="ghost"
-              disabled={!effectiveNextId}
-              onclick={() => effectiveNextId && navigationState.openPost(service, creatorId, effectiveNextId)}
+              disabled={!effectiveNewerId}
+              onclick={() => effectiveNewerId && navigationState.openPost(service, creatorId, effectiveNewerId)}
               class="footer-nav-btn"
-              title={i18n.t('post.previous') || 'Previous'}
+              title={i18n.t('post.next') || 'Next'}
             >
               <span>{rightPostTitle}</span>
               <IconChevronRight class="w-[18px] h-[18px]" />
@@ -3218,31 +3274,42 @@
     width: 36px;
     height: 36px;
     padding: 0;
+    border: none;
     border-radius: var(--radius-full, 9999px);
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: var(--text-primary, #fff);
+    background: rgba(22, 22, 28, 0.82);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    color: rgba(255, 255, 255, 0.88);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    opacity: 0.85;
-    transition: opacity var(--duration-fast, 150ms) ease, transform var(--duration-fast, 150ms) ease, background var(--duration-fast, 150ms) ease;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.5);
+    transition: background var(--duration-fast, 150ms) var(--ease-expo, ease-out),
+                color var(--duration-fast, 150ms) var(--ease-expo, ease-out),
+                transform var(--duration-fast, 150ms) var(--ease-expo, ease-out),
+                box-shadow var(--duration-fast, 150ms) var(--ease-expo, ease-out);
   }
 
   .media-viewer-open-btn:hover {
-    opacity: 1;
+    background: rgba(38, 38, 46, 0.94);
+    color: #ffffff;
     transform: scale(1.08);
-    background: rgba(0, 0, 0, 0.85);
-    border-color: rgba(255, 255, 255, 0.35);
+    box-shadow: 0 6px 20px -2px rgba(0, 0, 0, 0.65);
+  }
+
+  .media-viewer-open-btn:active {
+    transform: scale(0.95);
   }
 
   .media-viewer-open-btn :global(svg) {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
+    transition: transform var(--duration-fast, 150ms) var(--ease-expo, ease-out);
+  }
+
+  .media-viewer-open-btn:hover :global(svg) {
+    transform: scale(1.05);
   }
 
   .media-header {

@@ -132,6 +132,13 @@ pub fn reconcile_post_snapshots(snapshots: Vec<(String, Post)>) -> Option<Reconc
         canonical_post.attachments = Some(merged_attachments);
     }
 
+    if canonical_post.prev.is_none() {
+        canonical_post.prev = snapshots.iter().find_map(|(_, p)| p.prev.clone());
+    }
+    if canonical_post.next.is_none() {
+        canonical_post.next = snapshots.iter().find_map(|(_, p)| p.next.clone());
+    }
+
     let mut revisions_map: BTreeMap<String, PostRevision> = BTreeMap::new();
     let mut rev_counter = 1;
 

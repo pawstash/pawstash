@@ -1,8 +1,9 @@
+use super::coomer::CoomerProvider;
 use super::onlyhaven::OnlyHavenProvider;
 use super::pawchive::PawchiveProvider;
 use super::traits::{
-    default_onlyhaven_services, default_pawchive_services, FavoritesSyncResult, ProviderAuthSchema,
-    ProviderConfig, ProviderHealth, SourceProvider,
+    default_coomer_services, default_onlyhaven_services, default_pawchive_services,
+    FavoritesSyncResult, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
@@ -15,10 +16,12 @@ fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, St
     let id_lower = config.id.to_lowercase();
     let url_lower = config.api_url.to_lowercase();
 
-    if id_lower == "pawchive" || url_lower.contains("pawchive") {
-        Ok(Arc::new(PawchiveProvider::new(config)?))
-    } else {
+    if id_lower == "onlyhaven" || url_lower.contains("cum.st") {
         Ok(Arc::new(OnlyHavenProvider::new(config)?))
+    } else if id_lower == "coomer" || url_lower.contains("coomer") {
+        Ok(Arc::new(CoomerProvider::new(config)?))
+    } else {
+        Ok(Arc::new(PawchiveProvider::new(config)?))
     }
 }
 
@@ -68,6 +71,22 @@ impl ProviderManager {
                 priority: 1,
             },
             ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: false,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://c1.coomer.st".into()),
+                image_url: Some("https://img.coomer.st".into()),
+                file_prefix: Some("c1".into()),
+                image_prefix: Some("img".into()),
+                session_cookie: String::new(),
+                username: String::new(),
+                services: default_coomer_services(),
+                is_custom: false,
+                priority: 2,
+            },
+            ProviderConfig {
                 id: "onlyhaven".into(),
                 name: "OnlyHaven".into(),
                 enabled: false,
@@ -81,7 +100,7 @@ impl ProviderManager {
                 username: String::new(),
                 services: default_onlyhaven_services(),
                 is_custom: false,
-                priority: 2,
+                priority: 3,
             },
         ]
     }
@@ -111,14 +130,6 @@ impl ProviderManager {
             })
             .cloned()
             .collect();
-
-        if matching.is_empty() {
-            matching = providers
-                .iter()
-                .filter(|p| p.config().enabled)
-                .cloned()
-                .collect();
-        }
 
         matching.sort_by_key(|p| p.config().priority);
         matching
@@ -1035,5 +1046,59 @@ impl ProviderManager {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_provider_service_isolation_no_unwanted_fallback() {
+        let configs = vec![
+            ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: true,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: String::new(),
+                username: String::new(),
+                services: vec!["onlyfans".into(), "fansly".into(), "candfans".into()],
+                is_custom: false,
+                priority: 1,
+            },
+            ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: false,
+                api_url: "https://pawchive.pw".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: String::new(),
+                username: String::new(),
+                services: vec!["patreon".into(), "fanbox".into(), "discord".into()],
+                is_custom: false,
+                priority: 2,
+            },
+        ];
+
+        let manager = ProviderManager::new(configs);
+        let patreon_providers = manager.get_providers_for_service("patreon").await;
+        assert!(
+            patreon_providers.is_empty(),
+            "Must NOT fall back to Coomer when Patreon is requested!"
+        );
+
+        let fansly_providers = manager.get_providers_for_service("fansly").await;
+        assert_eq!(fansly_providers.len(), 1);
+        assert_eq!(fansly_providers[0].id(), "coomer");
     }
 }

@@ -519,8 +519,7 @@ impl DownloadManager {
             temp_path: job.temp_path.clone(),
             final_path: job.final_path.clone(),
             filename: job.filename.clone(),
-            session_cookie: (!settings.session_cookie.is_empty())
-                .then_some(settings.session_cookie),
+            session_cookie: settings.resolve_cookie_for_url(&job.url),
             proxy_mode: settings.proxy_mode,
             proxy_url: settings.proxy_url,
             proxy_username: settings.proxy_username,

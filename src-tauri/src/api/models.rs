@@ -187,14 +187,32 @@ impl Post {
                         .map(|s| s.to_string());
                     let has_full = obj.get("has_full").and_then(|v| v.as_bool());
                     let detail_fetched = obj.get("detail_fetched").and_then(|v| v.as_bool());
-                    let next = obj
-                        .get("next")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let prev = obj
-                        .get("prev")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let parse_id_value = |val: &serde_json::Value| -> Option<String> {
+                        if let Some(s) = val.as_str() {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                        if let Some(n) = val.as_i64() {
+                            return Some(n.to_string());
+                        }
+                        val.as_u64().map(|n| n.to_string())
+                    };
+
+                    let extract_id = |val: Option<&serde_json::Value>| -> Option<String> {
+                        val.and_then(|v| {
+                            if let Some(id) = parse_id_value(v) {
+                                Some(id)
+                            } else if let Some(map) = v.as_object() {
+                                map.get("id").and_then(parse_id_value)
+                            } else {
+                                None
+                            }
+                        })
+                    };
+                    let next = extract_id(obj.get("next"));
+                    let prev = extract_id(obj.get("prev"));
                     let favorite_count = obj
                         .get("favorite_count")
                         .or_else(|| obj.get("favs"))
@@ -774,5 +792,14 @@ mod tests {
         assert_eq!(post.origin.as_deref(), Some("https://onlyfans.com/98765"));
         assert_eq!(post.published.as_deref(), Some("1756543200"));
         assert_eq!(post.added.as_deref(), Some("2026-08-30T10:00:00"));
+    }
+
+    #[test]
+    fn test_fanbox_creator_profile_deserialization() {
+        let json = r#"{"id":"28009976","name":"Eros","service":"fanbox","indexed":"2026-06-10T20:00:00","updated":"2026-09-02T11:00:00","public_id":null,"relation_id":null,"ever_imported":true,"kemono_favorited":17391}"#;
+        let prof: CreatorProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(prof.id, "28009976");
+        assert_eq!(prof.name, "Eros");
+        assert_eq!(prof.service, "fanbox");
     }
 }

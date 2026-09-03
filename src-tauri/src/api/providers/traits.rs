@@ -48,6 +48,10 @@ pub fn default_onlyhaven_services() -> Vec<String> {
     vec!["onlyfans".into(), "fansly".into()]
 }
 
+pub fn default_coomer_services() -> Vec<String> {
+    vec!["onlyfans".into(), "fansly".into(), "candfans".into()]
+}
+
 pub fn derive_subdomain_url(base_url: &str, prefix: &str) -> String {
     let clean_url = if base_url.starts_with("http://") || base_url.starts_with("https://") {
         base_url.trim_end_matches('/').to_string()

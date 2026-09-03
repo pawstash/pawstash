@@ -268,11 +268,27 @@
     searchOpen = false;
   }
 
+  let editStashColor = $state<string | null>(null);
+  const stashColorPalette = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
   $effect(() => {
     if (manageOpen || stickyManageOpen) {
       editStashName = libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : '';
+      editStashColor = libraryState.selectedCollection?.color || null;
     }
   });
+
+  async function handleSetStashColor(color: string | null) {
+    const collectionId = libraryState.selectedCollectionId;
+    if (!collectionId) return;
+    try {
+      editStashColor = color;
+      await libraryState.updateStash(collectionId, { color });
+      notify.success(i18n.t('settings.stash_color') || 'Stash color updated');
+    } catch (error) {
+      notify.error(i18n.t('library.save_error') || 'Failed to update color', error);
+    }
+  }
 
   async function handleRenameStash(event: SubmitEvent) {
     event.preventDefault();
@@ -461,6 +477,30 @@
     </Input>
   </form>
 
+  <span class="filter-label" style="margin-top: 10px;">{i18n.t('settings.stash_color') || 'Stash Color'}</span>
+  <div class="stash-color-swatches">
+    {#each stashColorPalette as color}
+      <button
+        type="button"
+        class="stash-color-swatch"
+        class:is-active={editStashColor === color}
+        style:background={color}
+        onclick={() => handleSetStashColor(color)}
+        aria-label={color}
+      ></button>
+    {/each}
+    <button
+      type="button"
+      class="stash-color-swatch stash-color-reset"
+      class:is-active={!editStashColor}
+      onclick={() => handleSetStashColor(null)}
+      title="Reset color"
+      aria-label="Reset color"
+    >
+      <IconDismiss class="w-3.5 h-3.5" />
+    </button>
+  </div>
+
   <div class="manage-stash-divider"></div>
 
   <div class="manage-stash-actions">
@@ -626,7 +666,8 @@
           variant={libraryState.selectedCollectionId !== null ? 'accent' : 'ghost'}
           options={libraryState.collections.map((c) => ({
             value: c.id,
-            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`
+            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`,
+            color: c.color || undefined
           }))}
           value={libraryState.selectedCollectionId ?? undefined}
           placeholder={i18n.t('library.stashes') || 'Stashes'}
@@ -645,13 +686,14 @@
     </div>
   {:else}
     <div class="mobile-collection-picker">
-      <Select
+        <Select
         variant="accent"
         options={[
           { value: 'all', label: `${i18n.t('library.all') || 'All'} (${libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)})` },
           ...libraryState.collections.map((c) => ({
             value: c.id,
-            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`
+            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`,
+            color: c.color || undefined
           }))
         ]}
         value={libraryState.selectedCollectionId ?? 'all'}
@@ -964,5 +1006,41 @@
     gap: 10px !important;
     padding: 0 12px !important;
     font-size: 13px !important;
+  }
+
+  .stash-color-swatches {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 10px 0;
+    flex-wrap: wrap;
+  }
+
+  .stash-color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform var(--duration-fast) var(--ease-expo),
+                border-color var(--duration-fast) var(--ease-expo);
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+
+  .stash-color-swatch:hover {
+    transform: scale(1.15);
+  }
+
+  .stash-color-swatch.is-active {
+    border-color: #ffffff;
+    transform: scale(1.2);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+  }
+
+  .stash-color-reset {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
   }
 </style>

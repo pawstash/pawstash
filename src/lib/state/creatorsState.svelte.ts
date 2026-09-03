@@ -96,21 +96,29 @@ export class CreatorsState {
     return result;
   });
 
+  private _loadId = 0;
+
   async load(force = false) {
-    if (this.loading) return;
+    if (this.loading && !force) return;
     if (this.loaded && !force) return;
 
+    const currentId = ++this._loadId;
     this.loading = true;
     this.error = null;
     try {
-      this.creators = await apiFetchCreators();
+      const list = await apiFetchCreators();
+      if (currentId !== this._loadId) return;
+      this.creators = list;
       this.loaded = true;
       logger.info(`[Creators] Loaded ${this.creators.length} creators`);
     } catch (e) {
+      if (currentId !== this._loadId) return;
       this.error = e instanceof Error ? e.message : String(e);
       logger.error('[Creators] Failed to load creators', e);
     } finally {
-      this.loading = false;
+      if (currentId === this._loadId) {
+        this.loading = false;
+      }
     }
   }
 

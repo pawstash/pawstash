@@ -467,6 +467,7 @@
         case 'grid':
           next.grid_aspect_ratio = defaults.grid_aspect_ratio;
           next.grid_scale = defaults.grid_scale;
+          next.card_view_mode = defaults.card_view_mode;
           break;
 
         case 'downloads':
@@ -1087,6 +1088,22 @@
           />
         </SettingItem>
 
+        <SettingItem
+          title={i18n.t('settings.disable_blur_placeholders')}
+          description={i18n.t('settings.disable_blur_placeholders_desc')}
+          icon={IconEye}
+          align="right"
+        >
+          <SegmentedControl
+            options={[
+              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+            ]}
+            value={settings.disable_blur_placeholders ?? false}
+            onchange={(value) => updateAndSaveSetting('disable_blur_placeholders', value)}
+          />
+        </SettingItem>
+
         {#if !layoutState.isMobile}
           <SettingItem
             title={i18n.t('settings.titlebar_style')}
@@ -1198,6 +1215,21 @@
             ]}
             value={settings.grid_aspect_ratio}
             onchange={(value) => updateAndSaveSetting('grid_aspect_ratio', value)}
+          />
+        </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.card_view_mode')}
+          description={i18n.t('settings.card_view_mode_desc')}
+          icon={IconGrid}
+        >
+          <SegmentedControl
+            options={[
+              { value: 'detailed', label: i18n.t('settings.card_view_mode_detailed') },
+              { value: 'lite', label: i18n.t('settings.card_view_mode_lite') }
+            ]}
+            value={settings.card_view_mode || 'detailed'}
+            onchange={(value) => updateAndSaveSetting('card_view_mode', value)}
           />
         </SettingItem>
       </div>

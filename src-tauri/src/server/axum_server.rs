@@ -513,8 +513,11 @@ async fn serve_cloud_proxy_stream_handler(
         }
     }
 
+    let resolved_cookie = settings
+        .resolve_cookie_for_url(&target_url)
+        .unwrap_or_default();
     if let Some(cookie_val) =
-        crate::downloader::derive_download_cookie(&target_url, &settings.session_cookie)
+        crate::downloader::derive_download_cookie(&target_url, &resolved_cookie)
     {
         if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
             req = req.header(header::COOKIE, val);

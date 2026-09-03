@@ -37,7 +37,8 @@ export const PawchiveDriver: ProviderDriver = {
       const srv = server.trim().replace(/\/+$/, '');
       if (/^https?:\/\//i.test(srv)) return `${srv}/data/${clean}`;
       if (srv.includes('.')) return `https://${srv}/data/${clean}`;
-      const fileOrigin = config.file_url ? siteOrigin(config.file_url) : deriveSubdomainOrigin(config.api_url, 'file');
+      const defaultPrefix = config.file_prefix || 'file';
+      const fileOrigin = config.file_url ? siteOrigin(config.file_url) : deriveSubdomainOrigin(config.api_url, defaultPrefix);
       try {
         const url = new URL(fileOrigin);
         const parts = url.hostname.split('.');
@@ -47,13 +48,15 @@ export const PawchiveDriver: ProviderDriver = {
         return `${fileOrigin}/data/${clean}`;
       }
     }
-    const origin = config.file_url ? siteOrigin(config.file_url) : deriveSubdomainOrigin(config.api_url, 'file');
+    const defaultPrefix = config.file_prefix || 'file';
+    const origin = config.file_url ? siteOrigin(config.file_url) : deriveSubdomainOrigin(config.api_url, defaultPrefix);
     return `${origin}/data/${clean}`;
   },
 
   resolveThumbnailUrl(config, path) {
     const clean = path.replace(/^\/*data\//, '').replace(/^\/+/, '');
-    const origin = config.image_url ? siteOrigin(config.image_url) : deriveSubdomainOrigin(config.api_url, 'img');
+    const defaultImgPrefix = config.image_prefix || 'img';
+    const origin = config.image_url ? siteOrigin(config.image_url) : deriveSubdomainOrigin(config.api_url, defaultImgPrefix);
     return `${origin}/thumbnail/data/${clean}`;
   },
 
@@ -153,6 +156,7 @@ export const OnlyHavenDriver: ProviderDriver = {
 
 const DRIVERS: Record<string, ProviderDriver> = {
   pawchive: PawchiveDriver,
+  coomer: PawchiveDriver,
   onlyhaven: OnlyHavenDriver,
 };
 
