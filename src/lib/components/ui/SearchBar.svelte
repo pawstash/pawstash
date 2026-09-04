@@ -182,13 +182,14 @@
   .search-input-field {
     width: 100%;
     height: 44px;
-    padding: 0 44px 0 40px;
+    padding: 0 44px 1.5px 40px;
     background: var(--bg-card);
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
     color: var(--text-primary);
     font-size: 14px;
     font-family: var(--font-sans);
+    line-height: normal;
     outline: none;
     box-sizing: border-box;
     transition: background var(--duration-fast) var(--ease-expo),

@@ -432,13 +432,14 @@
     gap: 8px;
     width: 100%;
     height: 46px;
-    padding: 0 16px;
+    padding: 0 16px 1.5px 16px;
     background: var(--bg-card);
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
     color: var(--text-primary);
     font-size: 14px;
     font-family: var(--font-sans);
+    line-height: normal;
     cursor: pointer;
     text-align: left;
     outline: none;
@@ -505,6 +506,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     font-weight: 500;
+    line-height: normal;
   }
 
   .trigger-chevron {
@@ -584,13 +586,14 @@
     gap: var(--floating-item-gap, 10px);
     width: 100%;
     height: var(--floating-item-height, 36px);
-    padding: 0 var(--floating-item-px, 12px);
+    padding: 0 var(--floating-item-px, 12px) 1.5px var(--floating-item-px, 12px);
     background: transparent;
     border: none;
     border-radius: var(--floating-item-radius, 12px);
     color: var(--text-secondary);
     font-size: var(--floating-item-font-size, 13.5px);
     font-family: var(--font-sans);
+    line-height: normal;
     cursor: pointer;
     text-align: left;
     outline: none;
@@ -630,6 +633,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: normal;
   }
 
   :global(.option-check) {

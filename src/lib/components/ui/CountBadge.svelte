@@ -66,7 +66,7 @@
 
   .variant-tab,
   .variant-pill {
-    padding: 1.5px 6.5px;
+    padding: 1px 6.5px 2px 6.5px;
     border-radius: var(--radius-full, 9999px);
     background: rgba(255, 255, 255, 0.12);
     color: inherit;

@@ -6,6 +6,7 @@ export type MotionSpeed = 'instant' | 'snappy' | 'smooth';
 
 export interface ThemeTokens {
   fontScale: FontSizeScale;
+  fontFamily?: string;
   radiusScale: RadiusScale;
   surfaceStyle: SurfaceStyle;
   accent: AccentColor;

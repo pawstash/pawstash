@@ -105,7 +105,7 @@
     align-items: center;
     gap: 2px;
     height: 28px;
-    padding: 0 10px;
+    padding: 0 10px 1.5px 10px;
     border-radius: var(--radius-md, 8px);
     background: transparent;
     border: var(--border-width, 1px) solid transparent;
@@ -113,7 +113,7 @@
     font-size: 13px;
     font-family: var(--font-sans);
     font-weight: 500;
-    line-height: 1;
+    line-height: normal;
     white-space: nowrap;
     user-select: none;
     box-sizing: border-box;
@@ -124,14 +124,14 @@
 
   .size-sm .tag-chip {
     height: 22px;
-    padding: 0 7px;
+    padding: 0 7px 1px 7px;
     font-size: 12px;
     border-radius: var(--radius-sm, 6px);
   }
 
   .size-lg .tag-chip {
     height: 32px;
-    padding: 0 12px;
+    padding: 0 12px 2px 12px;
     font-size: 14px;
     border-radius: var(--radius-md, 8px);
   }

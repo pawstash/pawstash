@@ -4,6 +4,9 @@
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
 @import "@fontsource/inter/700.css";
+@import "@fontsource/noto-sans/400.css";
+@import "@fontsource/noto-sans/500.css";
+@import "@fontsource/noto-sans/700.css";
 @import "@fontsource/outfit/400.css";
 @import "@fontsource/outfit/500.css";
 @import "@fontsource/outfit/600.css";
@@ -11,10 +14,10 @@
 @import "overlayscrollbars/overlayscrollbars.css";
 
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-outfit: 'Outfit', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-display: 'Outfit', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-outfit: var(--font-sans);
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Cascadia Mono', 'Cascadia Code', 'Liberation Mono', monospace;
 }
 
 @layer base {
@@ -29,6 +32,16 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select {
+    line-height: normal;
+  }
+
+  textarea {
+    line-height: 1.4;
   }
 
   :root {
@@ -46,9 +59,10 @@
     --toast-top-offset: 24px;
     --toast-bottom-offset: 24px;
 
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-display: 'Outfit', 'Inter', sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    --font-display: var(--font-sans);
+    --font-outfit: var(--font-sans);
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Cascadia Mono', 'Cascadia Code', 'Liberation Mono', monospace;
 
     --text-2xs: 0.65rem;
     --text-xs: 0.75rem;
@@ -215,7 +229,7 @@
 }
 
 .font-outfit {
-  font-family: var(--font-display);
+  font-family: var(--font-sans);
 }
 
 .glass-panel {
@@ -1009,13 +1023,14 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   gap: var(--floating-item-gap);
   width: 100%;
   height: var(--floating-item-height);
-  padding: 0 var(--floating-item-px);
+  padding: 0 var(--floating-item-px) 1.5px var(--floating-item-px);
   border-radius: var(--floating-item-radius);
   background: transparent;
   border: none;
   color: var(--fg-default, var(--text-primary));
   font-size: var(--floating-item-font-size);
   font-family: var(--font-sans);
+  line-height: normal;
   cursor: pointer;
   text-align: left;
   outline: none;
@@ -1344,6 +1359,7 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 }
 
 .app-tooltip {
+  --tooltip-bg: #18181c;
   position: fixed;
   z-index: var(--z-tooltip);
   padding: 5px 13px;
@@ -1353,25 +1369,97 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   letter-spacing: 0.015em;
   line-height: 1.3;
   color: rgba(255, 255, 255, 0.95);
-  background: rgba(22, 22, 27, 0.88);
-  border: none;
+  background: var(--tooltip-bg);
   border-radius: var(--radius-full, 9999px);
-  box-shadow: 0 4px 18px -2px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 4px 18px -2px rgba(0, 0, 0, 0.6);
   pointer-events: none;
   max-width: min(420px, 90vw);
   overflow-wrap: anywhere;
   white-space: normal;
   text-align: center;
-  transition: opacity 140ms cubic-bezier(0.16, 1, 0.3, 1),
-              transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 130ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 130ms cubic-bezier(0.16, 1, 0.3, 1);
   opacity: 0;
-  transform: translateY(3px) scale(0.96);
+  transform: translateY(4px) scale(0.96);
   will-change: opacity, transform;
+}
+
+.app-tooltip[data-side="bottom"] {
+  transform: translateY(-4px) scale(0.96);
+}
+
+.app-tooltip[data-side="top"] {
+  transform: translateY(4px) scale(0.96);
+}
+
+.app-tooltip[data-side="right"] {
+  transform: translateX(-4px) scale(0.96);
+}
+
+.app-tooltip[data-side="left"] {
+  transform: translateX(4px) scale(0.96);
 }
 
 .app-tooltip.is-visible {
   opacity: 1;
-  transform: translateY(0) scale(1);
-}
+  transform: translate(0, 0) scale(1);
+}
+
+.app-tooltip-text {
+  position: relative;
+  z-index: 1;
+}
+
+.app-tooltip-arrow {
+  position: absolute;
+  width: 14px;
+  height: 5px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.app-tooltip-arrow svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.app-tooltip-arrow path {
+  fill: var(--tooltip-bg);
+}
+
+.app-tooltip[data-side="bottom"] .app-tooltip-arrow,
+.app-tooltip[data-side="top"] .app-tooltip-arrow {
+  left: var(--arrow-x, 50%);
+}
+
+.app-tooltip[data-side="left"] .app-tooltip-arrow,
+.app-tooltip[data-side="right"] .app-tooltip-arrow {
+  top: var(--arrow-y, 50%);
+}
+
+.app-tooltip[data-side="bottom"] .app-tooltip-arrow {
+  bottom: -4.5px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.4));
+}
+
+.app-tooltip[data-side="top"] .app-tooltip-arrow {
+  top: -4.5px;
+  transform: translateX(-50%) rotate(180deg);
+  filter: drop-shadow(0 -2px 2px rgba(0, 0, 0, 0.4));
+}
+
+.app-tooltip[data-side="right"] .app-tooltip-arrow {
+  right: -9.5px;
+  transform: translateY(-50%) rotate(270deg);
+  filter: drop-shadow(2px 0 2px rgba(0, 0, 0, 0.4));
+}
+
+.app-tooltip[data-side="left"] .app-tooltip-arrow {
+  left: -9.5px;
+  transform: translateY(-50%) rotate(90deg);
+  filter: drop-shadow(-2px 0 2px rgba(0, 0, 0, 0.4));
+}
+

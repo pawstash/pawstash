@@ -56,6 +56,7 @@
     justify-content: center;
     font-family: var(--font-sans);
     font-weight: 500;
+    line-height: normal;
     cursor: pointer;
     border-radius: var(--radius-full);
     transition: all var(--duration-fast) var(--ease-expo);
@@ -122,7 +123,7 @@
 
   .btn-sm {
     height: 34px;
-    padding: 0 14px;
+    padding: 0 14px 1.5px 14px;
     font-size: 12px;
     gap: 6px;
   }
@@ -135,7 +136,7 @@
 
   .btn-md {
     height: 46px;
-    padding: 0 20px;
+    padding: 0 20px 2px 20px;
     font-size: 14px;
     gap: 8px;
   }
@@ -148,7 +149,7 @@
 
   .btn-lg {
     height: 52px;
-    padding: 0 24px;
+    padding: 0 24px 2px 24px;
     font-size: 16px;
     gap: 10px;
   }

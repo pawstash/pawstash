@@ -64,8 +64,15 @@
   function handleClear(e: MouseEvent) {
     e.stopPropagation();
     value = '';
-    oninput?.(new Event('input'));
-    onchange?.(new Event('change'));
+    if (ref) {
+      ref.value = '';
+      ref.dispatchEvent(new Event('input', { bubbles: true }));
+      ref.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      const syntheticTarget = { value: '' };
+      oninput?.({ target: syntheticTarget, currentTarget: syntheticTarget } as unknown as Event);
+      onchange?.({ target: syntheticTarget, currentTarget: syntheticTarget } as unknown as Event);
+    }
   }
 </script>
 
@@ -180,7 +187,7 @@
     align-items: center;
     width: 100%;
     height: 46px;
-    padding: 0 14px;
+    padding: 0 14px 1.5px 14px;
     gap: 10px;
     background: var(--bg-card);
     border: var(--border-width) solid var(--border-color);
@@ -188,6 +195,7 @@
     box-sizing: border-box;
     font-size: 14px;
     font-family: var(--font-sans);
+    line-height: normal;
     color: var(--text-primary);
     outline: none !important;
     box-shadow: none !important;
@@ -241,6 +249,7 @@
     color: var(--text-primary);
     font-size: inherit;
     font-family: inherit;
+    line-height: normal;
     box-sizing: border-box;
   }
 

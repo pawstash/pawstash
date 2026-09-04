@@ -44,6 +44,7 @@
   import IconPaint from '~icons/fluent/color-24-regular';
   import IconEye from '~icons/fluent/eye-24-regular';
   import IconTranslate from '~icons/fluent/translate-24-regular';
+  import IconTextFont from '~icons/fluent/text-font-24-regular';
   import IconFlagUs from '~icons/circle-flags/us';
   import IconFlagRu from '~icons/circle-flags/ru';
   import IconCheck from '~icons/fluent/checkmark-24-regular';
@@ -797,12 +798,12 @@
 
 {#snippet authorBuildBar()}
   <div class="flex flex-col items-center justify-center text-center w-full mt-2">
-    <div class="flex items-center justify-center gap-2 text-[16px] font-bold text-white/95 font-outfit">
+    <div class="flex items-center justify-center gap-2 text-[16px] font-bold text-white/95">
       <span>{i18n.t('settings.made_with')}</span>
       <IconHeart class="w-4 h-4 text-[var(--color-danger,#f43f5e)] fill-current shrink-0" />
       <span>{i18n.t('settings.by_nichind')}</span>
     </div>
-    <span class="text-[13px] text-white/50 mt-1 mb-3 font-outfit select-none">
+    <span class="text-[13px] text-white/50 mt-1 mb-3 select-none">
       {i18n.t('settings.check_out_my_pages')}
     </span>
 
@@ -909,7 +910,7 @@
 
         <div class="flex items-center justify-center gap-3 w-full mt-0.5">
           <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-white/35 font-outfit select-none">
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-white/35 select-none">
             {i18n.t('settings.community')}
           </span>
           <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
@@ -978,6 +979,28 @@
             onchange={(val) => i18n.setLocale(val as any)}
             tabWidth={115}
           />
+        </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.font_family')}
+          description={i18n.t('settings.font_family_desc')}
+          icon={IconTextFont}
+        >
+          <div class="w-full max-w-[260px]">
+            <Input
+              value={themeState.tokens.fontFamily || ''}
+              placeholder={i18n.t('settings.font_family_placeholder')}
+              clearable={true}
+              oninput={(e) => {
+                const target = e.target as HTMLInputElement | null;
+                themeState.setFontFamily(target ? target.value : '');
+              }}
+              onchange={(e) => {
+                const target = e.target as HTMLInputElement | null;
+                themeState.setFontFamily(target ? target.value : '');
+              }}
+            />
+          </div>
         </SettingItem>
 
         <SettingItem
@@ -1805,7 +1828,7 @@
       <span class="text-[12px] font-mono tracking-wider font-semibold text-white/90">
         Pawstash v{APP_VERSION} ({COMMIT_HASH})
       </span>
-      <span class="text-[11.5px] text-white/70 mt-0.5 font-outfit">
+      <span class="text-[11.5px] text-white/70 mt-0.5">
         {i18n.t('settings.built_on')} {formattedBuildTime}
       </span>
     </div>
@@ -2198,7 +2221,7 @@
     font-size: 13.5px;
     font-weight: 600;
     color: var(--text-primary, #ffffff);
-    font-family: var(--font-outfit, inherit);
+    font-family: var(--font-sans);
     max-width: 100%;
   }
 

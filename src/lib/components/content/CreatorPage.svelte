@@ -1940,7 +1940,7 @@
   }
 
   .fallback-initials {
-    font-family: var(--font-display, var(--font-sans));
+    font-family: var(--font-sans);
     font-size: calc(30px * var(--grid-scale, 1));
     font-weight: 700;
     letter-spacing: 0.05em;

@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@fontsource/inter": "^5.3.0",
+    "@fontsource/noto-sans": "^5.3.0",
     "@fontsource/outfit": "^5.3.0",
     "@iconify-json/circle-flags": "^1.2.10",
     "@iconify-json/fluent": "^1.2.14",

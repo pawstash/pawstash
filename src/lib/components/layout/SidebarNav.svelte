@@ -479,13 +479,14 @@
     gap: 11px;
     width: max-content;
     height: 44px;
-    padding: 0 20px 0 11px;
+    padding: 0 20px 1.5px 11px;
     border-radius: 9999px;
     border: none;
     outline: none;
     background: transparent;
     color: rgba(255, 255, 255, 0.55);
     cursor: pointer;
+    line-height: normal;
     text-decoration: none !important;
     transition: all 300ms ease-out;
   }
@@ -538,6 +539,7 @@
     white-space: nowrap;
     overflow: hidden;
     opacity: 0.65;
+    line-height: normal;
     transition: opacity 300ms ease-out, max-width 300ms ease-out, margin 300ms ease-out;
     max-width: 120px;
     pointer-events: none;

@@ -209,13 +209,14 @@
 
   .selection-dock-btn {
     height: 38px;
-    padding: 0 12px;
+    padding: 0 12px 1.5px 12px;
     border-radius: 9999px;
     background: transparent;
     border: none;
     color: rgba(255, 255, 255, 0.7);
     font-size: 13px;
     font-weight: 500;
+    line-height: normal;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -241,9 +242,10 @@
 
   :global(.selection-dock .selection-btn) {
     height: 38px !important;
-    padding: 0 14px !important;
+    padding: 0 14px 1.5px 14px !important;
     font-size: 13px !important;
     font-weight: 500 !important;
+    line-height: normal !important;
     gap: 7px !important;
     border-radius: 9999px !important;
     white-space: nowrap !important;

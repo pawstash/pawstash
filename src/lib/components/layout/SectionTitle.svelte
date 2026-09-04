@@ -29,7 +29,7 @@
         <IconComponent class="w-[28px] h-[28px]" />
       </div>
     {/if}
-    <h2 class="text-[18.5px] font-semibold text-white/90 font-outfit tracking-wide">{title}</h2>
+    <h2 class="text-[18.5px] font-semibold text-white/90 tracking-wide">{title}</h2>
   </div>
 
   {#if onreset}

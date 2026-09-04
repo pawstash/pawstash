@@ -105,7 +105,7 @@
 <div class="flex flex-col gap-3 w-full">
   <div class="flex items-baseline justify-between gap-2">
     <div class="flex items-baseline gap-2">
-      <span class="text-base font-semibold font-outfit text-white tracking-tight">
+      <span class="text-base font-semibold text-white tracking-tight">
         {formatBytes(stats.totalBytes)}
       </span>
       <span class="text-xs text-white/40 font-mono">

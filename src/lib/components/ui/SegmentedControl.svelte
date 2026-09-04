@@ -120,13 +120,15 @@
     background: transparent;
     font-size: 13.5px;
     font-weight: var(--font-weight-normal);
-    font-family: var(--font-display);
+    font-family: var(--font-sans);
     color: var(--text-secondary);
     cursor: pointer;
     z-index: 2;
     transition: color var(--duration-fast) var(--ease-expo);
     min-width: 0;
     padding-inline: 18px;
+    padding-bottom: 2px;
+    line-height: normal;
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -134,6 +136,7 @@
   .tab-btn span {
     min-width: 0;
     white-space: nowrap;
+    line-height: normal;
   }
 
   .tab-btn :global(svg) {

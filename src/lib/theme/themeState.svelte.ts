@@ -4,6 +4,7 @@ import { FONT_SCALE_MAP, RADIUS_SCALE_MAP, ACCENT_COLOR_MAP, MOTION_SPEED_MAP } 
 export class ThemeState {
   tokens = $state<ThemeTokens>({
     fontScale: 'standard',
+    fontFamily: '',
     radiusScale: 'smooth',
     surfaceStyle: 'glass',
     accent: 'rose',
@@ -17,6 +18,7 @@ export class ThemeState {
   reset() {
     Object.assign(this.tokens, {
       fontScale: 'standard',
+      fontFamily: '',
       radiusScale: 'smooth',
       surfaceStyle: 'glass',
       accent: 'rose',
@@ -45,6 +47,11 @@ export class ThemeState {
 
   setFontScale(fontScale: FontSizeScale) {
     this.tokens.fontScale = fontScale;
+    this.applyCssTokens();
+  }
+
+  setFontFamily(fontFamily: string) {
+    this.tokens.fontFamily = fontFamily;
     this.applyCssTokens();
   }
 
@@ -151,6 +158,19 @@ export class ThemeState {
     } else {
       root.style.setProperty('--bg-base', '#0c0e14');
       root.style.setProperty('--bg-surface', 'rgba(22, 26, 38, 0.7)');
+    }
+
+    const userFont = this.tokens.fontFamily?.trim();
+    if (userFont) {
+      const systemStack = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
+      const fullStack = `${userFont}, ${systemStack}`;
+      root.style.setProperty('--font-sans', fullStack);
+      root.style.setProperty('--font-display', fullStack);
+      root.style.setProperty('--font-outfit', fullStack);
+    } else {
+      root.style.removeProperty('--font-sans');
+      root.style.removeProperty('--font-display');
+      root.style.removeProperty('--font-outfit');
     }
   }
 

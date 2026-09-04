@@ -38,7 +38,7 @@
       {#if IconComponent}
         <IconComponent class="w-[20px] h-[20px] text-white/50 shrink-0" />
       {/if}
-      <span class="text-[15px] font-normal text-white/85 font-outfit">{title}</span>
+      <span class="text-[15px] font-normal text-white/85">{title}</span>
       {#if onReset && showReset}
         <button
           use:tooltip={'Reset to default'}
