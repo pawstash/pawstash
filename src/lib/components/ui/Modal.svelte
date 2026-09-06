@@ -14,10 +14,13 @@
     fixedHeight?: boolean;
     flush?: boolean;
     borderlessHeader?: boolean;
+    borderlessFooter?: boolean;
     scrollable?: boolean;
     onclose: () => void;
     children?: Snippet;
+    footer?: Snippet;
     floating?: Snippet;
+    maxHeight?: string;
   }
 
   let {
@@ -28,16 +31,19 @@
     fixedHeight = false,
     flush = false,
     borderlessHeader = false,
+    borderlessFooter = false,
     scrollable: isScrollable = true,
     onclose,
     children,
-    floating
+    footer,
+    floating,
+    maxHeight
   }: Props = $props();
 
   const maxWidths: Record<string, string> = {
     sm: '340px',
     md: '380px',
-    lg: '480px',
+    lg: '520px',
     xl: '640px',
     '2xl': '880px',
     full: '96vw'
@@ -64,6 +70,7 @@
       class:is-fixed-height={fixedHeight}
       class:is-flush={flush}
       style:max-width={maxWidths[size] || '380px'}
+      style:max-height={maxHeight || undefined}
     >
       <div class="modal-header" class:is-flush={flush} class:is-borderless={borderlessHeader}>
         <h3 class="modal-title">{title}</h3>
@@ -92,6 +99,12 @@
             </div>
           </div>
         {/if}
+      {/if}
+
+      {#if footer}
+        <div class="modal-footer" class:is-flush={flush} class:is-borderless={borderlessFooter}>
+          {@render footer()}
+        </div>
       {/if}
 
       {#if floating}
@@ -267,6 +280,14 @@
     }
   }
 
+  .modal-body-wrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .modal-body-wrapper.is-fixed-height {
     flex: 1 1 0%;
     min-height: 0;
@@ -278,11 +299,37 @@
     overflow: hidden;
   }
 
+  .modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
   .modal-body.is-fixed-height {
     flex: 1 1 0%;
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  .modal-footer {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 6px 4px 6px;
+    border-top: var(--border-width) solid var(--border-color);
+    flex-shrink: 0;
+    box-sizing: border-box;
+  }
+
+  .modal-footer.is-flush {
+    padding: 10px 14px 14px 14px;
+  }
+
+  .modal-footer.is-borderless {
+    border-top: none;
   }
 
   .modal-box.is-flush {
@@ -295,11 +342,6 @@
 
   .modal-header.is-borderless {
     border-bottom: none !important;
-  }
-
-  .modal-body {
-    padding: 0;
-    box-sizing: border-box;
   }
 
   .modal-body.is-flush {

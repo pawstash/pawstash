@@ -190,6 +190,25 @@ class MainActivity : TauriActivity() {
     if (instance == this) instance = null
   }
 
+  fun getSystemMonetColors(): String {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+      try {
+        val c1 = getColor(android.R.color.system_accent1_500)
+        val c2 = getColor(android.R.color.system_accent1_100)
+        val c3 = getColor(android.R.color.system_accent2_500)
+        val c4 = getColor(android.R.color.system_accent3_500)
+        val hex1 = String.format("#%06X", 0xFFFFFF and c1)
+        val hex2 = String.format("#%06X", 0xFFFFFF and c2)
+        val hex3 = String.format("#%06X", 0xFFFFFF and c3)
+        val hex4 = String.format("#%06X", 0xFFFFFF and c4)
+        return """{"primary":"$hex1","c1":"$hex1","c2":"$hex2","c3":"$hex3","c4":"$hex4"}"""
+      } catch (e: Throwable) {
+        android.util.Log.e("Pawstash", "getSystemMonetColors error", e)
+      }
+    }
+    return ""
+  }
+
   fun launchFolderPicker() {
     runOnUiThread {
       openDocumentTreeLauncher.launch(null)

@@ -31,6 +31,7 @@
   import IconUser from '~icons/fluent/person-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
 
   interface NavItem {
     id: 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'settings';
@@ -230,7 +231,9 @@
           {/if}
         </div>
 
-        <span class="sidebar-label" class:active={isActive}>{title}</span>
+        <span class="sidebar-label" class:active={isActive}>
+          <StableWeightLabel text={title} />
+        </span>
       </button>
     {/each}
   </nav>
@@ -479,7 +482,7 @@
     gap: 11px;
     width: max-content;
     height: 44px;
-    padding: 0 20px 1.5px 11px;
+    padding: 0 20px 0 11px;
     border-radius: 9999px;
     border: none;
     outline: none;

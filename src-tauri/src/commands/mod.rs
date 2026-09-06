@@ -2659,6 +2659,35 @@ fn launch_folder_picker_android() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_system_accent_color() -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        with_android_context(|env, context| {
+            let res = env
+                .call_method(context, "getSystemMonetColors", "()Ljava/lang/String;", &[])
+                .map_err(|e| format!("Failed to call getSystemMonetColors: {e}"))?;
+            let jstr = res.l().map_err(|e| e.to_string())?;
+            if jstr.is_null() {
+                return Ok(None);
+            }
+            let s: String = env
+                .get_string(&jni::objects::JString::from(jstr))
+                .map_err(|e| e.to_string())?
+                .into();
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(s))
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
 pub async fn pick_folder() -> Result<Option<String>, String> {
     #[cfg(target_os = "android")]
     {

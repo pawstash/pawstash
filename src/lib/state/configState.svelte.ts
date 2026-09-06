@@ -18,7 +18,7 @@ export class ConfigState {
     proxy_username: '',
     proxy_password: '',
     proxy_bypass_local: true,
-    grid_scale: 85,
+    grid_scale: 100,
     grid_aspect_ratio: 'square',
     dynamic_accent: true,
     sticky_header: true,

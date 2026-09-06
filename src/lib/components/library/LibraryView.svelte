@@ -6,6 +6,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
+  import { themeState } from '$lib/theme/themeState.svelte';
   import type { Post } from '$lib/types/content';
   import { parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -19,18 +20,19 @@
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import ServiceIcon from '$lib/components/content/ServiceIcon.svelte';
   import { ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { getPostDownloadTargets, attachmentMediaUrl } from '$lib/utils/media';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
-  import IconAdd from '~icons/fluent/add-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
+  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
@@ -41,7 +43,7 @@
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconEdit from '~icons/fluent/edit-24-regular';
   import IconBroom from '~icons/fluent/broom-24-regular';
-  import IconMoreHorizontal from '~icons/fluent/more-horizontal-24-regular';
+  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconFolderDismiss from '~icons/fluent/folder-dismiss-24-regular';
@@ -232,6 +234,13 @@
     { value: 'title_desc', label: i18n.t('library.sort_title_desc') }
   ]);
 
+  let currentSortLabel = $derived(
+    sortOptions.find((o) => o.value === currentSortValue)?.label ?? (i18n.t('favorites.sort_by') || 'Sort')
+  );
+
+  let mobileMoreOpen = $state(false);
+  let mobileManageOpen = $state(false);
+
   function handleSortChange(val: string) {
     const parts = val.split('_');
     sortBy = parts[0] as any;
@@ -253,8 +262,22 @@
       .catch((error) => libraryState.error = error instanceof Error ? error.message : String(error));
   });
 
+  $effect(() => {
+    const stashColor = libraryState.selectedCollection?.color;
+    if (stashColor) {
+      themeState.setOverrideAccent(stashColor);
+    } else {
+      themeState.clearOverrideAccent();
+    }
+
+    return () => {
+      themeState.clearOverrideAccent();
+    };
+  });
+
   onDestroy(() => {
     downloadState.destroy();
+    themeState.clearOverrideAccent();
   });
 
   function selectCollection(id: string | null) {
@@ -300,6 +323,7 @@
       notify.success(i18n.t('library.stash_renamed'), editStashName.trim());
       manageOpen = false;
       stickyManageOpen = false;
+      mobileManageOpen = false;
     } catch (error) {
       notify.error(i18n.t('library.save_error') || 'Failed to rename stash', error);
     } finally {
@@ -320,6 +344,7 @@
       notify.success(i18n.t('library.stash_cleared'), name || undefined);
       manageOpen = false;
       stickyManageOpen = false;
+      mobileManageOpen = false;
     } catch (error) {
       notify.error(i18n.t('library.save_error') || 'Failed to clear stash', error);
     } finally {
@@ -339,6 +364,7 @@
     try {
       manageOpen = false;
       stickyManageOpen = false;
+      mobileManageOpen = false;
       await libraryState.deleteStash(collectionId);
     } catch (error) {
       libraryState.error = error instanceof Error ? error.message : String(error);
@@ -627,7 +653,7 @@
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
     </span>
-    <IconDocument class="view-option-icon w-[20px] h-[20px]" />
+    <IconDocument class="view-option-icon" />
   </button>
 
   <button
@@ -645,69 +671,49 @@
       <strong>{i18n.t('library.only_downloaded')}</strong>
       <small>{i18n.t('library.only_downloaded_desc')}</small>
     </span>
-    <IconArrowDownload class="view-option-icon w-[20px] h-[20px]" />
+    <IconArrowDownload class="view-option-icon" />
   </button>
 {/snippet}
 
-{#snippet collectionTabs()}
-  {#if !layoutState.isMobile}
-    <div class="flex items-center gap-2">
-      <Button
-        variant={libraryState.selectedCollectionId === null ? 'accent' : 'ghost'}
-        onclick={() => selectCollection(null)}
-        class="library-tab"
-      >
-        <span>{i18n.t('library.all') || 'Library'}</span>
-        <CountBadge count={libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)} />
-      </Button>
+{#snippet libraryTabs()}
+  <div class="library-segmented-group">
+    <Select
+      variant="accent"
+      options={[
+        {
+          value: 'all',
+          label: i18n.t('library.all') || 'All',
+          count: libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)
+        },
+        ...libraryState.collections.map((c) => ({
+          value: c.id,
+          label: libraryState.getStashDisplayName(c),
+          count: c.item_count,
+          color: c.color || undefined
+        }))
+      ]}
+      value={libraryState.selectedCollectionId ?? 'all'}
+      onchange={(val) => selectCollection(val === 'all' ? null : String(val))}
+      createLabel={i18n.t('library.new_stash') || 'New stash'}
+      onCreate={async (name) => {
+        if (!name.trim()) return;
+        const newStash = await libraryState.createStash(name.trim());
+        await selectCollection(newStash.id);
+      }}
+      class="library-collection-select"
+    />
 
-      <div class="desktop-stash-picker">
-        <Select
-          variant={libraryState.selectedCollectionId !== null ? 'accent' : 'ghost'}
-          options={libraryState.collections.map((c) => ({
-            value: c.id,
-            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`,
-            color: c.color || undefined
-          }))}
-          value={libraryState.selectedCollectionId ?? undefined}
-          placeholder={i18n.t('library.stashes') || 'Stashes'}
-          onchange={(val) => {
-            if (val) selectCollection(String(val));
-          }}
-          createLabel={i18n.t('library.new_stash') || 'New stash'}
-          onCreate={async (name) => {
-            if (!name.trim()) return;
-            const newStash = await libraryState.createStash(name.trim());
-            await selectCollection(newStash.id);
-          }}
-          class="desktop-stash-select"
-        />
-      </div>
-    </div>
-  {:else}
-    <div class="mobile-collection-picker">
-        <Select
-        variant="accent"
-        options={[
-          { value: 'all', label: `${i18n.t('library.all') || 'All'} (${libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)})` },
-          ...libraryState.collections.map((c) => ({
-            value: c.id,
-            label: `${libraryState.getStashDisplayName(c)} (${c.item_count})`,
-            color: c.color || undefined
-          }))
-        ]}
-        value={libraryState.selectedCollectionId ?? 'all'}
-        onchange={(val) => selectCollection(val === 'all' ? null : String(val))}
-        createLabel={i18n.t('library.new_stash') || 'New stash'}
-        onCreate={async (name) => {
-          if (!name.trim()) return;
-          const newStash = await libraryState.createStash(name.trim());
-          await selectCollection(newStash.id);
-        }}
-        class="mobile-stash-select"
-      />
-    </div>
-  {/if}
+    <Select
+      variant="accent"
+      options={sortOptions}
+      value={currentSortValue}
+      onchange={handleSortChange}
+      class="library-sort-select"
+      icon={IconArrowSort}
+      iconOnly={true}
+      ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+    />
+  </div>
 {/snippet}
 
 {#snippet libraryFilter(sticky = false)}
@@ -736,48 +742,62 @@
 
 {#snippet actionsCluster(sticky = false)}
   <div class="library-actions-cluster" class:search-active={searchOpen}>
-    {#if !layoutState.isMobile || !searchOpen}
-      {@render manageStashTrigger(sticky)}
-    {/if}
-
     <HeaderActions
       bind:searchOpen
       bind:searchQuery
       searchPlaceholder={i18n.t('library.search_placeholder') || 'Search library...'}
     >
-      <Button
-        variant={isSelectionActive ? 'accent' : 'ghost'}
-        class="btn-icon"
-        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-        title={i18n.t('selection.select_mode') || 'Select mode'}
-        aria-label="Select mode"
-      >
-        <IconCheckboxChecked class="w-5 h-5" />
-      </Button>
+      {#if !layoutState.isMobile}
+        {#if !searchOpen}
+          {@render manageStashTrigger(sticky)}
+        {/if}
+        <Button
+          variant={isSelectionActive ? 'accent' : 'ghost'}
+          class="btn-icon"
+          onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
+          title={i18n.t('selection.select_mode') || 'Select mode'}
+          aria-label="Select mode"
+        >
+          <IconCheckboxChecked class="w-5 h-5" />
+        </Button>
 
-      {@render libraryFilter(sticky)}
+        {@render libraryFilter(sticky)}
+      {:else}
+        {@render libraryFilter(sticky)}
+
+        {#if isSelectionActive}
+          <Button
+            variant="accent"
+            size="sm"
+            class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
+            onclick={() => selectionState.exit()}
+            title={i18n.t('common.done') || 'Done'}
+            aria-label="Exit selection mode"
+          >
+            <IconCheckmark class="w-4 h-4" />
+            <span>{i18n.t('common.done') || 'Done'}</span>
+          </Button>
+        {:else}
+          <Button
+            variant="ghost"
+            class="btn-icon"
+            onclick={() => (mobileMoreOpen = true)}
+            title={i18n.t('common.more') || 'More'}
+            aria-label="More actions"
+          >
+            <IconMoreVertical class="w-5 h-5" />
+          </Button>
+        {/if}
+      {/if}
     </HeaderActions>
   </div>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => libraryState.refresh()}>
   {#snippet overlay()}
-    <StickyHeader
-      threshold={120}
-      title={libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : (i18n.t('library.title') || 'Library')}
-    >
+    <StickyHeader threshold={120}>
       {#snippet center()}
-        <div class="flex items-center gap-2">
-          {@render collectionTabs()}
-          <Select
-            variant="ghost"
-            options={sortOptions}
-            value={currentSortValue}
-            onchange={handleSortChange}
-            class="library-sort-select"
-            style="height: 44px;"
-          />
-        </div>
+        {@render libraryTabs()}
       {/snippet}
       {#snippet trailing()}
         {@render actionsCluster(true)}
@@ -787,17 +807,7 @@
 
   <PageHeader>
     {#snippet tabs()}
-      {@render collectionTabs()}
-    {/snippet}
-    {#snippet filters()}
-      <Select
-        variant="ghost"
-        options={sortOptions}
-        value={currentSortValue}
-        onchange={handleSortChange}
-        class="library-sort-select"
-        style="height: 44px;"
-      />
+      {@render libraryTabs()}
     {/snippet}
     {#snippet actions()}
       {@render actionsCluster(false)}
@@ -884,40 +894,188 @@
   </Button>
 </SelectionActionBar>
 
+{#if layoutState.isMobile}
+  <BottomSheet
+    open={mobileMoreOpen}
+    title={i18n.t('common.more') || 'More'}
+    onclose={() => (mobileMoreOpen = false)}
+  >
+    <div class="flex flex-col gap-1 py-1">
+      {#if isStashSelected}
+        <button
+          type="button"
+          class="sheet-action-item"
+          use:ripple
+          onclick={() => {
+            mobileMoreOpen = false;
+            mobileManageOpen = true;
+          }}
+        >
+          <IconEdit class="text-secondary" />
+          <div class="flex flex-col min-w-0">
+            <span class="text-sm font-semibold text-primary">{i18n.t('library.manage_stash') || 'Manage stash'}</span>
+          </div>
+        </button>
+      {/if}
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          selectionState.enter('posts');
+        }}
+      >
+        <IconCheckboxChecked class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select mode'}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        disabled={libraryState.loading}
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          void libraryState.refresh();
+        }}
+      >
+        {#if libraryState.loading}
+          <IconLoading class="text-accent" />
+        {:else}
+          <IconArrowClockwise class="text-secondary" />
+        {/if}
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+        </div>
+      </button>
+    </div>
+  </BottomSheet>
+
+  <BottomSheet
+    open={mobileManageOpen}
+    title={i18n.t('library.manage_stash') || 'Manage stash'}
+    onclose={() => (mobileManageOpen = false)}
+  >
+    {@render manageStashContent()}
+  </BottomSheet>
+{/if}
+
 <style>
-  .desktop-stash-picker {
-    display: flex;
+  .library-segmented-group {
+    display: inline-flex;
     align-items: center;
+    gap: 2px;
     min-width: 0;
     flex-shrink: 0;
   }
 
-  :global(.desktop-stash-select) {
+  :global(.library-collection-select) {
     width: auto !important;
-    min-width: 130px !important;
-    max-width: 220px !important;
-  }
-
-  :global(.btn-create-stash) {
-    height: 44px !important;
-    padding: 0 18px !important;
-    font-size: 13.5px !important;
-    border-radius: var(--radius-full) !important;
-    gap: 8px !important;
+    min-width: 140px !important;
+    max-width: 260px !important;
     flex-shrink: 0 !important;
   }
 
-  .mobile-collection-picker {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    flex-shrink: 0;
+  :global(.library-collection-select .select-trigger) {
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    background: var(--choice-active-bg, var(--accent-primary)) !important;
+    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    border-top-left-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-bottom-left-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-top-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-bottom-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding-left: 18px !important;
+    padding-right: 12px !important;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
   }
 
-  :global(.mobile-stash-select) {
+  :global(.library-collection-select .select-trigger:hover) {
+    background: color-mix(in srgb, var(--choice-active-bg, var(--accent-primary)) 88%, white) !important;
+    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+  }
+
+  :global(.library-collection-select .select-trigger:active) {
+    opacity: 0.85 !important;
+  }
+
+  :global(.library-collection-select .select-trigger .trigger-label) {
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+  }
+
+  :global(.library-collection-select .select-trigger .count-badge) {
+    background: color-mix(in srgb, currentColor 22%, transparent) !important;
+    color: inherit !important;
+    font-size: calc(12px * var(--ui-scale, 1)) !important;
+  }
+
+  :global(.library-collection-select .select-trigger .trigger-chevron),
+  :global(.library-collection-select .select-trigger .trigger-chevron svg) {
+    color: var(--choice-active-text, currentColor) !important;
+    opacity: 0.85 !important;
+    transition:
+      transform var(--duration-normal) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
+  }
+
+  :global(.library-collection-select .select-trigger:hover .trigger-chevron),
+  :global(.library-collection-select .select-trigger:hover .trigger-chevron svg) {
+    opacity: 1 !important;
+  }
+
+  :global(.library-sort-select) {
     width: auto !important;
-    min-width: 140px !important;
-    max-width: 100% !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  :global(.library-sort-select .select-trigger),
+  :global(.library-sort-select .select-trigger.icon-only) {
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
+    background: var(--accent-container) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border: none !important;
+    box-shadow: none !important;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
+  }
+
+  :global(.library-sort-select .select-trigger:hover),
+  :global(.library-sort-select .select-trigger.icon-only:hover) {
+    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+  }
+
+  :global(.library-sort-select .select-trigger:active),
+  :global(.library-sort-select .select-trigger.icon-only:active) {
+    opacity: 0.85 !important;
+  }
+
+  :global(.library-sort-select .select-trigger svg),
+  :global(.library-sort-select .select-trigger.icon-only svg) {
+    width: 20px !important;
+    height: 20px !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    opacity: 1 !important;
   }
 
   .library-actions-cluster {

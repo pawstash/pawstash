@@ -129,6 +129,10 @@
                 {/if}
               {/if}
             </div>
+          {:else if tabs}
+            <div class="mobile-tabs-scroll">
+              {@render tabs()}
+            </div>
           {/if}
         </div>
 
@@ -139,9 +143,9 @@
         {/if}
       </div>
 
-      {#if tabs || filters}
+      {#if (title && tabs) || filters}
         <div class="mobile-tier-2">
-          {#if tabs}
+          {#if title && tabs}
             <div class="mobile-tabs-scroll">
               {@render tabs()}
             </div>
@@ -169,6 +173,12 @@
     width: 100%;
     box-sizing: border-box;
     margin-bottom: 24px;
+
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 20px);
+    --control-radius: var(--control-radius-md, var(--radius-full));
   }
 
   .header-desktop-row {
@@ -269,10 +279,26 @@
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    padding-right: 20px;
+  }
+
+  .mobile-leading-zone > .mobile-tabs-scroll:first-child,
+  .mobile-tier-2 > .mobile-tabs-scroll:first-child {
+    margin-left: -12px;
+    padding-left: 12px;
   }
 
   .mobile-tabs-scroll::-webkit-scrollbar {
     display: none;
+  }
+
+  .mobile-tabs-scroll :global(.choice-group) {
+    flex-wrap: nowrap !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
   }
 
   .mobile-filters-wrapper {

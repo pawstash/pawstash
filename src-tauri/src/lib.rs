@@ -165,15 +165,16 @@ pub fn run() {
                 }
                 #[cfg(target_os = "android")]
                 {
+                    let pkg = crate::db::storage::android_package_name();
                     roots.push(std::path::PathBuf::from(
                         "/storage/emulated/0/Download/Pawstash",
                     ));
-                    roots.push(std::path::PathBuf::from(
-                        "/storage/emulated/0/Android/data/app.pawstash.client/files/Download",
-                    ));
-                    roots.push(std::path::PathBuf::from(
-                        "/data/data/app.pawstash.client/files/Pawstash/Downloads",
-                    ));
+                    roots.push(std::path::PathBuf::from(format!(
+                        "/storage/emulated/0/Android/data/{pkg}/files/Download",
+                    )));
+                    roots.push(std::path::PathBuf::from(format!(
+                        "/data/data/{pkg}/files/Pawstash/Downloads",
+                    )));
                     roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
                 }
                 if let Ok(server) = MediaServer::start(roots, server_config_manager).await {
@@ -216,6 +217,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_system_accent_color,
             get_pending_deep_link,
             get_axum_port,
             check_aria2c_installed,

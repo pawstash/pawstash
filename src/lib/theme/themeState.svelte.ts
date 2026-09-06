@@ -1,5 +1,13 @@
 import type { ThemeTokens, FontSizeScale, RadiusScale, SurfaceStyle, AccentColor, MotionSpeed } from './tokens';
 import { FONT_SCALE_MAP, RADIUS_SCALE_MAP, ACCENT_COLOR_MAP, MOTION_SPEED_MAP } from './tokens';
+import { generateAccentPalette, type AccentPalette, parseColorToRgb, getPerceivedLuminance } from './palette';
+import { apiGetSystemAccentColor } from '$lib/utils/ipc';
+import { logger } from '$lib/utils/logger';
+
+export interface SystemMonetPalette {
+  primary: string;
+  quadrants: [string, string, string, string];
+}
 
 export class ThemeState {
   tokens = $state<ThemeTokens>({
@@ -15,32 +23,97 @@ export class ThemeState {
     sidebarWidthPx: 208
   });
 
+  systemPalette = $state<SystemMonetPalette | null>(null);
+  overrideAccent = $state<string | null>(null);
+
+  get palette(): AccentPalette {
+    if (this.overrideAccent) {
+      return generateAccentPalette(this.overrideAccent);
+    }
+    if (this.tokens.accent === 'system' && this.systemPalette) {
+      return generateAccentPalette(this.systemPalette.primary, this.systemPalette.quadrants);
+    }
+    return generateAccentPalette(this.tokens.accent);
+  }
+
   reset() {
     Object.assign(this.tokens, {
       fontScale: 'standard',
       fontFamily: '',
       radiusScale: 'smooth',
       surfaceStyle: 'glass',
-      accent: 'rose',
+      accent: this.systemPalette ? 'system' : 'rose',
       motionSpeed: 'smooth',
       backdropBlurPx: 24,
       borderWidthPx: 1,
       titlebarHeightPx: 30,
       sidebarWidthPx: 208
     } satisfies ThemeTokens);
+    this.overrideAccent = null;
     this.applyCssTokens();
   }
 
-  init() {
+  async fetchSystemPalette() {
+    try {
+      const res = await apiGetSystemAccentColor();
+      if (res) {
+        if (res.startsWith('{')) {
+          const parsed = JSON.parse(res);
+          const primary = parsed.primary || parsed.c1;
+          const quadrants: [string, string, string, string] = [
+            parsed.c1 || primary,
+            parsed.c2 || primary,
+            parsed.c3 || primary,
+            parsed.c4 || primary
+          ];
+          this.systemPalette = { primary, quadrants };
+        } else if (res.startsWith('#')) {
+          const pal = generateAccentPalette(res);
+          this.systemPalette = { primary: res, quadrants: pal.quadrants };
+        }
+      }
+    } catch {
+      // Running on browser or desktop without native system accent
+    }
+  }
+
+  async init() {
+    let savedAccent: AccentColor | undefined;
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('pawstash_theme_settings');
       if (saved) {
         try {
-          Object.assign(this.tokens, JSON.parse(saved));
-        } catch (e) { }
+          const parsed = JSON.parse(saved);
+          savedAccent = parsed.accent;
+          Object.assign(this.tokens, parsed);
+        } catch (e) {
+          logger.warn('[ThemeState] Failed to parse saved theme settings:', e);
+        }
       }
     }
+
+    await this.fetchSystemPalette();
+
+    // If first launch (no accent previously saved in localStorage) and systemPalette is available,
+    // default to 'system'
+    if (!savedAccent && this.systemPalette) {
+      this.tokens.accent = 'system';
+    }
+
     if (typeof window !== 'undefined') {
+      this.applyCssTokens();
+    }
+  }
+
+  setOverrideAccent(color: string) {
+    if (!color) return;
+    this.overrideAccent = color;
+    this.applyCssTokens();
+  }
+
+  clearOverrideAccent() {
+    if (this.overrideAccent !== null) {
+      this.overrideAccent = null;
       this.applyCssTokens();
     }
   }
@@ -102,7 +175,6 @@ export class ThemeState {
     const root = document.documentElement;
     const font = FONT_SCALE_MAP[this.tokens.fontScale];
     const radius = RADIUS_SCALE_MAP[this.tokens.radiusScale];
-    const accent = ACCENT_COLOR_MAP[this.tokens.accent];
     const motion = MOTION_SPEED_MAP[this.tokens.motionSpeed];
 
     root.style.setProperty('--titlebar-height', `${this.tokens.titlebarHeightPx}px`);
@@ -119,27 +191,23 @@ export class ThemeState {
     root.style.setProperty('--radius-lg', radius.lg);
     root.style.setProperty('--radius-xl', radius.xl);
 
-    let accentPrimary = '';
-    let accentHover = '';
-    let accentGlow = '';
+    // Apply complete Material-inspired tonal palette
+    const pal = this.palette;
+    root.style.setProperty('--accent-primary', pal.primary);
+    root.style.setProperty('--accent-primary-hover', pal.primaryHover);
+    root.style.setProperty('--accent-on-primary', pal.onPrimary);
+    root.style.setProperty('--accent-container', pal.container);
+    root.style.setProperty('--accent-on-container', pal.onContainer);
+    root.style.setProperty('--accent-subtle', pal.subtle);
+    root.style.setProperty('--accent-glow', pal.glow);
+    root.style.setProperty('--text-on-accent', pal.onPrimary);
 
-    if (this.tokens.accent.startsWith('#')) {
-      accentPrimary = this.tokens.accent;
-      accentHover = darkenColor(this.tokens.accent, 0.12);
-      accentGlow = hexToRgba(this.tokens.accent, 0.35);
-    } else {
-      const accent = ACCENT_COLOR_MAP[this.tokens.accent as any] || ACCENT_COLOR_MAP.rose;
-      accentPrimary = accent.primary;
-      accentHover = accent.hover;
-      accentGlow = accent.glow;
-    }
+    root.style.setProperty('--choice-active-bg', pal.choiceActiveBg);
+    root.style.setProperty('--choice-active-text', pal.choiceActiveText);
+    root.style.setProperty('--choice-inactive-bg', pal.choiceInactiveBg);
+    root.style.setProperty('--choice-inactive-text', pal.choiceInactiveText);
 
-    root.style.setProperty('--accent-primary', accentPrimary);
-    root.style.setProperty('--accent-primary-hover', accentHover);
-    root.style.setProperty('--accent-glow', accentGlow);
-    root.style.setProperty('--text-on-accent', getContrastColor(accentPrimary));
-
-    if (this.tokens.accent === 'rgb') {
+    if (this.tokens.accent === 'rgb' && !this.overrideAccent) {
       root.classList.add('accent-rgb');
     } else {
       root.classList.remove('accent-rgb');

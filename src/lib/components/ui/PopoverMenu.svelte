@@ -16,6 +16,7 @@
     width?: string;
     class?: string;
     menuClass?: string;
+    anchorEl?: HTMLElement | null;
     trigger?: Snippet<[{ toggle: (e: MouseEvent) => void; open: boolean; active: boolean }]>;
     children?: Snippet<[{ close: () => void }]>;
   }
@@ -31,6 +32,7 @@
     width = 'min(330px, calc(100vw - 32px))',
     class: extraClass = '',
     menuClass = '',
+    anchorEl,
     trigger,
     children
   }: Props = $props();
@@ -49,11 +51,12 @@
   }
 
   async function updatePosition() {
-    if (!rootEl || !dropdownEl) return;
+    const referenceEl = anchorEl ?? rootEl;
+    if (!referenceEl || !dropdownEl) return;
 
     const placement = align === 'left' ? 'bottom-start' : 'bottom-end';
 
-    const { x, y } = await computePosition(rootEl, dropdownEl, {
+    const { x, y } = await computePosition(referenceEl, dropdownEl, {
       placement,
       strategy: 'fixed',
       middleware: [
@@ -83,9 +86,10 @@
   }
 
   $effect(() => {
-    if (open && rootEl && dropdownEl) {
+    const referenceEl = anchorEl ?? rootEl;
+    if (open && referenceEl && dropdownEl) {
       cleanupAutoUpdate?.();
-      cleanupAutoUpdate = autoUpdate(rootEl, dropdownEl, () => {
+      cleanupAutoUpdate = autoUpdate(referenceEl, dropdownEl, () => {
         void updatePosition();
       });
     } else {
@@ -100,12 +104,12 @@
   });
 
   function handleWindowPointerDown(event: PointerEvent) {
-    if (!open || !rootEl) return;
+    if (!open) return;
     const target = event.target as HTMLElement;
     if (target.closest('.select-dropdown-portal') || target.closest('[data-portal-keep-open]')) return;
-    if (!rootEl.contains(target) && !dropdownEl?.contains(target)) {
-      open = false;
-    }
+    const referenceEl = anchorEl ?? rootEl;
+    if (referenceEl?.contains(target) || rootEl?.contains(target) || dropdownEl?.contains(target)) return;
+    open = false;
   }
 
   function handleWindowKeyDown(event: KeyboardEvent) {
@@ -121,10 +125,11 @@
   bind:this={rootEl}
   class="popover-menu-root {extraClass}"
   data-popover-menu
+  style={anchorEl ? 'display: contents;' : undefined}
 >
   {#if trigger}
     {@render trigger({ toggle, open, active })}
-  {:else}
+  {:else if !anchorEl}
     <div class="popover-trigger-wrapper">
       <Button
         variant={triggerVariant ?? (open || active ? 'accent' : 'ghost')}
@@ -138,12 +143,12 @@
         {#if icon}
           {#if typeof icon === 'function'}
             {@const IconComp = icon}
-            <IconComp class="w-5 h-5" />
+            <IconComp />
           {:else}
             {@render icon()}
           {/if}
         {:else}
-          <IconFilter class="w-5 h-5" />
+          <IconFilter />
         {/if}
       </Button>
 

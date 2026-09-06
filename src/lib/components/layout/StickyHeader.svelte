@@ -76,8 +76,8 @@
       {:else}
         <div class="sticky-leading-zone">
           {#if back}
-            <Button variant="ghost" size="sm" onclick={handleBack} class="btn-icon">
-              <IconArrowLeft class="w-4 h-4" />
+            <Button variant="ghost" size="md" onclick={handleBack} class="btn-icon">
+              <IconArrowLeft class="w-5 h-5" />
             </Button>
           {/if}
 
@@ -93,7 +93,7 @@
             {@render leading()}
           {/if}
 
-          {#if center && !layoutState.isMobile}
+          {#if center && (!layoutState.isMobile || !title)}
             <div class="sticky-inline-tabs">
               {@render center()}
             </div>
@@ -135,6 +135,14 @@
     pointer-events: auto;
   }
 
+  .sticky-header-bar {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 20px);
+    --control-radius: var(--control-radius-md, var(--radius-full));
+  }
+
   .sticky-header-content {
     display: flex;
     align-items: center;
@@ -143,6 +151,12 @@
     padding: 0 36px;
     gap: 16px;
     position: relative;
+
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 20px);
+    --control-radius: var(--control-radius-md, var(--radius-full));
   }
 
   .sticky-leading-zone {
@@ -192,7 +206,35 @@
 
   .sticky-header-bar.is-mobile .sticky-header-content {
     height: 56px;
-    padding: 0 16px;
+    padding: 0 12px;
     gap: 8px;
+  }
+
+  .sticky-header-bar.is-mobile .sticky-leading-zone {
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    padding-right: 20px;
+  }
+
+  .sticky-header-bar.is-mobile .sticky-leading-zone:not(:has(.btn-icon)) {
+    margin-left: -12px;
+    padding-left: 12px;
+  }
+
+  .sticky-header-bar.is-mobile .sticky-leading-zone::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sticky-leading-zone :global(.choice-group),
+  .sticky-inline-tabs :global(.choice-group) {
+    flex-wrap: nowrap !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
   }
 </style>

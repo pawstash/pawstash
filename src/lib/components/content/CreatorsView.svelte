@@ -22,11 +22,13 @@
   import { creatorAvatarUrl, formatProviderName } from '$lib/utils/media';
   import { thumbHashToUrl } from '$lib/utils/thumbhash';
   import { notify } from '$lib/utils/toast';
-  import { tooltip } from '$lib/motion';
+  import { tooltip, ripple } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
+  import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
 
   import IconRefresh from '~icons/fluent/arrow-sync-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
@@ -47,6 +49,7 @@
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconPersonDelete from '~icons/fluent/person-delete-24-regular';
   import IconHeart from '~icons/fluent/heart-24-regular';
+  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
 
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, toggleFilterKey } from '$lib/types/filter';
@@ -211,10 +214,17 @@
 
   let currentSortValue = $derived(`${creatorsState.sortBy}_${creatorsState.sortOrder}`);
 
+  let currentSortLabel = $derived.by(() => {
+    const opt = sortOptions.find((o) => o.value === currentSortValue);
+    return opt?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+  });
+
   function handleSortChange(val: string) {
     const parts = val.split('_');
     creatorsState.sortBy = parts[0] as any;
     creatorsState.sortOrder = parts[1] as any;
+    visibleCount = 80;
+    scrollContext?.viewport?.scrollTo({ top: 0 });
   }
 
   let subscribedKeys = $derived(
@@ -241,6 +251,17 @@
     }
     return totalLength > visibleCount;
   });
+
+  let mobileMoreOpen = $state(false);
+
+  let creatorTabOptions = $derived<ChoiceOption<'all' | 'subscribed'>[]>([
+    { value: 'all', label: i18n.t('creators.tab_all') || 'All' },
+    {
+      value: 'subscribed',
+      label: i18n.t('creators.tab_subscribed') || 'Subscriptions',
+      count: subscriptionState.items.length
+    }
+  ]);
 
   function selectTab(tab: 'all' | 'subscribed') {
     creatorsState.activeTab = tab;
@@ -446,24 +467,25 @@
 {/snippet}
 
 {#snippet creatorTabs()}
-  <nav class="creators-tabs" aria-label={i18n.t('creators.title') || 'Creators'}>
-    <Button
-      variant={activeTab === 'all' ? 'accent' : 'ghost'}
-      onclick={() => selectTab('all')}
-      class="creators-tab-btn"
-    >
-      <span>{i18n.t('creators.tab_all') || 'All'}</span>
-    </Button>
-
-    <Button
-      variant={activeTab === 'subscribed' ? 'accent' : 'ghost'}
-      onclick={() => selectTab('subscribed')}
-      class="creators-tab-btn"
-    >
-      <span>{i18n.t('creators.tab_subscribed') || 'Subscribed'}</span>
-      <CountBadge count={subscriptionState.items.length} />
-    </Button>
-  </nav>
+  <ChoiceGroup
+    options={creatorTabOptions}
+    value={activeTab}
+    onchange={(val) => selectTab(val as 'all' | 'subscribed')}
+    align="left"
+    class="creators-mode-choice"
+  >
+    {#snippet activeAddon()}
+      <Select
+        options={sortOptions}
+        value={currentSortValue}
+        onchange={handleSortChange}
+        class="creators-sort-select"
+        icon={IconArrowSort}
+        iconOnly={true}
+        ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+      />
+    {/snippet}
+  </ChoiceGroup>
 {/snippet}
 
 {#snippet creatorsFilter(sticky = false)}
@@ -496,49 +518,64 @@
     bind:searchQuery={creatorsState.searchQuery}
     searchPlaceholder={i18n.t('creators.search_placeholder') || 'Search creators...'}
   >
-    <Button
-      variant={isSelectionActive ? 'accent' : 'ghost'}
-      class="btn-icon"
-      onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('creators'))}
-      title={i18n.t('selection.select_mode') || 'Select mode'}
-      aria-label="Select mode"
-    >
-      <IconCheckboxChecked class="w-5 h-5" />
-    </Button>
+    {#if !layoutState.isMobile}
+      <Button
+        variant={isSelectionActive ? 'accent' : 'ghost'}
+        class="btn-icon"
+        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('creators'))}
+        title={i18n.t('selection.select_mode') || 'Select mode'}
+        aria-label="Select mode"
+      >
+        <IconCheckboxChecked class="w-5 h-5" />
+      </Button>
 
-    <Button
-      variant="ghost"
-      class="btn-icon"
-      disabled={creatorsState.loading}
-      aria-label={i18n.t('feed.refresh')}
-      title={i18n.t('feed.refresh')}
-      onclick={handleRefresh}
-    >
-      {#if creatorsState.loading}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
-    </Button>
+      <Button
+        variant="ghost"
+        class="btn-icon"
+        disabled={creatorsState.loading}
+        aria-label={i18n.t('feed.refresh')}
+        title={i18n.t('feed.refresh')}
+        onclick={handleRefresh}
+      >
+        {#if creatorsState.loading}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
+      </Button>
 
-    {@render creatorsFilter(sticky)}
+      {@render creatorsFilter(sticky)}
+    {:else}
+      {@render creatorsFilter(sticky)}
+
+      {#if isSelectionActive}
+        <Button
+          variant="accent"
+          size="sm"
+          class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
+          onclick={() => selectionState.exit()}
+          title={i18n.t('common.done') || 'Done'}
+          aria-label="Exit selection mode"
+        >
+          <IconCheckmark class="w-4 h-4" />
+          <span>{i18n.t('common.done') || 'Done'}</span>
+        </Button>
+      {:else}
+        <Button
+          variant="ghost"
+          class="btn-icon"
+          onclick={() => (mobileMoreOpen = true)}
+          title={i18n.t('common.more') || 'More'}
+          aria-label="More actions"
+        >
+          <IconMoreVertical class="w-5 h-5" />
+        </Button>
+      {/if}
+    {/if}
   </HeaderActions>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={handleRefresh} onscroll={handleScroll}>
   {#snippet overlay()}
-    <StickyHeader threshold={120} title={i18n.t('creators.title') || 'Creators'}>
+    <StickyHeader threshold={120}>
       {#snippet center()}
-        <div class="flex items-center gap-2">
-          {@render creatorTabs()}
-          <Select
-            variant="ghost"
-            options={sortOptions}
-            value={currentSortValue}
-            onchange={handleSortChange}
-            class="creators-sort-select"
-            style="height: 44px;"
-            icon={IconArrowSort}
-            iconOnly={layoutState.isMobile}
-            ariaLabel={i18n.t('favorites.sort_by') || 'Sort'}
-          />
-        </div>
+        {@render creatorTabs()}
       {/snippet}
       {#snippet trailing()}
         {@render actionsCluster(true)}
@@ -548,20 +585,7 @@
 
   <PageHeader>
     {#snippet tabs()}
-      <div class="flex items-center gap-2">
-        {@render creatorTabs()}
-        <Select
-          variant="ghost"
-          options={sortOptions}
-          value={currentSortValue}
-          onchange={handleSortChange}
-          class="creators-sort-select"
-          style="height: 44px;"
-          icon={IconArrowSort}
-          iconOnly={layoutState.isMobile}
-          ariaLabel={i18n.t('favorites.sort_by') || 'Sort'}
-        />
-      </div>
+      {@render creatorTabs()}
     {/snippet}
     {#snippet actions()}
       {@render actionsCluster(false)}
@@ -738,26 +762,104 @@
   </Button>
 </SelectionActionBar>
 
+{#if layoutState.isMobile}
+  <BottomSheet
+    open={mobileMoreOpen}
+    title={i18n.t('common.more') || 'More'}
+    onclose={() => (mobileMoreOpen = false)}
+  >
+    <div class="flex flex-col gap-1 py-1">
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          selectionState.enter('creators');
+        }}
+      >
+        <IconCheckboxChecked class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select creators'}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        disabled={creatorsState.loading}
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          void handleRefresh();
+        }}
+      >
+        {#if creatorsState.loading}
+          <IconLoading class="text-accent" />
+        {:else}
+          <IconArrowClockwise class="text-secondary" />
+        {/if}
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+        </div>
+      </button>
+    </div>
+  </BottomSheet>
+{/if}
+
 <style>
-  .creators-tabs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+
+  :global(.creators-mode-choice) {
+    flex-shrink: 0 !important;
   }
 
-  :global(.select-root.creators-sort-select) {
+  :global(.creators-sort-select) {
     width: auto !important;
     max-width: none !important;
     flex-shrink: 0 !important;
-    flex: none !important;
-    margin: 0 !important;
   }
 
-  :global(.select-root.creators-sort-select .select-trigger.variant-ghost) {
-    min-width: 80px !important;
-    width: auto !important;
-    max-width: none !important;
+  :global(.creators-sort-select .select-trigger),
+  :global(.creators-sort-select .select-trigger.icon-only) {
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
+    background: var(--accent-container) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border: none !important;
+    box-shadow: none !important;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
+  }
+
+  :global(.creators-sort-select .select-trigger:hover),
+  :global(.creators-sort-select .select-trigger.icon-only:hover) {
+    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+  }
+
+  :global(.creators-sort-select .select-trigger:active),
+  :global(.creators-sort-select .select-trigger.icon-only:active) {
+    opacity: 0.85 !important;
+  }
+
+  :global(.creators-sort-select .select-trigger svg),
+  :global(.creators-sort-select .select-trigger.icon-only svg) {
+    width: 20px !important;
+    height: 20px !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    opacity: 1 !important;
   }
 
   .status-container {

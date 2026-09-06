@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { backgroundState, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
+  import { themeState } from '$lib/theme/themeState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   onMount(() => {
@@ -51,6 +52,12 @@
       <div
         class="custom-background-media bg-cover bg-center"
         style="background-image: url('{imgSrc}'); {filterStyle}"
+      ></div>
+    {:else if settings.customKind === 'palette'}
+      {@const p = themeState.palette}
+      <div
+        class="custom-background-media"
+        style="background: radial-gradient(circle at 18% 22%, {p.quadrants[0]}44 0%, transparent 48%), radial-gradient(circle at 82% 16%, {p.quadrants[1]}38 0%, transparent 44%), radial-gradient(circle at 75% 78%, {p.quadrants[3]}34 0%, transparent 52%), radial-gradient(circle at 22% 82%, {p.quadrants[2]}2e 0%, transparent 46%), linear-gradient(135deg, #07090e 0%, #0f121a 100%); {filterStyle}"
       ></div>
     {:else}
       <div

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
+  import { themeState } from '$lib/theme/themeState.svelte';
   import { formatBytes } from '$lib/utils/formatters';
   import type { DownloadItem } from '$lib/types/download';
 
@@ -54,34 +55,35 @@
       else { fileBytes += bytes; fileCount++; }
     }
 
+    const p = themeState.palette;
     const categories = [
       {
         id: 'video' as MediaType,
         label: i18n.t('feed.format_video'),
         bytes: videoBytes,
         count: videoCount,
-        color: '#38bdf8'
+        color: p.primary
       },
       {
         id: 'image' as MediaType,
         label: i18n.t('feed.format_photo'),
         bytes: imageBytes,
         count: imageCount,
-        color: '#a855f7'
+        color: p.quadrants[1]
       },
       {
         id: 'audio' as MediaType,
         label: i18n.t('feed.format_audio'),
         bytes: audioBytes,
         count: audioCount,
-        color: '#34d399'
+        color: p.quadrants[3]
       },
       {
         id: 'file' as MediaType,
         label: i18n.t('feed.format_archive'),
         bytes: fileBytes,
         count: fileCount,
-        color: '#fbbf24'
+        color: p.quadrants[2]
       }
     ]
       .filter((c) => c.bytes > 0)

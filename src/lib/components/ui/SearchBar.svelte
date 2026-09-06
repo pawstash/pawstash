@@ -182,8 +182,8 @@
   .search-input-field {
     width: 100%;
     height: 44px;
-    padding: 0 44px 1.5px 40px;
-    background: var(--bg-card);
+    padding: 0 44px 0 40px;
+    background: var(--input-bg, rgba(255, 255, 255, 0.06));
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
     color: var(--text-primary);
@@ -198,17 +198,17 @@
   }
 
   .search-input-field::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
+    color: var(--text-secondary);
+    opacity: 0.85;
   }
 
   .search-input-field:hover {
-    background: var(--bg-card-hover);
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
     border-color: var(--border-color-hover);
   }
 
   .search-input-field:focus {
-    background: var(--bg-card-hover);
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
     border-color: var(--border-color-focus);
     box-shadow: 0 0 0 2px var(--accent-glow);
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
+  import { computePosition, autoUpdate, flip, shift, offset, size as floatingSize } from '@floating-ui/dom';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import { i18n } from '$lib/i18n';
@@ -16,6 +16,7 @@
   }
 
   interface Props {
+    size?: 'sm' | 'base' | 'md' | 'lg';
     value?: string;
     placeholder?: string;
     tags?: TemplateTag[];
@@ -34,6 +35,7 @@
     disabled = false,
     onchange,
     onblur,
+    size,
     class: extraClass = ''
   }: Props = $props();
 
@@ -157,9 +159,9 @@
         offset(6),
         flip({ fallbackPlacements: ['top-start', 'bottom-end', 'top-end'], padding: 12 }),
         shift({ padding: 12 }),
-        size({
+        floatingSize({
           padding: 12,
-          apply({ availableHeight, elements }) {
+          apply({ availableHeight, elements }: { availableHeight: number; elements: any }) {
             Object.assign(elements.floating.style, {
               maxHeight: `${Math.min(availableHeight, 320)}px`
             });
@@ -287,7 +289,7 @@
 
 <div class="template-input-wrapper {extraClass}" bind:this={rootEl}>
   <div
-    class="template-box"
+    class="template-box {size ? `size-${size}` : ''}"
     class:is-disabled={disabled}
     class:is-open={isOpen}
   >
@@ -320,7 +322,7 @@
           aria-label="Preview template result"
           tabindex="-1"
         >
-          <IconEye style="width: 18px; height: 18px;" />
+          <IconEye />
         </button>
       {/if}
 
@@ -341,7 +343,7 @@
         aria-label="Insert variable"
         tabindex="-1"
       >
-        <IconCode style="width: 18px; height: 18px;" />
+        <IconCode />
       </button>
     </div>
   </div>
@@ -391,12 +393,12 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: 46px;
-    padding: 0 14px;
-    gap: 10px;
-    background: var(--bg-card);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-full);
+    height: calc(var(--control-height, 34px) * var(--ui-scale, 1));
+    padding: 0 calc(var(--control-padding-x, 12px) * var(--ui-scale, 1));
+    gap: calc(8px * var(--ui-scale, 1));
+    background: var(--input-bg, rgba(255, 255, 255, 0.06));
+    border: none;
+    border-radius: calc(var(--radius-md) * var(--ui-scale, 1));
     box-sizing: border-box;
     outline: none !important;
     box-shadow: none !important;
@@ -404,17 +406,44 @@
                 border-color var(--duration-fast) var(--ease-expo);
   }
 
+  .template-box.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12.5px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+    --control-padding-x: var(--control-padding-sm, 10px);
+  }
+
+  .template-box.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+    --control-padding-x: var(--control-padding-base, 12px);
+  }
+
+  .template-box.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 14px);
+  }
+
+  .template-box.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 15px);
+    --control-icon-size: var(--control-icon-lg, 22px);
+    --control-padding-x: var(--control-padding-lg, 18px);
+  }
+
   .template-box:hover,
   .template-box:focus-within,
   .template-box.is-open {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
   }
 
   .template-box:focus-visible,
   .template-box:has(:focus-visible) {
-    border-color: var(--border-color-focus);
-    outline: none !important;
+    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary) !important;
+    outline-offset: calc(-1.5px * var(--ui-scale, 1)) !important;
     box-shadow: none !important;
   }
 
@@ -434,9 +463,14 @@
     box-shadow: none !important;
     padding: 0;
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: calc(var(--control-font-size, 13px) * var(--ui-scale, 1));
     font-family: var(--font-sans);
     box-sizing: border-box;
+  }
+
+  .icon-btn :global(svg) {
+    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
   }
 
   .native-input:focus,
@@ -447,9 +481,8 @@
   }
 
   .native-input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
-    font-size: 13px;
+    color: var(--text-secondary);
+    opacity: 0.85;
   }
 
   .right-actions {

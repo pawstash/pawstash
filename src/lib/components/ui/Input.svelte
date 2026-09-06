@@ -28,6 +28,7 @@
     onkeydown?: (e: KeyboardEvent) => void;
     autofocus?: boolean;
     ref?: HTMLInputElement | null;
+    size?: 'sm' | 'base' | 'md' | 'lg';
     class?: string;
   }
 
@@ -42,6 +43,7 @@
     clearable = false,
     autofocus = false,
     ref = $bindable(),
+    size,
     icon: IconComponent,
     left,
     right,
@@ -77,13 +79,13 @@
 </script>
 
 <div
-  class="input-box {extraClass}"
+  class="input-box {size ? `size-${size}` : ''} {extraClass}"
   class:is-disabled={disabled}
   class:is-readonly={readonly}
 >
   {#if IconComponent}
     <div class="left-icon" aria-hidden="true">
-      <IconComponent style="width: 19px; height: 19px;" />
+      <IconComponent />
     </div>
   {:else if left}
     <div class="left-icon">
@@ -186,33 +188,69 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: 46px;
-    padding: 0 14px 1.5px 14px;
-    gap: 10px;
-    background: var(--bg-card);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-full);
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
+    padding: 0 calc(var(--control-padding-x, 14px) * var(--ui-scale, 1));
+    gap: calc(8px * var(--ui-scale, 1));
+    background: var(--input-bg, rgba(255, 255, 255, 0.06));
+    border: none;
+    border-radius: calc(var(--radius-md) * var(--ui-scale, 1));
     box-sizing: border-box;
-    font-size: 14px;
+    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
     font-family: var(--font-sans);
     line-height: normal;
     color: var(--text-primary);
     outline: none !important;
     box-shadow: none !important;
-    transition: background var(--duration-fast) var(--ease-expo),
-                border-color var(--duration-fast) var(--ease-expo);
+    transition: background var(--duration-fast) var(--ease-expo);
+  }
+
+  .input-box.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12.5px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+    --control-padding-x: var(--control-padding-sm, 12px);
+  }
+
+  .input-box.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+    --control-padding-x: var(--control-padding-base, 14px);
+  }
+
+  .input-box.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 16px);
+  }
+
+  .input-box.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 15px);
+    --control-icon-size: var(--control-icon-lg, 22px);
+    --control-padding-x: var(--control-padding-lg, 20px);
+  }
+
+  .input-box :global(.left-icon svg) {
+    width: calc(var(--control-icon-size, 19px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 19px) * var(--ui-scale, 1)) !important;
+  }
+
+  .input-box :global(.icon-btn svg) {
+    width: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
   }
 
   .input-box:hover,
   .input-box:focus-within {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
   }
 
   .input-box:focus-visible,
   .input-box:has(:focus-visible) {
-    border-color: var(--border-color-focus);
-    outline: none !important;
+    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary) !important;
+    outline-offset: calc(-1.5px * var(--ui-scale, 1)) !important;
     box-shadow: none !important;
   }
 
@@ -261,9 +299,8 @@
   }
 
   .native-input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
-    font-size: 13px;
+    color: var(--text-secondary);
+    opacity: 0.85;
   }
 
   .right-actions {

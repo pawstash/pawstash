@@ -93,6 +93,9 @@
                 <data android:host="fansly.com" />
                 <data android:host="www.fansly.com" />
             </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
         <service

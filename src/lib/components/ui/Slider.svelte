@@ -1,5 +1,6 @@
 <script lang="ts">
   interface Props {
+    size?: 'sm' | 'base' | 'md' | 'lg';
     value: number;
     min?: number;
     max?: number;
@@ -13,6 +14,7 @@
     min = 0,
     max = 100,
     step = 1,
+    size,
     class: extraClass = '',
     oninput
   }: Props = $props();
@@ -21,7 +23,7 @@
   let isDragging = $state(false);
 </script>
 
-<div class="m3-slider {extraClass}" class:dragging={isDragging}>
+<div class="m3-slider {size ? `size-${size}` : ''} {extraClass}" class:dragging={isDragging}>
   <div class="slider-track">
     <div class="track-active" style="width: {percent}%;"></div>
     <div class="track-inactive" style="width: {100 - percent}%;"></div>
@@ -56,9 +58,29 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: 46px;
+    height: calc(var(--control-height, 34px) * var(--ui-scale, 1));
     cursor: pointer;
     touch-action: none;
+  }
+
+  .m3-slider.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+  }
+
+  .m3-slider.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-icon-size: var(--control-icon-base, 18px);
+  }
+
+  .m3-slider.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-icon-size: var(--control-icon-md, 20px);
+  }
+
+  .m3-slider.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-icon-size: var(--control-icon-lg, 22px);
   }
 
   .slider-track {
@@ -113,8 +135,8 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 20px;
-    height: 20px;
+    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1));
+    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1));
     border-radius: 50%;
     background: #ffffff;
     transform: translate(-50%, -50%) scale(1);
@@ -136,8 +158,8 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0);
     transform: translate(-50%, -50%);

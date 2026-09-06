@@ -166,7 +166,11 @@
             openViewer={navigationState.route.openViewer}
           />
         {:else if navigationState.route.name === 'creator'}
-          <CreatorPage service={navigationState.route.service} creatorId={navigationState.route.creatorId} />
+          <CreatorPage
+            service={navigationState.route.service}
+            creatorId={navigationState.route.creatorId}
+            initialTag={navigationState.route.initialTag}
+          />
         {:else if navigationState.route.name === 'settings'}
           <SettingsModal />
         {:else}

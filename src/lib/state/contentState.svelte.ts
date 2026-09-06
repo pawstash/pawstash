@@ -199,10 +199,15 @@ export class ContentState {
     return this.creators[key];
   }
 
-  async loadCreator(service: string, creatorId: string) {
+  async loadCreator(service: string, creatorId: string, autoFetchPosts = false) {
     const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, creatorId);
-    if (entry.loaded || entry.loading) return;
+    if (entry.loaded || entry.loading) {
+      if (entry.loaded && autoFetchPosts && entry.hasMore && !entry.loadingMore) {
+        void this.autoFetchAllCreatorPosts(service, creatorId);
+      }
+      return;
+    }
 
     const cachedName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
     const placeholderProfile: CreatorProfile = entry.profile && entry.profile.name !== creatorId ? entry.profile : {
@@ -234,9 +239,7 @@ export class ContentState {
       let finalProfile: CreatorProfile = placeholderProfile;
       if (profileResult.status === 'fulfilled' && profileResult.value) {
         finalProfile = profileResult.value;
-      }
-
-      if (finalProfile.name === creatorId || !finalProfile.name) {
+      } else {
         const foundName = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
         if (foundName && foundName !== creatorId) {
           finalProfile = { ...finalProfile, name: foundName };
@@ -273,6 +276,9 @@ export class ContentState {
         error: null
       };
       logger.info(`[Content] Loaded ${posts.length} posts for ${service}:${creatorId}`);
+      if (autoFetchPosts && this.creators[key].hasMore) {
+        void this.autoFetchAllCreatorPosts(service, creatorId);
+      }
     } catch (error) {
       const cur = this.creators[key] ?? entry;
       this.creators[key] = {
@@ -288,6 +294,8 @@ export class ContentState {
     const key = creatorCacheKey(service, creatorId);
     const entry = this.getCreator(service, creatorId);
     if (entry.loading) return;
+
+    this.stopAutoFetchCreatorPosts(service, creatorId);
 
     this.creators[key] = {
       ...entry,
@@ -342,6 +350,9 @@ export class ContentState {
         error: null
       };
       logger.info(`[Content] Refreshed ${posts.length} posts for ${service}:${creatorId}`);
+      if (this.creators[key].hasMore) {
+        void this.autoFetchAllCreatorPosts(service, creatorId);
+      }
     } catch (error) {
       const cur = this.creators[key] ?? entry;
       this.creators[key] = {
@@ -350,6 +361,90 @@ export class ContentState {
         error: errorMessage(error)
       };
       logger.error(`Error refreshing creator ${service}:${creatorId}`, error);
+    }
+  }
+
+  private creatorFetchTokens = new Map<string, number>();
+
+  stopAutoFetchCreatorPosts(service: string, creatorId: string) {
+    const key = creatorCacheKey(service, creatorId);
+    const token = (this.creatorFetchTokens.get(key) || 0) + 1;
+    this.creatorFetchTokens.set(key, token);
+    const cur = this.creators[key];
+    if (cur && cur.loadingMore) {
+      this.creators[key] = { ...cur, loadingMore: false };
+    }
+  }
+
+  async autoFetchAllCreatorPosts(service: string, creatorId: string) {
+    const key = creatorCacheKey(service, creatorId);
+    const token = (this.creatorFetchTokens.get(key) || 0) + 1;
+    this.creatorFetchTokens.set(key, token);
+
+    let consecutiveErrors = 0;
+
+    while (true) {
+      if (this.creatorFetchTokens.get(key) !== token) {
+        break;
+      }
+
+      const entry = this.getCreator(service, creatorId);
+      if (!entry.hasMore || entry.loading || entry.error) {
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      if (this.creatorFetchTokens.get(key) !== token) {
+        break;
+      }
+
+      const curEntry = this.getCreator(service, creatorId);
+      if (!curEntry.hasMore) break;
+      this.creators[key] = { ...curEntry, loadingMore: true };
+
+      try {
+        const offset = curEntry.offset;
+        const posts = await apiFetchCreatorPosts(service, creatorId, undefined, offset);
+
+        if (this.creatorFetchTokens.get(key) !== token) {
+          break;
+        }
+
+        consecutiveErrors = 0;
+        const cur = this.creators[key] ?? curEntry;
+        const hasMore = posts.length === PAGE_SIZE;
+
+        const existingIds = new Set(cur.posts.map((p) => p.id));
+        const newPosts = posts.filter((p) => !existingIds.has(p.id));
+
+        this.creators[key] = {
+          ...cur,
+          posts: [...cur.posts, ...newPosts],
+          offset: cur.offset + PAGE_SIZE,
+          hasMore,
+          loadingMore: hasMore
+        };
+
+        if (!hasMore || posts.length === 0) {
+          this.creators[key] = { ...this.creators[key], loadingMore: false };
+          break;
+        }
+      } catch (err) {
+        consecutiveErrors++;
+        logger.warn(`[Content] Auto-fetch error (${consecutiveErrors}/3) for ${service}:${creatorId}:`, err);
+
+        if (consecutiveErrors >= 3 || this.creatorFetchTokens.get(key) !== token) {
+          const cur = this.creators[key] ?? curEntry;
+          this.creators[key] = {
+            ...cur,
+            loadingMore: false
+          };
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1500 * consecutiveErrors));
+      }
     }
   }
 
@@ -386,6 +481,7 @@ export class ContentState {
   }
 
   clearCreatorsCache() {
+    this.creatorFetchTokens.clear();
     this.creators = {};
     logger.info('[Content] Cleared creators cache');
   }

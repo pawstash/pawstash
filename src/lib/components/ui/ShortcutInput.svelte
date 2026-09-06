@@ -9,6 +9,7 @@
   import IconKeyboard from '~icons/fluent/keyboard-24-regular';
 
   interface Props {
+    size?: 'sm' | 'base' | 'md' | 'lg';
     value?: string;
     defaultValue?: string;
     presets?: string[];
@@ -23,6 +24,7 @@
     presets = ['H', 'Escape', 'Alt+X', 'Alt+Q', 'F11', 'F12', 'Ctrl+Alt+H', 'Ctrl+Shift+H', 'Space'],
     disabled = false,
     onchange,
+    size,
     class: extraClass = ''
   }: Props = $props();
 
@@ -178,7 +180,7 @@
 
 <div
   bind:this={fieldEl}
-  class="shortcut-box {extraClass}"
+  class="shortcut-box {size ? `size-${size}` : ''} {extraClass}"
   class:is-recording={isRecording}
   class:is-disabled={disabled}
   tabindex="0"
@@ -191,7 +193,7 @@
 >
   <!-- Left Inset Keyboard Icon -->
   <div class="left-icon">
-    <IconKeyboard style="width: 19px; height: 19px;" />
+    <IconKeyboard />
   </div>
 
   <!-- Key Tokens Display -->
@@ -275,7 +277,7 @@
         aria-label="Reset shortcut"
         tabindex="-1"
       >
-        <IconArrowReset style="width: 18px; height: 18px;" />
+        <IconArrowReset style="width: 16px; height: 16px;" />
       </button>
     {/if}
 
@@ -292,7 +294,7 @@
         aria-label="Clear shortcut"
         tabindex="-1"
       >
-        <IconDismiss style="width: 18px; height: 18px;" />
+        <IconDismiss style="width: 16px; height: 16px;" />
       </button>
     {/if}
   </div>
@@ -303,32 +305,58 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: 46px;
-    padding: 0 14px;
-    gap: 10px;
-    background: var(--bg-card);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-full);
+    height: calc(var(--control-height, 34px) * var(--ui-scale, 1));
+    padding: 0 calc(var(--control-padding-x, 10px) * var(--ui-scale, 1));
+    gap: calc(8px * var(--ui-scale, 1));
+    background: var(--input-bg, rgba(255, 255, 255, 0.06));
+    border: none;
+    border-radius: calc(var(--radius-md) * var(--ui-scale, 1));
     box-sizing: border-box;
     cursor: pointer;
     outline: none !important;
     box-shadow: none !important;
     user-select: none;
-    transition: background var(--duration-fast) var(--ease-expo),
-                border-color var(--duration-fast) var(--ease-expo);
+    transition: background var(--duration-fast) var(--ease-expo);
+  }
+
+  .shortcut-box.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12.5px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+    --control-padding-x: var(--control-padding-sm, 10px);
+  }
+
+  .shortcut-box.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+    --control-padding-x: var(--control-padding-base, 12px);
+  }
+
+  .shortcut-box.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 14px);
+  }
+
+  .shortcut-box.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 15px);
+    --control-icon-size: var(--control-icon-lg, 22px);
+    --control-padding-x: var(--control-padding-lg, 16px);
   }
 
   .shortcut-box:hover,
   .shortcut-box:focus {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
   }
 
   .shortcut-box:focus-visible,
   .shortcut-box.is-recording {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-focus);
-    outline: none !important;
+    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
+    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary) !important;
+    outline-offset: calc(-1.5px * var(--ui-scale, 1)) !important;
     box-shadow: none !important;
   }
 
@@ -363,20 +391,26 @@
     overflow: hidden;
   }
 
+  .left-icon :global(svg) {
+    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
+  }
+
   .key-chip {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 24px;
-    padding: 0 8px;
+    height: calc((var(--control-height, 34px) - 12px) * var(--ui-scale, 1));
+    min-height: 20px;
+    padding: 0 calc(7px * var(--ui-scale, 1));
     background: rgba(255, 255, 255, 0.08);
     border: none;
     border-radius: var(--radius-sm, 6px);
     box-shadow: none;
     color: var(--text-primary, #fff);
     font-family: var(--font-mono, monospace);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: calc(var(--control-font-size, 13px) * 0.88 * var(--ui-scale, 1));
+    font-weight: 500;
     line-height: 1;
   }
 

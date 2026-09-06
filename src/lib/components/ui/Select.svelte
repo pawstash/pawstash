@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, type Snippet } from 'svelte';
   import { OverlayScrollbars } from 'overlayscrollbars';
-  import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
+  import { computePosition, autoUpdate, flip, shift, offset, size as floatingSize } from '@floating-ui/dom';
   import { portal } from '$lib/actions/portal';
   import { ripple } from '$lib/motion';
   import { i18n } from '$lib/i18n';
@@ -10,12 +10,16 @@
   import IconAdd from '~icons/fluent/add-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
+  import StableWeightLabel from './StableWeightLabel.svelte';
+  import CountBadge from './CountBadge.svelte';
 
   export interface Option {
     value: string | number;
     label: string;
     icon?: any;
     color?: string;
+    count?: number | string | null;
+    showZero?: boolean;
   }
 
   interface Props {
@@ -37,6 +41,7 @@
     disabled?: boolean;
     align?: 'left' | 'right';
     open?: boolean;
+    size?: 'sm' | 'base' | 'md' | 'lg';
     trigger?: Snippet<[{ toggle: () => void; open: boolean; selectedLabel: string }]>;
   }
 
@@ -59,6 +64,7 @@
     disabled = false,
     align = 'left',
     open = $bindable(false),
+    size,
     trigger
   }: Props = $props();
 
@@ -87,6 +93,16 @@
     return variant;
   });
 
+  let selectedOption = $derived.by(() => {
+    if (selectedValues && selectedValues.length > 0) {
+      if (selectedValues.length === 1) {
+        return options.find((opt) => opt.value === selectedValues[0]);
+      }
+      return null;
+    }
+    return options.find((opt) => opt.value === value);
+  });
+
   let selectedLabel = $derived.by(() => {
     if (selectedValues && selectedValues.length > 0) {
       if (selectedValues.length === 1) {
@@ -97,6 +113,8 @@
     }
     return options.find((opt) => opt.value === value)?.label || placeholder || String(value);
   });
+
+  let selectedCount = $derived(selectedOption?.count);
 
   function isOptSelected(val: string | number) {
     if (selectedValues) {
@@ -126,7 +144,7 @@
         shift({
           padding: 12
         }),
-        size({
+        floatingSize({
           padding: 12,
           apply({ availableHeight, elements }) {
             Object.assign(elements.floating.style, {
@@ -272,7 +290,7 @@
       use:ripple
       onclick={toggle}
       disabled={disabled}
-      class="select-trigger variant-{effectiveVariant}"
+      class="select-trigger variant-{effectiveVariant} {size ? `size-${size}` : ''}"
       class:is-open={isOpen}
       class:is-disabled={disabled}
       class:has-selected={selectedValues ? selectedValues.length > 0 : Boolean(value)}
@@ -298,6 +316,9 @@
           </span>
         {/if}
         <span class="trigger-label">{selectedLabel}</span>
+        {#if selectedCount !== undefined && selectedCount !== null}
+          <CountBadge count={selectedCount} showZero={selectedOption?.showZero ?? true} variant="tab" class="trigger-count" />
+        {/if}
         {#if !disabled}
           <span class="trigger-chevron" class:flipped={isOpen}>
             <IconChevronDown />
@@ -337,7 +358,12 @@
               {#if opt.color}
                 <span class="option-color-dot" style:background={opt.color}></span>
               {/if}
-              <span class="option-label">{opt.label}</span>
+              <span class="option-label">
+                <StableWeightLabel text={opt.label} reserveWeight="var(--font-weight-semibold)" />
+              </span>
+              {#if opt.count !== undefined && opt.count !== null}
+                <CountBadge count={opt.count} showZero={opt.showZero ?? true} variant="tab" class="option-count" />
+              {/if}
               {#if active}
                 <IconCheckmark class="w-[15px] h-[15px] option-check" />
               {/if}
@@ -429,15 +455,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: calc(8px * var(--ui-scale, 1));
     width: 100%;
-    height: 46px;
-    padding: 0 16px 1.5px 16px;
-    background: var(--bg-card);
-    border: var(--border-width) solid var(--border-color);
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
+    padding: 0 calc(var(--control-padding-x, 16px) * var(--ui-scale, 1));
+    background: var(--select-bg);
+    border: none;
     border-radius: var(--radius-full);
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
     font-family: var(--font-sans);
     line-height: normal;
     cursor: pointer;
@@ -445,50 +471,78 @@
     outline: none;
     box-sizing: border-box;
     transition: background var(--duration-fast) var(--ease-expo),
-                border-color var(--duration-fast) var(--ease-expo),
                 color var(--duration-fast) var(--ease-expo);
   }
 
+  .select-trigger.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12.5px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+    --control-padding-x: var(--control-padding-sm, 12px);
+  }
+
+  .select-trigger.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+    --control-padding-x: var(--control-padding-base, 14px);
+  }
+
+  .select-trigger.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 16px);
+  }
+
+  .select-trigger.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 15px);
+    --control-icon-size: var(--control-icon-lg, 22px);
+    --control-padding-x: var(--control-padding-lg, 20px);
+  }
+
+  .select-trigger :global(.trigger-icon svg),
+  .select-trigger :global(.trigger-chevron svg) {
+    width: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
+  }
+
   .select-trigger.icon-only {
-    width: 46px !important;
-    min-width: 46px !important;
-    height: 46px !important;
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 !important;
     justify-content: center !important;
     border-radius: var(--radius-full) !important;
   }
 
   .select-trigger:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
+    background: var(--select-bg-hover);
   }
 
   .select-trigger:focus-visible {
-    border-color: var(--border-color-focus, var(--accent-primary));
-    box-shadow: 0 0 0 2px var(--accent-glow, rgba(255, 255, 255, 0.15));
+    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary);
+    outline-offset: calc(-1.5px * var(--ui-scale, 1));
   }
 
   .select-trigger.variant-ghost {
     background: transparent;
-    border-color: transparent;
     color: var(--text-secondary);
   }
 
   .select-trigger.variant-ghost:hover {
     background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
     color: var(--text-primary);
   }
 
   .select-trigger.variant-accent {
-    background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-    border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
-    color: var(--accent-primary);
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 
   .select-trigger.variant-accent:hover {
-    background: color-mix(in srgb, var(--accent-primary) 22%, transparent);
-    border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent);
+    background: color-mix(in srgb, var(--accent-container) 80%, var(--accent-primary));
   }
 
   .trigger-icon {
@@ -500,7 +554,7 @@
   }
 
   .trigger-label {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -517,6 +571,20 @@
     transition: transform var(--duration-normal) var(--ease-expo),
                 opacity var(--duration-normal) var(--ease-expo);
     flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  :global(.select-trigger .trigger-count) {
+    flex-shrink: 0;
+  }
+
+  :global(.select-option .option-count) {
+    flex-shrink: 0;
+  }
+
+  .select-option.is-selected :global(.option-count) {
+    background: color-mix(in srgb, currentColor 22%, transparent);
+    color: inherit;
   }
 
   .select-trigger:hover .trigger-chevron {
@@ -586,7 +654,7 @@
     gap: var(--floating-item-gap, 10px);
     width: 100%;
     height: var(--floating-item-height, 36px);
-    padding: 0 var(--floating-item-px, 12px) 1.5px var(--floating-item-px, 12px);
+    padding: 0 var(--floating-item-px, 12px);
     background: transparent;
     border: none;
     border-radius: var(--floating-item-radius, 12px);
@@ -609,13 +677,13 @@
   }
 
   .select-option.is-selected {
-    background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-    color: var(--accent-primary);
+    background: var(--accent-container);
+    color: var(--accent-on-container);
     font-weight: 550;
   }
 
   .select-option.is-selected:hover {
-    background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+    background: color-mix(in srgb, var(--accent-container) 80%, var(--accent-primary));
   }
 
   .option-color-dot {
@@ -714,9 +782,8 @@
   }
 
   .create-inline-input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.55;
-    font-size: 13px;
+    color: var(--text-secondary);
+    opacity: 0.85;
   }
 
   .create-inline-actions {

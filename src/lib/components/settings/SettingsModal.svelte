@@ -5,10 +5,12 @@
   import { onMount } from 'svelte';
   import {
     backgroundState,
+    defaultBackgroundType,
     supportedBackgroundTypes,
     type BackgroundType,
     type CustomBackgroundKind
   } from '$lib/theme/backgroundState.svelte';
+  import type { AppSettings } from '$lib/types/config';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { i18n, LOCALES, type Locale } from '$lib/i18n';
   import {
@@ -24,16 +26,18 @@
     type CacheStats
   } from '$lib/utils/ipc';
   import { formatBytes } from '$lib/utils/formatters';
+  import { formatProviderName } from '$lib/utils/media';
   import { APP_VERSION, BUILD_TIME, COMMIT_HASH } from '$lib/version';
   import { notify } from '$lib/utils/toast';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import SectionTitle from '$lib/components/layout/SectionTitle.svelte';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
-  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import ChoiceGroup from '$lib/components/ui/ChoiceGroup.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import Slider from '$lib/components/ui/Slider.svelte';
+  import NumberStepper from '$lib/components/ui/NumberStepper.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import TemplateInput, { type TemplateTag } from '$lib/components/ui/TemplateInput.svelte';
   import ShortcutInput from '$lib/components/ui/ShortcutInput.svelte';
@@ -52,12 +56,47 @@
   import IconGrid from '~icons/fluent/grid-24-regular';
   import IconDatabase from '~icons/fluent/database-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
+  import IconPaintBrush from '~icons/fluent/paint-brush-24-regular';
+  import IconEyedropper from '~icons/fluent/eyedropper-24-regular';
+  import IconDockRow from '~icons/fluent/dock-row-24-regular';
+  import IconBlur from '~icons/fluent/blur-24-regular';
+  import IconImageOff from '~icons/fluent/image-off-24-regular';
+  import IconWindowApps from '~icons/fluent/window-apps-24-regular';
+  import IconAlert from '~icons/fluent/alert-24-regular';
+  import IconWarning from '~icons/fluent/warning-24-regular';
+  import IconKeyboard from '~icons/fluent/keyboard-24-regular';
+  import IconWallpaper from '~icons/fluent/wallpaper-24-regular';
+  import IconColorFill from '~icons/fluent/color-fill-24-regular';
+  import IconCircleHalfFill from '~icons/fluent/circle-half-fill-24-regular';
+  import IconBrightnessHigh from '~icons/fluent/brightness-high-24-regular';
+  import IconZoomIn from '~icons/fluent/zoom-in-24-regular';
+  import IconCrop from '~icons/fluent/crop-24-regular';
+  import IconCardUi from '~icons/fluent/card-ui-24-regular';
+  import IconArrowRouting from '~icons/fluent/arrow-routing-24-regular';
+  import IconLink from '~icons/fluent/link-24-regular';
+  import IconShieldCheckmark from '~icons/fluent/shield-checkmark-24-regular';
+  import IconHardDrive from '~icons/fluent/hard-drive-24-regular';
+  import IconFolderPerson from '~icons/fluent/folder-person-24-regular';
+  import IconRename from '~icons/fluent/rename-24-regular';
+  import IconDocumentText from '~icons/fluent/document-text-24-regular';
+  import IconCode from '~icons/fluent/code-24-regular';
+  import IconRocket from '~icons/fluent/rocket-24-regular';
+  import IconArrowSplit from '~icons/fluent/arrow-split-24-regular';
+  import IconTasksApp from '~icons/fluent/tasks-app-24-regular';
+  import IconGauge from '~icons/fluent/gauge-24-regular';
+  import IconEraserMedium from '~icons/fluent/eraser-medium-24-regular';
+  import IconDocumentBulletList from '~icons/fluent/document-bullet-list-24-regular';
+  import IconInfo from '~icons/fluent/info-24-regular';
+  import IconBranchFork from '~icons/fluent/branch-fork-24-regular';
+  import IconImageMultiple from '~icons/fluent/image-multiple-24-regular';
   import type { AccentColor } from '$lib/theme/tokens';
   import { ripple } from '$lib/motion';
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import Button from '$lib/components/ui/Button.svelte';
-  import Modal from '$lib/components/ui/Modal.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import PaletteCircle from '$lib/components/ui/PaletteCircle.svelte';
+  import { PRESET_QUADRANTS, generateAccentPalette } from '$lib/theme/palette';
   import SyncSettings from './SyncSettings.svelte';
   import ProviderSettings from './ProviderSettings.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
@@ -87,6 +126,7 @@
   import { providerState } from '$lib/state/providerState.svelte';
 
   let settings = $state({ ...configState.settings });
+  let defaultSettings = $state<AppSettings>({ ...configState.settings });
   let resetPending = $state(false);
   let settingsMenuOpen = $state(false);
   let stickySettingsMenuOpen = $state(false);
@@ -141,22 +181,37 @@
     { value: 'bottom-left', label: i18n.t('settings.toast_bottom_left') }
   ]);
 
-  const categories = [
-    { id: 'appearance', labelKey: 'settings.appearance_section' },
-    { id: 'grid', labelKey: 'settings.grid_section' },
-    { id: 'proxy', labelKey: 'settings.proxy_section' },
-    { id: 'background', labelKey: 'settings.background_section' },
-    { id: 'providers', labelKey: 'settings.providers_section' },
-    { id: 'downloads', labelKey: 'settings.download_section' },
-    { id: 'cache', labelKey: 'settings.cache_section' },
-    { id: 'sync', labelKey: 'sync.title' },
-    { id: 'updates', labelKey: 'settings.updates_section' }
-  ];
+  const categories = $derived([
+    { id: 'appearance', label: i18n.t('settings.appearance_section') },
+    { id: 'background', label: i18n.t('settings.background_section') },
+    { id: 'grid', label: i18n.t('settings.grid_section') },
+    { id: 'providers', label: i18n.t('settings.providers_section') },
+    ...providerState.providers.map((p) => ({
+      id: `provider-${p.id}`,
+      label: formatProviderName(p.name || p.id)
+    })),
+    { id: 'proxy', label: i18n.t('settings.proxy_section') },
+    { id: 'downloads', label: i18n.t('settings.download_section') },
+    { id: 'cache', label: i18n.t('settings.cache_section') },
+    { id: 'sync', label: i18n.t('sync.title') },
+    { id: 'updates', label: i18n.t('settings.updates_section') }
+  ]);
+
+  const categoryOptions = $derived(
+    categories.map((c) => ({
+      value: c.id,
+      label: c.label
+    }))
+  );
 
   onMount(async () => {
     availableBackgroundTypes = supportedBackgroundTypes();
     try {
-      const loaded = await apiGetSettings();
+      const [loaded, defaults] = await Promise.all([
+        apiGetSettings(),
+        apiGetDefaultSettings()
+      ]);
+      defaultSettings = { ...defaults };
       configState.updateSettings(loaded);
       settings = { ...loaded };
       await loadCacheStats();
@@ -307,8 +362,15 @@
   }
 
   const isCustomActive = $derived(
-    !['violet', 'indigo', 'cyan', 'emerald', 'amber', 'rose', 'rgb'].includes(themeState.tokens.accent)
+    !['system', 'violet', 'indigo', 'cyan', 'emerald', 'amber', 'rose'].includes(themeState.tokens.accent)
   );
+
+  const customQuadrants = $derived.by<[string, string, string, string]>(() => {
+    if (isCustomActive && themeState.tokens.accent.startsWith('#')) {
+      return generateAccentPalette(themeState.tokens.accent).quadrants;
+    }
+    return ['#f43f5e', '#f59e0b', '#10b981', '#6366f1'];
+  });
 
   async function updateAndSaveSetting(key: keyof typeof settings, val: any) {
     const previousValue = settings[key];
@@ -323,6 +385,25 @@
       configState.updateSettings({ ...settings });
       notify.error(i18n.t('settings.save_failed') || 'Failed to save settings', err);
     }
+  }
+
+  function resetSetting<K extends keyof AppSettings>(key: K) {
+    const defVal = defaultSettings[key];
+    (settings as any)[key] = defVal;
+    void updateAndSaveSetting(key, defVal);
+  }
+
+  function resetPanicKey() {
+    const defKey = defaultSettings.panic_button_shortcut || 'H';
+    const defEnabled = defaultSettings.panic_button_enabled ?? true;
+    resetSetting('panic_button_shortcut');
+    void apiUpdatePanicKey(defKey, defEnabled);
+  }
+
+  function resetPanicEnabled() {
+    const defEnabled = defaultSettings.panic_button_enabled ?? true;
+    resetSetting('panic_button_enabled');
+    void apiUpdatePanicKey(settings.panic_button_shortcut || 'H', defEnabled);
   }
 
   function openCategory(id: string) {
@@ -342,7 +423,9 @@
         : 'smooth';
 
       for (const list of document.querySelectorAll<HTMLElement>('.settings-categories')) {
-        const button = list.querySelector<HTMLElement>(`[data-settings-category="${id}"]`);
+        const button =
+          list.querySelector<HTMLElement>(`[data-choice-value="${id}"]`) ||
+          list.querySelector<HTMLElement>(`[data-settings-category="${id}"]`);
         if (!button) continue;
 
         const listRect = list.getBoundingClientRect();
@@ -516,13 +599,13 @@
     availableBackgroundTypes.map((id) => ({ id, label: i18n.t(backgroundLabelKeys[id]) }))
   );
 
-  const accentColors: { id: AccentColor; color: string; label: string }[] = [
-    { id: 'violet', color: '#8b5cf6', label: 'Violet' },
-    { id: 'indigo', color: '#6366f1', label: 'Indigo' },
-    { id: 'cyan', color: '#06b6d4', label: 'Cyan' },
-    { id: 'emerald', color: '#10b981', label: 'Emerald' },
-    { id: 'amber', color: '#f59e0b', label: 'Amber' },
-    { id: 'rose', color: '#f43f5e', label: 'Rose' }
+  const presetAccents: { id: AccentColor; labelKey: string; quadrants: [string, string, string, string] }[] = [
+    { id: 'rose', labelKey: 'rose', quadrants: PRESET_QUADRANTS.rose },
+    { id: 'violet', labelKey: 'violet', quadrants: PRESET_QUADRANTS.violet },
+    { id: 'cyan', labelKey: 'cyan', quadrants: PRESET_QUADRANTS.cyan },
+    { id: 'emerald', labelKey: 'emerald', quadrants: PRESET_QUADRANTS.emerald },
+    { id: 'amber', labelKey: 'amber', quadrants: PRESET_QUADRANTS.amber },
+    { id: 'indigo', labelKey: 'indigo', quadrants: PRESET_QUADRANTS.indigo }
   ];
 
   let creatorFolderTags = $derived<TemplateTag[]>([
@@ -689,16 +772,13 @@
 
 {#snippet categoryTabs()}
   <nav class="settings-categories" aria-label={i18n.t('settings.categories')}>
-    {#each categories as category (category.id)}
-      <Button
-        variant={activeCategory === category.id ? 'accent' : 'ghost'}
-        onclick={() => openCategory(category.id)}
-        class="settings-category-btn"
-        data-settings-category={category.id}
-      >
-        {i18n.t(category.labelKey)}
-      </Button>
-    {/each}
+    <ChoiceGroup
+      options={categoryOptions}
+      value={activeCategory}
+      onchange={(val) => openCategory(String(val))}
+      align="left"
+      class="settings-category-choice"
+    />
   </nav>
 {/snippet}
 
@@ -810,11 +890,10 @@
     <div class="grid grid-cols-2 gap-2.5 w-full">
       <Button
         variant="ghost"
-        size="md"
-        class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
         onclick={() => openExternalUrl('https://nichind.dev')}
       >
-        <svg viewBox="0 0 106 78" fill="currentColor" class="w-5 h-4 opacity-70 shrink-0">
+        <svg viewBox="0 0 106 78" fill="currentColor" class="w-4 h-3.5 opacity-70 shrink-0">
           <path d="M106 78H71.7471L30.3184 30.6006V78H0V0H41.4277L106 78ZM106 24.375H87.873L67.7383 0H106V24.375Z" />
         </svg>
         <span class="truncate">nichind.dev</span>
@@ -822,11 +901,10 @@
 
       <Button
         variant="ghost"
-        size="md"
-        class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
         onclick={() => openExternalUrl('https://github.com/nichind')}
       >
-        <IconGithub class="w-5 h-5 opacity-70 shrink-0" />
+        <IconGithub class="w-4 h-4 opacity-70 shrink-0" />
         <span class="truncate">GitHub</span>
       </Button>
     </div>
@@ -843,7 +921,7 @@
     </StickyHeader>
   {/snippet}
 
-  <div class="settings-page">
+  <div class="settings-page" data-control-size="base">
     <div class="settings-toolbar">
       {@render categoryTabs()}
       {@render settingsMenu('main')}
@@ -919,41 +997,37 @@
         <div class="grid grid-cols-2 gap-2.5 w-full">
           <Button
             variant="ghost"
-            size="md"
-            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
             onclick={() => openExternalUrl('https://t.me/pawstashapp')}
           >
-            <IconTelegram class="w-5 h-5 opacity-70 shrink-0" />
+            <IconTelegram class="w-4 h-4 opacity-70 shrink-0" />
             <span class="truncate">Telegram</span>
           </Button>
 
           <Button
             variant="ghost"
-            size="md"
-            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
             onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
           >
-            <IconDiscord class="w-5 h-5 opacity-70 shrink-0" />
+            <IconDiscord class="w-4 h-4 opacity-70 shrink-0" />
             <span class="truncate">Discord</span>
           </Button>
 
           <Button
             variant="ghost"
-            size="md"
-            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
             onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
           >
-            <IconReddit class="w-5 h-5 opacity-70 shrink-0" />
+            <IconReddit class="w-4 h-4 opacity-70 shrink-0" />
             <span class="truncate">r/pawstash</span>
           </Button>
 
           <Button
             variant="ghost"
-            size="md"
-            class="w-full justify-center gap-2.5 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
             onclick={() => openExternalUrl('https://github.com/pawstash')}
           >
-            <IconGithub class="w-5 h-5 opacity-70 shrink-0" />
+            <IconGithub class="w-4 h-4 opacity-70 shrink-0" />
             <span class="truncate">{i18n.t('settings.contribute')}</span>
           </Button>
         </div>
@@ -963,21 +1037,23 @@
     {/if}
 
     <div id="settings-appearance" class="settings-section">
-      <SectionTitle icon={IconTranslate} title={i18n.t('settings.appearance_section')} onreset={() => (sectionToReset = 'appearance')} />
+      <SectionTitle icon={IconPaintBrush} title={i18n.t('settings.appearance_section')} onreset={() => (sectionToReset = 'appearance')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
+      <div class="settings-list">
         <SettingItem
           title={i18n.t('settings.language')}
           icon={IconTranslate}
+          value={i18n.currentLocale}
+          defaultValue="en"
+          onReset={() => i18n.setLocale('en')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: 'en', label: 'English', icon: IconFlagUs },
               { value: 'ru', label: 'Русский', icon: IconFlagRu }
             ]}
             value={i18n.currentLocale}
             onchange={(val) => i18n.setLocale(val as any)}
-            tabWidth={115}
           />
         </SettingItem>
 
@@ -985,8 +1061,11 @@
           title={i18n.t('settings.font_family')}
           description={i18n.t('settings.font_family_desc')}
           icon={IconTextFont}
+          value={themeState.tokens.fontFamily || ''}
+          defaultValue=""
+          onReset={() => themeState.setFontFamily('')}
         >
-          <div class="w-full max-w-[260px]">
+          <div class="w-full">
             <Input
               value={themeState.tokens.fontFamily || ''}
               placeholder={i18n.t('settings.font_family_placeholder')}
@@ -1007,50 +1086,37 @@
           title={i18n.t('settings.accent_color')}
           description={i18n.t('settings.accent_color_desc')}
           icon={IconPaint}
+          value={themeState.tokens.accent}
+          defaultValue={themeState.systemPalette ? 'system' : 'rose'}
+          onReset={() => themeState.setAccent(themeState.systemPalette ? 'system' : 'rose')}
         >
-          <div class="settings-accent-controls">
-            {#each accentColors as c}
-              <button
-                type="button"
-                use:ripple
+          <div class="settings-accent-controls flex items-center gap-2 flex-wrap">
+            {#if themeState.systemPalette}
+              <PaletteCircle
+                quadrants={themeState.systemPalette.quadrants}
+                active={themeState.tokens.accent === 'system'}
+                label={i18n.t('settings.system_accent')}
+                onclick={() => themeState.setAccent('system')}
+              />
+            {/if}
+
+            {#each presetAccents as c}
+              <PaletteCircle
+                quadrants={c.quadrants}
+                active={themeState.tokens.accent === c.id}
+                label={i18n.t('settings.set_accent', { color: c.labelKey })}
                 onclick={() => themeState.setAccent(c.id)}
-                class="w-[24px] h-[24px] rounded-full transition-all duration-300 relative hover:scale-115 active:scale-90"
-                style="
-                  background-color: {c.color};
-                  transform: {themeState.tokens.accent === c.id ? 'scale(1.15)' : 'scale(1)'};
-                  border: {themeState.tokens.accent === c.id ? '2px solid #111215' : 'none'};
-                  box-shadow: {themeState.tokens.accent === c.id ? '0 0 0 2px ' + c.color : 'none'};
-                "
-                aria-label={i18n.t('settings.set_accent', { color: c.label })}
-              ></button>
+              />
             {/each}
 
-            <button
-              type="button"
-              use:ripple
-              onclick={() => themeState.setAccent('rgb')}
-              class="w-[24px] h-[24px] rounded-full transition-all duration-300 relative hover:scale-115 active:scale-90"
-              style="
-                background: linear-gradient(135deg, #ff3b30, #ff9500, #ffcc00, #34c759, #007aff, #af52de);
-                transform: {themeState.tokens.accent === 'rgb' ? 'scale(1.15)' : 'scale(1)'};
-                border: {themeState.tokens.accent === 'rgb' ? '2px solid #111215' : 'none'};
-                box-shadow: {themeState.tokens.accent === 'rgb' ? '0 0 0 2px var(--accent-primary)' : 'none'};
-              "
-              aria-label={i18n.t('settings.rgb_accent')}
-            ></button>
+            <div class="w-[1px] h-5 bg-white/10 mx-0.5"></div>
 
-            <div class="w-[1px] h-6 bg-white/10 mx-1"></div>
-
-            <div class="relative w-[24px] h-[24px] flex items-center justify-center">
-              <div
-                class="w-[24px] h-[24px] rounded-full transition-all duration-300 relative pointer-events-none"
-                style="
-                  background: {isCustomActive ? themeState.tokens.accent : 'conic-gradient(from 0deg, #f43f5e, #f59e0b, #10b981, #06b6d4, #6366f1, #8b5cf6, #f43f5e)'};
-                  transform: {isCustomActive ? 'scale(1.15)' : 'scale(1)'};
-                  border: {isCustomActive ? '2px solid #111215' : 'none'};
-                  box-shadow: {isCustomActive ? '0 0 0 2px ' + themeState.tokens.accent : 'none'};
-                "
-              ></div>
+            <div class="relative w-[26px] h-[26px] flex items-center justify-center">
+              <PaletteCircle
+                quadrants={customQuadrants}
+                active={isCustomActive}
+                label={i18n.t('settings.custom_accent')}
+              />
               <input
                 type="color"
                 value={isCustomActive ? themeState.tokens.accent : '#8b5cf6'}
@@ -1066,10 +1132,13 @@
         <SettingItem
           title={i18n.t('settings.dynamic_accent')}
           description={i18n.t('settings.dynamic_accent_desc')}
-          icon={IconPaint}
+          icon={IconEyedropper}
           align="right"
+          value={settings.dynamic_accent}
+          defaultValue={defaultSettings.dynamic_accent}
+          onReset={() => resetSetting('dynamic_accent')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1082,10 +1151,13 @@
         <SettingItem
           title={i18n.t('settings.sticky_header')}
           description={i18n.t('settings.sticky_header_desc')}
-          icon={IconEye}
+          icon={IconDockRow}
           align="right"
+          value={settings.sticky_header}
+          defaultValue={defaultSettings.sticky_header}
+          onReset={() => resetSetting('sticky_header')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1098,10 +1170,13 @@
         <SettingItem
           title={i18n.t('settings.scroll_edge_mask')}
           description={i18n.t('settings.scroll_edge_mask_desc')}
-          icon={IconSparkle}
+          icon={IconBlur}
           align="right"
+          value={settings.scroll_edge_mask ?? true}
+          defaultValue={defaultSettings.scroll_edge_mask ?? true}
+          onReset={() => resetSetting('scroll_edge_mask')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1114,10 +1189,13 @@
         <SettingItem
           title={i18n.t('settings.disable_blur_placeholders')}
           description={i18n.t('settings.disable_blur_placeholders_desc')}
-          icon={IconEye}
+          icon={IconImageOff}
           align="right"
+          value={settings.disable_blur_placeholders ?? false}
+          defaultValue={defaultSettings.disable_blur_placeholders ?? false}
+          onReset={() => resetSetting('disable_blur_placeholders')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1131,10 +1209,13 @@
           <SettingItem
             title={i18n.t('settings.titlebar_style')}
             description={i18n.t('settings.titlebar_style_desc')}
-            icon={IconSparkle}
+            icon={IconWindowApps}
             align="right"
+            value={settings.titlebar_style || 'auto'}
+            defaultValue={defaultSettings.titlebar_style || 'auto'}
+            onReset={() => resetSetting('titlebar_style')}
           >
-            <SegmentedControl
+            <ChoiceGroup
               options={[
                 { value: 'auto', label: i18n.t('settings.titlebar_style_auto') },
                 { value: 'windows', label: 'Windows' },
@@ -1149,7 +1230,10 @@
         <SettingItem
           title={i18n.t('settings.toast_position')}
           description={i18n.t('settings.toast_position_desc')}
-          icon={IconEye}
+          icon={IconAlert}
+          value={settings.toast_position || 'auto'}
+          defaultValue={defaultSettings.toast_position || 'auto'}
+          onReset={() => resetSetting('toast_position')}
         >
           <div class="w-full">
             <Select
@@ -1164,10 +1248,13 @@
           <SettingItem
             title={i18n.t('settings.panic_button')}
             description={i18n.t('settings.panic_button_desc')}
-            icon={IconEye}
+            icon={IconWarning}
             align="right"
+            value={settings.panic_button_enabled ?? settings.boss_key_enabled ?? true}
+            defaultValue={defaultSettings.panic_button_enabled ?? true}
+            onReset={resetPanicEnabled}
           >
-            <SegmentedControl
+            <ChoiceGroup
               options={[
                 { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
                 { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1184,7 +1271,10 @@
             <SettingItem
               title={i18n.t('settings.panic_button_shortcut')}
               description={i18n.t('settings.panic_button_shortcut_desc')}
-              icon={IconKey}
+              icon={IconKeyboard}
+              value={settings.panic_button_shortcut || 'H'}
+              defaultValue={defaultSettings.panic_button_shortcut || 'H'}
+              onReset={resetPanicKey}
             >
               <div class="w-full">
                 <ShortcutInput
@@ -1202,14 +1292,159 @@
       </div>
     </div>
 
+    <div id="settings-background" class="settings-section">
+      <SectionTitle icon={IconWallpaper} title={i18n.t('settings.background_section')} onreset={() => (sectionToReset = 'background')} />
+
+      <div class="settings-list">
+        <SettingItem
+          title={i18n.t('settings.bg_type')}
+          description={i18n.t('settings.bg_type_desc')}
+          icon={IconWallpaper}
+          value={backgroundState.settings.type}
+          defaultValue={defaultBackgroundType()}
+          onReset={() => backgroundState.setType(defaultBackgroundType())}
+        >
+          <Select
+            options={bgTypes.map((t) => ({ value: t.id, label: t.label }))}
+            value={backgroundState.settings.type}
+            onchange={(val) => backgroundState.setType(val as BackgroundType)}
+          />
+        </SettingItem>
+
+        {#if backgroundState.settings.type === 'custom'}
+          <SettingItem
+            title={i18n.t('settings.background_source')}
+            description={i18n.t('settings.background_source_desc')}
+            icon={IconImageMultiple}
+            value={backgroundState.settings.customKind}
+            defaultValue="color"
+            onReset={() => backgroundState.setCustomKind('color')}
+          >
+            <Select
+              options={[
+                { value: 'color', label: i18n.t('settings.background_source_color') },
+                { value: 'palette', label: i18n.t('settings.background_source_palette') },
+                { value: 'image', label: i18n.t('settings.background_source_image') },
+                { value: 'video', label: i18n.t('settings.background_source_video') }
+              ]}
+              value={backgroundState.settings.customKind}
+              onchange={(value) => backgroundState.setCustomKind(value as CustomBackgroundKind)}
+            />
+          </SettingItem>
+
+          {#if backgroundState.settings.customKind === 'color'}
+            <SettingItem
+              title={i18n.t('settings.background_primary')}
+              description={i18n.t('settings.background_primary_desc')}
+              icon={IconColorFill}
+              value={backgroundState.settings.solidColor}
+              defaultValue="#000000"
+              onReset={() => backgroundState.setSolidColor('#000000')}
+            >
+              <input class="background-color-input" type="color" value={backgroundState.settings.solidColor} oninput={(event) => backgroundState.setSolidColor(event.currentTarget.value)} />
+            </SettingItem>
+
+            <SettingItem
+              title={i18n.t('settings.background_secondary')}
+              description={i18n.t('settings.background_secondary_desc')}
+              icon={IconCircleHalfFill}
+              value={backgroundState.settings.gradientSecondary}
+              defaultValue="#111827"
+              onReset={() => backgroundState.setGradientSecondary('#111827')}
+            >
+              <input class="background-color-input" type="color" value={backgroundState.settings.gradientSecondary} oninput={(event) => backgroundState.setGradientSecondary(event.currentTarget.value)} />
+            </SettingItem>
+          {:else if backgroundState.settings.customKind === 'image'}
+            <SettingItem title={i18n.t('settings.background_image')} description={i18n.t('settings.background_image_desc')} icon={IconImage}>
+              <Input placeholder={i18n.t('settings.background_image_placeholder')} value={backgroundState.settings.imageUrl} readonly={true} onBrowse={() => void selectCustomBackground('image')} />
+            </SettingItem>
+          {:else if backgroundState.settings.customKind === 'video'}
+            <SettingItem title={i18n.t('settings.background_video')} description={i18n.t('settings.background_video_desc')} icon={IconVideo}>
+              <Input placeholder={i18n.t('settings.background_video_placeholder')} value={backgroundState.settings.videoUrl} readonly={true} onBrowse={() => void selectCustomBackground('video')} />
+            </SettingItem>
+          {/if}
+
+          {#if backgroundState.settings.customKind !== 'color'}
+            <SettingItem
+              title={i18n.t('settings.background_blur')}
+              description={i18n.t('settings.background_blur_desc')}
+              icon={IconBlur}
+              value={backgroundState.settings.blurPx}
+              defaultValue={24}
+              onReset={() => backgroundState.setBlur(24)}
+            >
+              <div class="flex items-center gap-4 w-full">
+                <Slider min={0} max={40} value={backgroundState.settings.blurPx} oninput={(value) => backgroundState.setBlur(value)} />
+                <span class="text-[13px] font-mono text-gray-300 w-10 text-right shrink-0">{backgroundState.settings.blurPx}px</span>
+              </div>
+            </SettingItem>
+
+            <SettingItem
+              title={i18n.t('settings.background_opacity')}
+              description={i18n.t('settings.background_opacity_desc')}
+              icon={IconCircleHalfFill}
+              value={backgroundState.settings.opacity}
+              defaultValue={0.85}
+              onReset={() => backgroundState.setOpacity(0.85)}
+            >
+              <div class="flex items-center gap-4 w-full">
+                <Slider min={0.1} max={1} step={0.05} value={backgroundState.settings.opacity} oninput={(value) => backgroundState.setOpacity(value)} />
+                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.opacity * 100)}%</span>
+              </div>
+            </SettingItem>
+
+            <SettingItem
+              title={i18n.t('settings.background_brightness')}
+              description={i18n.t('settings.background_brightness_desc')}
+              icon={IconBrightnessHigh}
+              value={backgroundState.settings.brightness}
+              defaultValue={0.5}
+              onReset={() => backgroundState.setBrightness(0.5)}
+            >
+              <div class="flex items-center gap-4 w-full">
+                <Slider min={0.2} max={1.5} step={0.05} value={backgroundState.settings.brightness} oninput={(value) => backgroundState.setBrightness(value)} />
+                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.brightness * 100)}%</span>
+              </div>
+            </SettingItem>
+
+            <SettingItem
+              title={i18n.t('settings.background_saturation')}
+              description={i18n.t('settings.background_saturation_desc')}
+              icon={IconPaint}
+              value={backgroundState.settings.saturation}
+              defaultValue={1.2}
+              onReset={() => backgroundState.setSaturation(1.2)}
+            >
+              <div class="flex items-center gap-4 w-full">
+                <Slider min={0} max={2} step={0.05} value={backgroundState.settings.saturation} oninput={(value) => backgroundState.setSaturation(value)} />
+                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.saturation * 100)}%</span>
+              </div>
+            </SettingItem>
+
+            {#if (backgroundState.settings.customKind === 'image' && backgroundState.settings.imageUrl) || (backgroundState.settings.customKind === 'video' && backgroundState.settings.videoUrl)}
+              <SettingItem title={i18n.t('settings.background_media')} description={i18n.t('settings.background_media_desc')} icon={IconDelete}>
+                <Button variant="ghost" onclick={() => (showClearBgMediaConfirm = true)}>
+                  <IconDelete class="w-4 h-4 mr-1.5" />
+                  {i18n.t('settings.background_media_clear')}
+                </Button>
+              </SettingItem>
+            {/if}
+          {/if}
+        {/if}
+      </div>
+    </div>
+
     <div id="settings-grid" class="settings-section">
       <SectionTitle icon={IconGrid} title={i18n.t('settings.grid_section')} onreset={() => (sectionToReset = 'grid')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
+      <div class="settings-list">
         <SettingItem
           title={i18n.t('settings.grid_scale')}
           description={i18n.t('settings.grid_scale_desc')}
-          icon={IconGrid}
+          icon={IconZoomIn}
+          value={settings.grid_scale}
+          defaultValue={defaultSettings.grid_scale}
+          onReset={() => resetSetting('grid_scale')}
         >
           <div class="flex items-center gap-4 w-full">
             <Slider
@@ -1218,17 +1453,20 @@
               value={settings.grid_scale}
               oninput={(value) => updateAndSaveSetting('grid_scale', Math.round(value / 5) * 5)}
             />
-            <span class="text-sm font-mono text-gray-300 w-12 text-right shrink-0">{settings.grid_scale}%</span>
+            <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{settings.grid_scale}%</span>
           </div>
         </SettingItem>
 
         <SettingItem
           title={i18n.t('settings.grid_ratio')}
           description={i18n.t('settings.grid_ratio_desc')}
-          icon={IconGrid}
+          icon={IconCrop}
           align="right"
+          value={settings.grid_aspect_ratio}
+          defaultValue={defaultSettings.grid_aspect_ratio}
+          onReset={() => resetSetting('grid_aspect_ratio')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             compact={true}
             options={[
               { value: 'square', label: '1:1' },
@@ -1244,9 +1482,12 @@
         <SettingItem
           title={i18n.t('settings.card_view_mode')}
           description={i18n.t('settings.card_view_mode_desc')}
-          icon={IconGrid}
+          icon={IconCardUi}
+          value={settings.card_view_mode || 'detailed'}
+          defaultValue={defaultSettings.card_view_mode || 'detailed'}
+          onReset={() => resetSetting('card_view_mode')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: 'detailed', label: i18n.t('settings.card_view_mode_detailed') },
               { value: 'lite', label: i18n.t('settings.card_view_mode_lite') }
@@ -1258,17 +1499,22 @@
       </div>
     </div>
 
+    <ProviderSettings />
+
     <div id="settings-proxy" class="settings-section">
       <SectionTitle icon={IconGlobe} title={i18n.t('settings.proxy_section')} onreset={() => (sectionToReset = 'proxy')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
+      <div class="settings-list">
         <SettingItem
           title={i18n.t('settings.proxy_mode')}
           description={i18n.t('settings.proxy_mode_desc')}
-          icon={IconGlobe}
+          icon={IconArrowRouting}
           align="right"
+          value={settings.proxy_mode}
+          defaultValue={defaultSettings.proxy_mode}
+          onReset={() => resetSetting('proxy_mode')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: 'none', label: i18n.t('settings.proxy_none'), icon: IconDismiss },
               { value: 'system', label: i18n.t('settings.proxy_system'), icon: IconGlobe },
@@ -1281,7 +1527,14 @@
         </SettingItem>
 
         {#if settings.proxy_mode === 'custom'}
-          <SettingItem title={i18n.t('settings.proxy_url')} description={i18n.t('settings.proxy_url_desc')} icon={IconGlobe}>
+          <SettingItem
+            title={i18n.t('settings.proxy_url')}
+            description={i18n.t('settings.proxy_url_desc')}
+            icon={IconLink}
+            value={settings.proxy_url}
+            defaultValue={defaultSettings.proxy_url}
+            onReset={() => resetSetting('proxy_url')}
+          >
             <div class="w-full">
               <Input
                 clearable={true}
@@ -1292,7 +1545,14 @@
             </div>
           </SettingItem>
 
-          <SettingItem title={i18n.t('settings.proxy_username')} description={i18n.t('settings.proxy_username_desc')} icon={IconUser}>
+          <SettingItem
+            title={i18n.t('settings.proxy_username')}
+            description={i18n.t('settings.proxy_username_desc')}
+            icon={IconUser}
+            value={settings.proxy_username}
+            defaultValue={defaultSettings.proxy_username}
+            onReset={() => resetSetting('proxy_username')}
+          >
             <div class="w-full">
               <Input
                 clearable={true}
@@ -1303,7 +1563,14 @@
             </div>
           </SettingItem>
 
-          <SettingItem title={i18n.t('settings.proxy_password')} description={i18n.t('settings.proxy_password_desc')} icon={IconKey}>
+          <SettingItem
+            title={i18n.t('settings.proxy_password')}
+            description={i18n.t('settings.proxy_password_desc')}
+            icon={IconKey}
+            value={settings.proxy_password}
+            defaultValue={defaultSettings.proxy_password}
+            onReset={() => resetSetting('proxy_password')}
+          >
             <div class="w-full">
               <Input
                 type="password"
@@ -1317,10 +1584,13 @@
           <SettingItem
             title={i18n.t('settings.proxy_bypass_local')}
             description={i18n.t('settings.proxy_bypass_local_desc')}
-            icon={IconGlobe}
+            icon={IconShieldCheckmark}
             align="right"
+            value={settings.proxy_bypass_local}
+            defaultValue={defaultSettings.proxy_bypass_local}
+            onReset={() => resetSetting('proxy_bypass_local')}
           >
-            <SegmentedControl
+            <ChoiceGroup
               options={[
                 { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
                 { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1333,108 +1603,14 @@
       </div>
     </div>
 
-    <div id="settings-background" class="settings-section">
-      <SectionTitle icon={IconPaint} title={i18n.t('settings.background_section')} onreset={() => (sectionToReset = 'background')} />
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
-        <SettingItem
-          title={i18n.t('settings.bg_type')}
-          description={i18n.t('settings.bg_type_desc')}
-          icon={IconPaint}
-        >
-          <Select
-            options={bgTypes.map((t) => ({ value: t.id, label: t.label }))}
-            value={backgroundState.settings.type}
-            onchange={(val) => backgroundState.setType(val as BackgroundType)}
-          />
-        </SettingItem>
-
-        {#if backgroundState.settings.type === 'custom'}
-          <SettingItem title={i18n.t('settings.background_source')} description={i18n.t('settings.background_source_desc')} icon={IconPaint}>
-            <Select
-              options={[
-                { value: 'color', label: i18n.t('settings.background_source_color') },
-                { value: 'image', label: i18n.t('settings.background_source_image') },
-                { value: 'video', label: i18n.t('settings.background_source_video') }
-              ]}
-              value={backgroundState.settings.customKind}
-              onchange={(value) => backgroundState.setCustomKind(value as CustomBackgroundKind)}
-            />
-          </SettingItem>
-
-          {#if backgroundState.settings.customKind === 'color'}
-            <SettingItem title={i18n.t('settings.background_primary')} description={i18n.t('settings.background_primary_desc')} icon={IconPaint}>
-              <input class="background-color-input" type="color" value={backgroundState.settings.solidColor} oninput={(event) => backgroundState.setSolidColor(event.currentTarget.value)} />
-            </SettingItem>
-
-            <SettingItem title={i18n.t('settings.background_secondary')} description={i18n.t('settings.background_secondary_desc')} icon={IconPaint}>
-              <input class="background-color-input" type="color" value={backgroundState.settings.gradientSecondary} oninput={(event) => backgroundState.setGradientSecondary(event.currentTarget.value)} />
-            </SettingItem>
-          {:else if backgroundState.settings.customKind === 'image'}
-            <SettingItem title={i18n.t('settings.background_image')} description={i18n.t('settings.background_image_desc')} icon={IconFolder}>
-              <Input placeholder={i18n.t('settings.background_image_placeholder')} value={backgroundState.settings.imageUrl} readonly={true} onBrowse={() => void selectCustomBackground('image')} />
-            </SettingItem>
-          {:else}
-            <SettingItem title={i18n.t('settings.background_video')} description={i18n.t('settings.background_video_desc')} icon={IconFolder}>
-              <Input placeholder={i18n.t('settings.background_video_placeholder')} value={backgroundState.settings.videoUrl} readonly={true} onBrowse={() => void selectCustomBackground('video')} />
-            </SettingItem>
-          {/if}
-
-          {#if backgroundState.settings.customKind !== 'color'}
-            <SettingItem title={i18n.t('settings.background_blur')} description={i18n.t('settings.background_blur_desc')} icon={IconEye}>
-              <div class="flex items-center gap-4 w-full">
-                <Slider min={0} max={40} value={backgroundState.settings.blurPx} oninput={(value) => backgroundState.setBlur(value)} />
-                <span class="text-sm font-mono text-gray-300 w-10 text-right shrink-0">{backgroundState.settings.blurPx}px</span>
-              </div>
-            </SettingItem>
-
-          <SettingItem title={i18n.t('settings.background_opacity')} description={i18n.t('settings.background_opacity_desc')} icon={IconEye}>
-            <div class="flex items-center gap-4 w-full">
-              <Slider min={0.1} max={1} step={0.05} value={backgroundState.settings.opacity} oninput={(value) => backgroundState.setOpacity(value)} />
-              <span class="text-sm font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.opacity * 100)}%</span>
-            </div>
-          </SettingItem>
-
-          <SettingItem title={i18n.t('settings.background_brightness')} description={i18n.t('settings.background_brightness_desc')} icon={IconEye}>
-            <div class="flex items-center gap-4 w-full">
-              <Slider min={0.2} max={1.5} step={0.05} value={backgroundState.settings.brightness} oninput={(value) => backgroundState.setBrightness(value)} />
-              <span class="text-sm font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.brightness * 100)}%</span>
-            </div>
-          </SettingItem>
-
-          <SettingItem title={i18n.t('settings.background_saturation')} description={i18n.t('settings.background_saturation_desc')} icon={IconPaint}>
-            <div class="flex items-center gap-4 w-full">
-              <Slider min={0} max={2} step={0.05} value={backgroundState.settings.saturation} oninput={(value) => backgroundState.setSaturation(value)} />
-              <span class="text-sm font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.saturation * 100)}%</span>
-            </div>
-          </SettingItem>
-
-          {#if (backgroundState.settings.customKind === 'image' && backgroundState.settings.imageUrl) || (backgroundState.settings.customKind === 'video' && backgroundState.settings.videoUrl)}
-            <SettingItem title={i18n.t('settings.background_media')} description={i18n.t('settings.background_media_desc')} icon={IconDelete}>
-              <Button variant="ghost" onclick={() => (showClearBgMediaConfirm = true)}>
-                <IconDelete />
-                {i18n.t('settings.background_media_clear')}
-              </Button>
-            </SettingItem>
-          {/if}
-          {/if}
-        {/if}
-      </div>
-    </div>
-
-    <div id="settings-providers" class="settings-section">
-      <SectionTitle icon={IconGlobe} title={i18n.t('settings.providers_section')} />
-      <ProviderSettings />
-    </div>
-
     <div id="settings-downloads" class="settings-section">
       <SectionTitle icon={IconDownload} title={i18n.t('settings.download_section')} onreset={() => (sectionToReset = 'downloads')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
+      <div class="settings-list">
         <SettingItem
           title={i18n.t('settings.downloads_storage')}
           description={i18n.t('settings.downloads_storage_desc')}
-          icon={IconDownload}
+          icon={IconHardDrive}
         >
           <DownloadsStatsBar downloads={downloadState.downloads} />
         </SettingItem>
@@ -1443,6 +1619,9 @@
           title={i18n.t('settings.download_dir')}
           description={i18n.t('settings.download_dir_desc')}
           icon={IconFolder}
+          value={settings.download_dir}
+          defaultValue={defaultSettings.download_dir}
+          onReset={() => resetSetting('download_dir')}
         >
           <div class="w-full">
             <Input
@@ -1457,10 +1636,13 @@
         <SettingItem
           title={i18n.t('settings.download_group_by_creator')}
           description={i18n.t('settings.download_group_by_creator_desc')}
-          icon={IconFolder}
+          icon={IconFolderPerson}
           align="right"
+          value={settings.download_group_by_creator}
+          defaultValue={defaultSettings.download_group_by_creator}
+          onReset={() => resetSetting('download_group_by_creator')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1474,7 +1656,10 @@
           <SettingItem
             title={i18n.t('settings.download_creator_template')}
             description={i18n.t('settings.download_creator_template_desc')}
-            icon={IconFolder}
+            icon={IconRename}
+            value={settings.download_creator_folder_template}
+            defaultValue={defaultSettings.download_creator_folder_template}
+            onReset={() => resetSetting('download_creator_folder_template')}
           >
             <div class="w-full">
               <TemplateInput
@@ -1493,8 +1678,11 @@
           description={i18n.t('settings.download_group_by_post_desc')}
           icon={IconFolder}
           align="right"
+          value={settings.download_group_by_post}
+          defaultValue={defaultSettings.download_group_by_post}
+          onReset={() => resetSetting('download_group_by_post')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1508,7 +1696,10 @@
           <SettingItem
             title={i18n.t('settings.download_post_template')}
             description={i18n.t('settings.download_post_template_desc')}
-            icon={IconFolder}
+            icon={IconRename}
+            value={settings.download_post_folder_template}
+            defaultValue={defaultSettings.download_post_folder_template}
+            onReset={() => resetSetting('download_post_folder_template')}
           >
             <div class="w-full">
               <TemplateInput
@@ -1525,7 +1716,10 @@
         <SettingItem
           title={i18n.t('settings.download_filename_template')}
           description={i18n.t('settings.download_filename_template_desc')}
-          icon={IconDownload}
+          icon={IconRename}
+          value={settings.download_filename_template}
+          defaultValue={defaultSettings.download_filename_template}
+          onReset={() => resetSetting('download_filename_template')}
         >
           <div class="w-full">
             <TemplateInput
@@ -1541,10 +1735,13 @@
         <SettingItem
           title={i18n.t('settings.download_save_metadata')}
           description={i18n.t('settings.download_save_metadata_desc')}
-          icon={IconDocument}
+          icon={IconDocumentText}
           align="right"
+          value={settings.download_save_metadata ?? false}
+          defaultValue={defaultSettings.download_save_metadata ?? false}
+          onReset={() => resetSetting('download_save_metadata')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1558,10 +1755,13 @@
           <SettingItem
             title={i18n.t('settings.download_metadata_format')}
             description={i18n.t('settings.download_metadata_format_desc')}
-            icon={IconDocument}
+            icon={IconCode}
             align="right"
+            value={settings.download_metadata_format || 'txt'}
+            defaultValue={defaultSettings.download_metadata_format || 'txt'}
+            onReset={() => resetSetting('download_metadata_format')}
           >
-            <SegmentedControl
+            <ChoiceGroup
               options={[
                 { value: 'txt', label: '.txt' },
                 { value: 'json', label: '.json' },
@@ -1576,10 +1776,13 @@
         <SettingItem
           title={i18n.t('settings.aria2c_engine')}
           description={i18n.t('settings.aria2c_engine_desc')}
-          icon={IconDownload}
+          icon={IconRocket}
           align="right"
+          value={settings.use_aria2c}
+          defaultValue={defaultSettings.use_aria2c}
+          onReset={() => resetSetting('use_aria2c')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1593,40 +1796,42 @@
           <SettingItem
             title={i18n.t('settings.parallel_connections')}
             description={i18n.t('settings.parallel_connections_desc')}
-            icon={IconDownload}
+            icon={IconArrowSplit}
+            value={settings.aria2_connections}
+            defaultValue={defaultSettings.aria2_connections}
+            onReset={() => resetSetting('aria2_connections')}
           >
-            <div class="flex items-center gap-4 w-full">
-              <Slider
-                min={1}
-                max={32}
-                value={settings.aria2_connections}
-                oninput={(value) => updateAndSaveSetting('aria2_connections', value)}
-              />
-              <span class="text-sm font-mono text-gray-300 w-8 text-right shrink-0">{settings.aria2_connections}</span>
-            </div>
+            <NumberStepper
+              min={1}
+              max={32}
+              value={settings.aria2_connections}
+              ariaLabel={i18n.t('settings.parallel_connections')}
+              onchange={(value) => updateAndSaveSetting('aria2_connections', value)}
+            />
           </SettingItem>
         {/if}
 
         <SettingItem
           title={i18n.t('settings.download_max_concurrent')}
           description={i18n.t('settings.download_max_concurrent_desc')}
-          icon={IconDownload}
+          icon={IconTasksApp}
+          value={settings.download_max_concurrent ?? 3}
+          defaultValue={defaultSettings.download_max_concurrent ?? 3}
+          onReset={() => resetSetting('download_max_concurrent')}
         >
-          <div class="flex items-center gap-4 w-full">
-            <Slider
-              min={1}
-              max={10}
-              value={settings.download_max_concurrent ?? 3}
-              oninput={(value) => updateAndSaveSetting('download_max_concurrent', value)}
-            />
-            <span class="text-sm font-mono text-gray-300 w-8 text-right shrink-0">{settings.download_max_concurrent ?? 3}</span>
-          </div>
+          <NumberStepper
+            min={1}
+            max={10}
+            value={settings.download_max_concurrent ?? 3}
+            ariaLabel={i18n.t('settings.download_max_concurrent')}
+            onchange={(value) => updateAndSaveSetting('download_max_concurrent', value)}
+          />
         </SettingItem>
 
         <SettingItem
           title={i18n.t('settings.template_preview')}
           description={i18n.t('settings.download_preview_desc') || 'Resolved destination path for saved files'}
-          icon={IconFolder}
+          icon={IconEye}
           class="col-span-full"
         >
           <div class="w-full">
@@ -1646,8 +1851,8 @@
     <div id="settings-cache" class="settings-section">
       <SectionTitle icon={IconDatabase} title={i18n.t('settings.cache_section')} onreset={() => (sectionToReset = 'cache')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
-        <SettingItem title={i18n.t('settings.cache_usage')} description={i18n.t('settings.cache_usage_desc')} icon={IconDatabase}>
+      <div class="settings-list">
+        <SettingItem title={i18n.t('settings.cache_usage')} description={i18n.t('settings.cache_usage_desc')} icon={IconHardDrive}>
           {#if cacheStats}
             <StorageBar stats={cacheStats} limitMb={settings.cache_max_mb} {formatBytes} />
           {:else}
@@ -1658,7 +1863,14 @@
           {/if}
         </SettingItem>
 
-        <SettingItem title={i18n.t('settings.cache_limit')} description={i18n.t('settings.cache_limit_desc')} icon={IconDatabase}>
+        <SettingItem
+          title={i18n.t('settings.cache_limit')}
+          description={i18n.t('settings.cache_limit_desc')}
+          icon={IconGauge}
+          value={settings.cache_max_mb}
+          defaultValue={defaultSettings.cache_max_mb}
+          onReset={() => resetSetting('cache_max_mb')}
+        >
           <Select
             options={[
               { value: 64, label: '64 MB' },
@@ -1673,13 +1885,13 @@
           />
         </SettingItem>
 
-        <SettingItem title={i18n.t('settings.cache_clear')} description={i18n.t('settings.cache_clear_desc')} icon={IconDelete}>
+        <SettingItem title={i18n.t('settings.cache_clear')} description={i18n.t('settings.cache_clear_desc')} icon={IconEraserMedium}>
           <Button
             variant="ghost"
             disabled={!!cacheBusy || !cacheStats || cacheStats.total_bytes === 0}
             onclick={() => void clearCache('images')}
           >
-            {#if cacheBusy === 'images'}<IconLoading />{:else}<IconDelete />{/if}
+            {#if cacheBusy === 'images'}<IconLoading class="w-4 h-4 mr-1.5" />{:else}<IconDelete class="w-4 h-4 mr-1.5" />{/if}
             {i18n.t('settings.cache_clear_action')}
           </Button>
         </SettingItem>
@@ -1690,7 +1902,7 @@
             disabled={!!cacheBusy || !cacheStats || cacheStats.total_bytes + cacheStats.metadata_bytes === 0}
             onclick={() => (showClearAllCacheConfirm = true)}
           >
-            {#if cacheBusy === 'all'}<IconLoading />{:else}<IconDelete />{/if}
+            {#if cacheBusy === 'all'}<IconLoading class="w-4 h-4 mr-1.5" />{:else}<IconDelete class="w-4 h-4 mr-1.5" />{/if}
             {i18n.t('settings.cache_clear_all_action')}
           </Button>
         </SettingItem>
@@ -1698,22 +1910,22 @@
         <SettingItem
           title={i18n.t('settings.diagnostics_logs')}
           description={i18n.t('settings.diagnostics_logs_desc')}
-          icon={IconDocument}
+          icon={IconDocumentBulletList}
         >
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="settings-action-group">
             <Button
               variant="ghost"
               disabled={copyingLogs}
               onclick={() => void handleCopyLogs()}
             >
-              {#if copyingLogs}<IconLoading class="mr-1.5" />{:else}<IconCopy class="mr-1.5" />{/if}
+              {#if copyingLogs}<IconLoading class="w-4 h-4 mr-1.5" />{:else}<IconCopy class="w-4 h-4 mr-1.5" />{/if}
               {i18n.t('settings.copy_logs')}
             </Button>
             <Button
               variant="ghost"
               onclick={() => void handleOpenLogsFolder()}
             >
-              <IconFolder class="mr-1.5" />
+              <IconFolder class="w-4 h-4 mr-1.5" />
               {i18n.t('settings.open_logs_folder')}
             </Button>
             <Button
@@ -1721,7 +1933,7 @@
               disabled={clearingLogs}
               onclick={() => void handleClearLogs()}
             >
-              {#if clearingLogs}<IconLoading class="mr-1.5" />{:else}<IconDelete class="mr-1.5" />{/if}
+              {#if clearingLogs}<IconLoading class="w-4 h-4 mr-1.5" />{:else}<IconDelete class="w-4 h-4 mr-1.5" />{/if}
               {i18n.t('settings.clear_logs')}
             </Button>
           </div>
@@ -1730,14 +1942,14 @@
         <SettingItem
           title={i18n.t('settings.wipe_all_data')}
           description={i18n.t('settings.wipe_all_data_desc')}
-          icon={IconDelete}
+          icon={IconWarning}
         >
           <Button
             variant="danger"
             disabled={wipePending}
             onclick={() => (showWipeConfirm = true)}
           >
-            {#if wipePending}<IconLoading class="mr-1.5" />{:else}<IconDelete class="mr-1.5" />{/if}
+            {#if wipePending}<IconLoading class="w-4 h-4 mr-1.5" />{:else}<IconDelete class="w-4 h-4 mr-1.5" />{/if}
             {i18n.t('settings.wipe_all_data')}
           </Button>
         </SettingItem>
@@ -1750,15 +1962,15 @@
     </div>
 
     <div id="settings-updates" class="settings-section">
-      <SectionTitle icon={IconSparkle} title={i18n.t('settings.updates_section')} onreset={() => (sectionToReset = 'updates')} />
+      <SectionTitle icon={IconArrowSync} title={i18n.t('settings.updates_section')} onreset={() => (sectionToReset = 'updates')} />
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-6">
+      <div class="settings-list">
         <SettingItem
           title={i18n.t('settings.version_title')}
           description={i18n.t('settings.version_desc', { version: APP_VERSION })}
-          icon={IconSparkle}
+          icon={IconInfo}
         >
-          <div class="flex flex-wrap items-center gap-2.5">
+          <div class="settings-action-group">
             <Button
               variant="ghost"
               disabled={updateState.checking}
@@ -1789,8 +2001,11 @@
           description={i18n.t('settings.auto_check_updates_desc')}
           icon={IconArrowSync}
           align="right"
+          value={settings.auto_check_updates ?? true}
+          defaultValue={defaultSettings.auto_check_updates ?? true}
+          onReset={() => resetSetting('auto_check_updates')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
               { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
@@ -1806,10 +2021,13 @@
         <SettingItem
           title={i18n.t('settings.update_channel')}
           description={i18n.t('settings.update_channel_desc')}
-          icon={IconSparkle}
+          icon={IconBranchFork}
           align="right"
+          value={settings.include_prereleases ?? false}
+          defaultValue={defaultSettings.include_prereleases ?? false}
+          onReset={() => resetSetting('include_prereleases')}
         >
-          <SegmentedControl
+          <ChoiceGroup
             options={[
               { value: false, label: i18n.t('settings.channel_stable'), icon: IconCheck },
               { value: true, label: i18n.t('settings.channel_prerelease'), icon: IconSparkle }
@@ -1835,205 +2053,75 @@
   </div>
 </PageShell>
 
-<Modal
+<ConfirmDialog
   isOpen={showResetConfirm}
   title={i18n.t('settings.reset_all')}
-  size="sm"
+  description={i18n.t('settings.reset_all_confirm')}
+  confirmLabel={i18n.t('common.reset')}
+  confirmVariant="danger"
+  confirmIcon={IconArrowReset}
+  loading={resetPending}
+  onconfirm={() => void executeResetAllSettings()}
   onclose={() => (showResetConfirm = false)}
->
-  <div class="modal-confirm-layout">
-    <p class="modal-confirm-desc">
-      {i18n.t('settings.reset_all_confirm')}
-    </p>
+/>
 
-    <div class="modal-confirm-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
-        disabled={resetPending}
-        onclick={() => (showResetConfirm = false)}
-      >
-        <span class="truncate">{i18n.t('common.cancel')}</span>
-      </Button>
-
-      <Button
-        variant="accent"
-        size="md"
-        class="w-full justify-center px-3"
-        disabled={resetPending}
-        onclick={() => void executeResetAllSettings()}
-      >
-        {#if resetPending}
-          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
-        {:else}
-          <IconArrowReset class="w-5 h-5 mr-1.5 shrink-0" />
-        {/if}
-        <span class="truncate">{i18n.t('common.reset')}</span>
-      </Button>
-    </div>
-  </div>
-</Modal>
-
-<Modal
+<ConfirmDialog
   isOpen={Boolean(sectionToReset)}
   title={i18n.t('settings.reset_section_title')}
-  size="sm"
+  description={i18n.t('settings.reset_section_confirm')}
+  confirmLabel={i18n.t('common.reset')}
+  confirmVariant="danger"
+  confirmIcon={IconArrowReset}
+  onconfirm={() => {
+    if (sectionToReset) {
+      const sec = sectionToReset;
+      sectionToReset = null;
+      void resetSection(sec);
+    }
+  }}
   onclose={() => (sectionToReset = null)}
->
-  <div class="modal-confirm-layout">
-    <p class="modal-confirm-desc">
-      {i18n.t('settings.reset_section_confirm')}
-    </p>
+/>
 
-    <div class="modal-confirm-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
-        onclick={() => (sectionToReset = null)}
-      >
-        <span class="truncate">{i18n.t('common.cancel')}</span>
-      </Button>
-
-      <Button
-        variant="accent"
-        size="md"
-        class="w-full justify-center px-3"
-        onclick={() => {
-          if (sectionToReset) {
-            const sec = sectionToReset;
-            sectionToReset = null;
-            void resetSection(sec);
-          }
-        }}
-      >
-        <IconArrowReset class="w-5 h-5 mr-1.5 shrink-0" />
-        <span class="truncate">{i18n.t('common.reset')}</span>
-      </Button>
-    </div>
-  </div>
-</Modal>
-
-<Modal
+<ConfirmDialog
   isOpen={showClearAllCacheConfirm}
   title={i18n.t('settings.cache_clear_all')}
-  size="sm"
+  description={i18n.t('settings.cache_clear_all_confirm')}
+  confirmLabel={i18n.t('common.delete')}
+  confirmVariant="danger"
+  confirmIcon={IconDelete}
+  loading={cacheBusy === 'all'}
+  onconfirm={() => {
+    showClearAllCacheConfirm = false;
+    void clearCache('all');
+  }}
   onclose={() => (showClearAllCacheConfirm = false)}
->
-  <div class="modal-confirm-layout">
-    <p class="modal-confirm-desc">
-      {i18n.t('settings.cache_clear_all_confirm')}
-    </p>
+/>
 
-    <div class="modal-confirm-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
-        disabled={cacheBusy === 'all'}
-        onclick={() => (showClearAllCacheConfirm = false)}
-      >
-        <span class="truncate">{i18n.t('common.cancel')}</span>
-      </Button>
-
-      <Button
-        variant="danger"
-        size="md"
-        class="w-full justify-center px-3"
-        disabled={cacheBusy === 'all'}
-        onclick={() => {
-          showClearAllCacheConfirm = false;
-          void clearCache('all');
-        }}
-      >
-        {#if cacheBusy === 'all'}
-          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
-        {:else}
-          <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
-        {/if}
-        <span class="truncate">{i18n.t('common.delete')}</span>
-      </Button>
-    </div>
-  </div>
-</Modal>
-
-<Modal
+<ConfirmDialog
   isOpen={showClearBgMediaConfirm}
   title={i18n.t('settings.background_media_clear')}
-  size="sm"
+  description={i18n.t('settings.background_media_clear_confirm')}
+  confirmLabel={i18n.t('common.delete')}
+  confirmVariant="danger"
+  confirmIcon={IconDelete}
+  onconfirm={() => {
+    showClearBgMediaConfirm = false;
+    backgroundState.clearCustomMedia(backgroundState.settings.customKind as 'image' | 'video');
+  }}
   onclose={() => (showClearBgMediaConfirm = false)}
->
-  <div class="modal-confirm-layout">
-    <p class="modal-confirm-desc">
-      {i18n.t('settings.background_media_clear_confirm')}
-    </p>
+/>
 
-    <div class="modal-confirm-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
-        onclick={() => (showClearBgMediaConfirm = false)}
-      >
-        <span class="truncate">{i18n.t('common.cancel')}</span>
-      </Button>
-
-      <Button
-        variant="danger"
-        size="md"
-        class="w-full justify-center px-3"
-        onclick={() => {
-          showClearBgMediaConfirm = false;
-          backgroundState.clearCustomMedia(backgroundState.settings.customKind as 'image' | 'video');
-        }}
-      >
-        <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
-        <span class="truncate">{i18n.t('common.delete')}</span>
-      </Button>
-    </div>
-  </div>
-</Modal>
-
-<Modal
+<ConfirmDialog
   isOpen={showWipeConfirm}
   title={i18n.t('settings.wipe_all_data')}
-  size="sm"
+  description={i18n.t('settings.wipe_all_data_confirm')}
+  confirmLabel={i18n.t('common.delete')}
+  confirmVariant="danger"
+  confirmIcon={IconDelete}
+  loading={wipePending}
+  onconfirm={() => void executeWipeAllData()}
   onclose={() => (showWipeConfirm = false)}
->
-  <div class="modal-confirm-layout">
-    <p class="modal-confirm-desc">
-      {i18n.t('settings.wipe_all_data_confirm')}
-    </p>
-
-    <div class="modal-confirm-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
-        disabled={wipePending}
-        onclick={() => (showWipeConfirm = false)}
-      >
-        <span class="truncate">{i18n.t('common.cancel')}</span>
-      </Button>
-
-      <Button
-        variant="danger"
-        size="md"
-        class="w-full justify-center px-3"
-        disabled={wipePending}
-        onclick={() => void executeWipeAllData()}
-      >
-        {#if wipePending}
-          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
-        {:else}
-          <IconDelete class="w-5 h-5 mr-1.5 shrink-0" />
-        {/if}
-        <span class="truncate">{i18n.t('common.delete')}</span>
-      </Button>
-    </div>
-  </div>
-</Modal>
+/>
 
 <input
   bind:this={bgImageInput}
@@ -2058,9 +2146,22 @@
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    gap: 56px;
+    gap: calc(32px * var(--ui-scale, 1));
     padding-bottom: 48px;
     overflow-x: clip;
+
+    --control-height: var(--control-height-base);
+    --control-font-size: var(--control-font-base);
+    --control-icon-size: var(--control-icon-base);
+    --control-padding-x: var(--control-padding-base);
+    --control-radius: var(--control-radius-base);
+  }
+
+  .settings-page :global(.btn:not(.settings-toolbar *)) {
+    --control-height: var(--control-height-base);
+    --control-font-size: var(--control-font-base);
+    --control-icon-size: var(--control-icon-base);
+    --control-padding-x: var(--control-padding-base);
   }
 
   .settings-toolbar,
@@ -2070,10 +2171,24 @@
     width: 100%;
     min-width: 0;
     gap: 16px;
+    min-height: calc(var(--control-height-md, 46px) * var(--ui-scale, 1));
+
+    --control-height: var(--control-height-md, 46px) !important;
+    --control-font-size: var(--control-font-md, 14px) !important;
+    --control-icon-size: var(--control-icon-md, 20px) !important;
+    --control-padding-x: var(--control-padding-md, 20px) !important;
+    --control-radius: var(--control-radius-md, var(--radius-full)) !important;
+  }
+
+  .settings-toolbar :global(.btn),
+  .sticky-settings-toolbar :global(.btn) {
+    --control-height: var(--control-height-md, 46px) !important;
+    --control-font-size: var(--control-font-md, 14px) !important;
+    --control-icon-size: var(--control-icon-md, 20px) !important;
+    --control-padding-x: var(--control-padding-md, 20px) !important;
   }
 
   .settings-toolbar {
-    min-height: 44px;
     margin-bottom: 0;
   }
 
@@ -2085,45 +2200,39 @@
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    padding-right: 20px;
+  }
+
+  :global(.page-shell.mobile) .settings-categories {
+    margin-left: -12px;
+    padding-left: 12px;
+  }
+
+  @media (max-width: 768px) {
+    .settings-categories {
+      margin-left: -12px;
+      padding-left: 12px;
+    }
   }
 
   .settings-categories::-webkit-scrollbar {
     display: none;
   }
 
-  :global(.settings-category-btn.btn) {
-    height: 44px !important;
-    min-height: 44px !important;
-    padding: 0 18px !important;
-    border-radius: var(--radius-full) !important;
-    font-size: 13.5px !important;
-    white-space: nowrap;
-    flex: 0 0 auto;
-  }
-
-
-
-  .settings-section {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    gap: 16px;
-    scroll-margin-top: 92px;
-    overflow-wrap: anywhere;
-  }
-
-  .settings-section :global(.select-root) {
-    max-width: 100% !important;
-    min-width: 0 !important;
+  :global(.settings-category-choice) {
+    flex-wrap: nowrap !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
   }
 
   .background-color-input {
     width: 100%;
     min-width: 0;
-    height: 46px;
-    padding: 5px;
+    height: var(--control-height, 40px);
+    padding: 3px;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-full);
     background: var(--bg-input);
@@ -2133,15 +2242,28 @@
   .settings-accent-controls {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     width: 100%;
     max-width: 100%;
     min-width: 0;
     flex-wrap: wrap;
+    min-height: var(--control-height, 40px);
+    gap: 16px;
+    margin-left: auto;
   }
 
-  .settings-accent-controls {
-    min-height: 46px;
-    gap: 16px;
+  :global([data-layout='mobile']) .settings-accent-controls {
+    justify-content: flex-start;
+    margin-left: 0;
+    gap: 14px;
+  }
+
+  @media (max-width: 640px) {
+    .settings-accent-controls {
+      justify-content: flex-start;
+      margin-left: 0;
+      gap: 14px;
+    }
   }
 
   @media (max-width: 900px) {
@@ -2273,7 +2395,7 @@
 
   @media (max-width: 640px) {
     .settings-page {
-      gap: 44px;
+      gap: calc(28px * var(--ui-scale, 1));
       padding-bottom: 24px;
     }
 

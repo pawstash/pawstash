@@ -223,10 +223,27 @@ INSERT OR IGNORE INTO collections (id, kind, name, position, is_system)
 VALUES ('00000000-0000-0000-0000-000000000001', 'inbox', 'Main Stash', 0, 1);
 "#;
 
+#[cfg(target_os = "android")]
+pub fn android_package_name() -> String {
+    if let Ok(cmdline) = std::fs::read_to_string("/proc/self/cmdline") {
+        let pkg = cmdline.split('\0').next().unwrap_or("").trim();
+        if !pkg.is_empty() && pkg.contains("app.pawstash") {
+            return pkg.to_string();
+        }
+    }
+    if std::path::Path::new("/data/data/app.pawstash.client.dev/files").exists()
+        || std::path::Path::new("/data/user/0/app.pawstash.client.dev/files").exists()
+    {
+        return "app.pawstash.client.dev".to_string();
+    }
+    "app.pawstash.client".to_string()
+}
+
 pub fn data_root() -> PathBuf {
     #[cfg(target_os = "android")]
     {
-        PathBuf::from("/data/data/app.pawstash.client/files/Pawstash")
+        let pkg = android_package_name();
+        PathBuf::from(format!("/data/data/{pkg}/files/Pawstash"))
     }
     #[cfg(not(target_os = "android"))]
     {

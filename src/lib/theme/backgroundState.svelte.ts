@@ -10,7 +10,7 @@ export type BackgroundType =
   | 'tabbed'
   | 'custom';
 
-export type CustomBackgroundKind = 'color' | 'image' | 'video';
+export type CustomBackgroundKind = 'color' | 'image' | 'video' | 'palette';
 
 export interface BackgroundSettings {
   type: BackgroundType;
@@ -148,7 +148,9 @@ export class BackgroundState {
       if (saved) {
         try {
           Object.assign(this.settings, JSON.parse(saved));
-        } catch (e) {}
+        } catch (e) {
+          logger.warn('[BackgroundState] Failed to parse saved settings:', e);
+        }
       }
     }
     if (!supportedBackgroundTypes().includes(this.settings.type)) {

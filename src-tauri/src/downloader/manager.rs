@@ -393,15 +393,16 @@ impl DownloadManager {
     pub fn ensure_download_root(preferred: &str) -> Result<PathBuf, String> {
         #[cfg(target_os = "android")]
         {
+            let pkg = crate::db::storage::android_package_name();
             let candidates = [
                 PathBuf::from(preferred),
                 PathBuf::from("/storage/emulated/0/Download/Pawstash"),
                 PathBuf::from("/storage/emulated/0/Download"),
-                PathBuf::from(
-                    "/storage/emulated/0/Android/data/app.pawstash.client/files/Download",
-                ),
-                PathBuf::from("/data/user/0/app.pawstash.client/files/Pawstash/Downloads"),
-                PathBuf::from("/data/data/app.pawstash.client/files/Pawstash/Downloads"),
+                PathBuf::from(format!(
+                    "/storage/emulated/0/Android/data/{pkg}/files/Download",
+                )),
+                PathBuf::from(format!("/data/user/0/{pkg}/files/Pawstash/Downloads")),
+                PathBuf::from(format!("/data/data/{pkg}/files/Pawstash/Downloads")),
             ];
 
             for candidate in candidates {

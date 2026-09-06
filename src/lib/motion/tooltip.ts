@@ -162,6 +162,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
 
   node.addEventListener('mouseenter', show);
   node.addEventListener('mouseleave', hide);
+  node.addEventListener('focusin', show);
+  node.addEventListener('focusout', hide);
   node.addEventListener('click', hide);
   node.addEventListener('pointerdown', hide);
 
@@ -192,6 +194,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
       }
       node.removeEventListener('mouseenter', show);
       node.removeEventListener('mouseleave', hide);
+      node.removeEventListener('focusin', show);
+      node.removeEventListener('focusout', hide);
       node.removeEventListener('click', hide);
       node.removeEventListener('pointerdown', hide);
     }

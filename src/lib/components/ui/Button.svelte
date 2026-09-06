@@ -5,8 +5,8 @@
 
   interface Props extends HTMLButtonAttributes {
     type?: 'button' | 'submit' | 'reset';
-    variant?: 'primary' | 'accent' | 'ghost' | 'danger';
-    size?: 'sm' | 'md' | 'lg';
+    variant?: 'primary' | 'accent' | 'tonal' | 'ghost' | 'danger';
+    size?: 'sm' | 'base' | 'md' | 'lg';
     disabled?: boolean;
     onclick?: (e: MouseEvent) => void;
     children?: Snippet;
@@ -19,7 +19,7 @@
   let {
     type = 'button',
     variant = 'primary',
-    size = 'md',
+    size,
     disabled = false,
     onclick,
     children,
@@ -41,7 +41,7 @@
   use:ripple
   use:tooltip={effectiveTooltip}
   aria-label={restProps['aria-label'] || effectiveTooltip}
-  class="btn btn-{variant} btn-{size} {extraClass}"
+  class="btn btn-{variant} {size ? `btn-${size}` : ''} {extraClass}"
   {...restProps}
 >
   {#if children}
@@ -64,6 +64,16 @@
     outline: none;
     box-sizing: border-box;
     white-space: nowrap;
+    flex-shrink: 0;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
+    padding: 0 calc(var(--control-padding-x, 20px) * var(--ui-scale, 1));
+    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
+    gap: calc(var(--control-gap, 8px) * var(--ui-scale, 1));
+  }
+
+  .btn :global(svg) {
+    width: calc(var(--control-icon-size, 20px) * var(--ui-scale, 1));
+    height: calc(var(--control-icon-size, 20px) * var(--ui-scale, 1));
     flex-shrink: 0;
   }
 
@@ -100,6 +110,18 @@
     color: var(--text-on-accent, var(--text-primary));
   }
 
+  .btn-tonal {
+    background: var(--accent-container);
+    border-color: var(--accent-subtle);
+    color: var(--accent-on-container);
+  }
+
+  .btn-tonal:hover {
+    background: color-mix(in srgb, var(--accent-container) 80%, var(--accent-primary));
+    border-color: var(--accent-primary);
+    color: var(--accent-on-container);
+  }
+
   .btn-ghost {
     background: transparent;
     color: color-mix(in srgb, var(--text-primary) 70%, var(--text-secondary));
@@ -122,49 +144,42 @@
   }
 
   .btn-sm {
-    height: 34px;
-    padding: 0 14px 1.5px 14px;
-    font-size: 12px;
-    gap: 6px;
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+    --control-padding-x: var(--control-padding-sm, 14px);
+    --control-gap: 6px;
   }
 
-  .btn-sm :global(svg) {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
+  .btn-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+    --control-padding-x: var(--control-padding-base, 16px);
+    --control-gap: 7px;
   }
 
   .btn-md {
-    height: 46px;
-    padding: 0 20px 2px 20px;
-    font-size: 14px;
-    gap: 8px;
-  }
-
-  .btn-md :global(svg) {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 20px);
+    --control-gap: 8px;
   }
 
   .btn-lg {
-    height: 52px;
-    padding: 0 24px 2px 24px;
-    font-size: 16px;
-    gap: 10px;
-  }
-
-  .btn-lg :global(svg) {
-    width: 24px;
-    height: 24px;
-    flex-shrink: 0;
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 16px);
+    --control-icon-size: var(--control-icon-lg, 24px);
+    --control-padding-x: var(--control-padding-lg, 24px);
+    --control-gap: 10px;
   }
 
   .btn.btn-icon,
   :global(.btn.btn-icon) {
-    width: 46px !important;
-    height: 46px !important;
-    min-width: 46px !important;
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 !important;
     border-radius: var(--radius-full) !important;
     flex-shrink: 0;
@@ -175,21 +190,8 @@
 
   .btn.btn-icon :global(svg),
   :global(.btn.btn-icon svg) {
-    width: 20px !important;
-    height: 20px !important;
+    width: calc(var(--control-icon-size, 20px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-icon-size, 20px) * var(--ui-scale, 1)) !important;
     flex-shrink: 0 !important;
-  }
-
-  .btn.btn-icon.btn-sm,
-  :global(.btn.btn-icon.btn-sm) {
-    width: 34px !important;
-    height: 34px !important;
-    min-width: 34px !important;
-  }
-
-  .btn.btn-icon.btn-sm :global(svg),
-  :global(.btn.btn-icon.btn-sm svg) {
-    width: 16px !important;
-    height: 16px !important;
   }
 </style>

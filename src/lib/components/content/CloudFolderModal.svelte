@@ -12,7 +12,10 @@
   import { scrollable } from '$lib/actions/scrollable';
   import { ripple, tooltip } from '$lib/motion';
   import Modal from '$lib/components/ui/Modal.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
   import MediaViewer from '$lib/components/content/MediaViewer.svelte';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -533,17 +536,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<Modal
-  isOpen={open}
-  title={folder?.title || 'Cloud Folder'}
-  {onclose}
-  size="2xl"
-  position="top"
-  fixedHeight={true}
-  flush={true}
-  borderlessHeader={true}
-  scrollable={false}
->
+{#snippet explorerContent()}
   {#if folder}
     <div class="mega-explorer flex flex-col w-full h-full text-[var(--fg-default)] select-none">
       
@@ -568,7 +561,7 @@
             onclick={() => !isLast && navigateToBreadcrumb(idx)}
             disabled={isLast}
           >
-            {step.name}
+            <StableWeightLabel text={step.name} reserveWeight="var(--font-weight-semibold)" />
           </button>
           {#if !isLast}
             <IconChevronRight class="w-3.5 h-3.5 text-[var(--fg-muted)]/40 shrink-0 mx-0.5" />
@@ -578,19 +571,19 @@
 
       <!-- MEGA Style Full-Width Table (flex-1 with fixed scroll container) -->
       <div class="mega-table-container flex-1 min-h-0 relative overflow-hidden w-full bg-transparent" use:scrollable>
-        <table class="mega-table w-full min-w-[500px] border-collapse text-left bg-transparent">
+        <table class="mega-table w-full sm:min-w-[500px] border-collapse text-left bg-transparent">
           <thead class="bg-transparent">
             <tr class="h-9 border-b border-white/[0.06] border-t-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]/80 sticky top-0 z-10 select-none bg-transparent backdrop-blur-sm">
-              <th class="py-2 px-4 w-10 text-center font-normal bg-transparent">
+              <th class="py-2 px-3 sm:px-4 w-9 sm:w-10 text-center font-normal bg-transparent">
                 <Checkbox
                   checked={isAllCurrentSelected}
                   onchange={toggleSelectAll}
                 />
               </th>
-              <th class="py-2 px-3 font-semibold bg-transparent">{i18n.t('downloads.name')}</th>
-              <th class="py-2 px-3 font-semibold w-28 bg-transparent">{i18n.t('downloads.type')}</th>
-              <th class="py-2 px-4 font-semibold w-28 text-right bg-transparent">{i18n.t('downloads.size')}</th>
-              <th class="py-2 px-4 w-[124px] text-right bg-transparent font-normal"></th>
+              <th class="py-2 px-2 sm:px-3 font-semibold bg-transparent">{i18n.t('downloads.name')}</th>
+              <th class="py-2 px-3 font-semibold w-28 bg-transparent hidden sm:table-cell">{i18n.t('downloads.type')}</th>
+              <th class="py-2 px-4 font-semibold w-28 text-right bg-transparent hidden sm:table-cell">{i18n.t('downloads.size')}</th>
+              <th class="py-2 px-2 sm:px-4 w-auto sm:w-[124px] text-right bg-transparent font-normal"></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-white/[0.04] bg-transparent text-xs">
@@ -613,42 +606,59 @@
                 {@const isCompleted = progress.status === 'completed'}
 
                 <tr
-                  class="mega-row h-[42px] transition-colors cursor-pointer select-none group even:bg-white/[0.015] hover:bg-white/[0.04] {isSelected ? 'bg-[var(--accent)]/10' : ''} {isCompleted ? 'is-completed' : ''} {isDownloading ? 'is-downloading' : ''}"
+                  class="mega-row h-[46px] sm:h-[42px] transition-colors cursor-pointer select-none group even:bg-white/[0.015] hover:bg-white/[0.04] {isSelected ? 'bg-[var(--accent)]/10' : ''} {isCompleted ? 'is-completed' : ''} {isDownloading ? 'is-downloading' : ''}"
                   style={isDownloading && progress.percent > 0 ? `--row-progress: ${progress.percent}%;` : ''}
                   onclick={() => isFolder ? navigateIntoFolder(node) : toggleSelect(node)}
                 >
                   <!-- Checkbox Column -->
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <td class="py-2 px-4 text-center relative z-[1]" onclick={(e) => e.stopPropagation()}>
+                  <td class="py-2 px-3 sm:px-4 text-center relative z-[1]" onclick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={isSelected}
                       onchange={() => toggleSelect(node)}
                     />
                   </td>
 
-                  <!-- Name Column with Icon -->
-                  <td class="py-2 px-3 min-w-0 relative z-[1]">
-                    <div class="flex items-center gap-3 min-w-0">
+                  <!-- Name Column with Icon & Mobile Subtitle -->
+                  <td class="py-2 px-2 sm:px-3 min-w-0 relative z-[1]">
+                    <div class="flex items-center gap-2.5 sm:gap-3 min-w-0">
                       <div class="flex items-center justify-center w-6 h-6 shrink-0">
                         <IconComp class="w-5 h-5 {isFolder ? 'text-[var(--accent)]' : (isCompleted ? 'text-emerald-400' : 'text-[var(--fg-muted)]')}" />
                       </div>
-                      <span
-                        class="text-[13.5px] truncate {isFolder ? 'font-medium text-[var(--fg-default)]' : 'font-normal text-[var(--fg-default)]/90'}"
-                        title={node.name}
-                      >
-                        {node.name}
-                      </span>
+                      <div class="flex flex-col min-w-0 flex-1">
+                        <span
+                          class="text-[13px] sm:text-[13.5px] truncate {isFolder ? 'font-medium text-[var(--fg-default)]' : 'font-normal text-[var(--fg-default)]/90'}"
+                          title={node.name}
+                        >
+                          {node.name}
+                        </span>
+                        <div class="flex items-center gap-1.5 text-[11px] text-[var(--fg-muted)] sm:hidden font-mono mt-0.5 leading-tight">
+                          {#if isDownloading}
+                            <span class="text-[var(--accent)] font-medium font-sans">
+                              {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued') || 'Queued')}
+                            </span>
+                          {:else if isCompleted}
+                            <span class="text-emerald-400 font-medium font-sans">
+                              {displaySize > 0 ? formatBytes(displaySize) : '—'}
+                            </span>
+                          {:else}
+                            <span>{displaySize > 0 ? formatBytes(displaySize) : '—'}</span>
+                          {/if}
+                          <span class="text-white/20">•</span>
+                          <span class="font-sans truncate">{typeLabel}</span>
+                        </div>
+                      </div>
                     </div>
                   </td>
 
                   <!-- Type Column -->
-                  <td class="py-2 px-3 text-[var(--fg-muted)] text-[12px] font-normal relative z-[1]">
+                  <td class="py-2 px-3 text-[var(--fg-muted)] text-[12px] font-normal relative z-[1] hidden sm:table-cell">
                     {typeLabel}
                   </td>
 
                   <!-- Size Column (for both Files and Folders) -->
-                  <td class="py-2 px-4 text-right text-[12px] font-mono whitespace-nowrap relative z-[1]">
+                  <td class="py-2 px-4 text-right text-[12px] font-mono whitespace-nowrap relative z-[1] hidden sm:table-cell">
                     {#if isDownloading}
                       <span class="text-[var(--accent)] font-medium">
                         {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued') || 'Queued')}
@@ -667,8 +677,8 @@
                   <!-- Actions Column (Fixed 3-icon slot width to prevent layout shifts) -->
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <td class="py-1 px-4 text-right whitespace-nowrap w-[124px] relative z-[1]" onclick={(e) => e.stopPropagation()}>
-                    <div class="inline-flex items-center justify-end gap-1.5 w-[104px]">
+                  <td class="py-1 px-2 sm:px-4 text-right whitespace-nowrap w-auto sm:w-[124px] relative z-[1]" onclick={(e) => e.stopPropagation()}>
+                    <div class="inline-flex items-center justify-end gap-1 sm:gap-1.5 w-auto sm:w-[104px]">
                       {#if media}
                         <button
                           type="button"
@@ -735,64 +745,93 @@
 
     </div>
   {/if}
+{/snippet}
 
-  {#snippet floating()}
-    {#if selectedIds.size > 0}
-      <aside class="modal-selection-dock-wrapper" aria-label="Selection actions">
-        <div class="selection-dock" role="toolbar">
-          <div class="selection-counter">
-            <span class="selection-count-badge active">
-              {selectedFiles.length}
-            </span>
-            <span class="selection-count-label">
-              {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : (i18n.t('selection.items_count') || 'selected')}
-            </span>
-          </div>
-
-          <div class="selection-dock-divider"></div>
-
-          {#if allCurrentFiles.length > 0}
-            <button
-              type="button"
-              class="selection-dock-btn"
-              use:ripple
-              onclick={toggleSelectAll}
-              aria-label={i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all')}
-            >
-              <IconSelectAll class="w-[17px] h-[17px]" />
-              <span>{i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all') || (isAllCurrentSelected ? 'Deselect all' : 'Select all')}</span>
-            </button>
-
-            <div class="selection-dock-divider"></div>
-          {/if}
-
-          <button
-            type="button"
-            class="selection-dock-btn btn-accent"
-            use:ripple
-            onclick={downloadSelected}
-          >
-            <IconDownload class="w-[17px] h-[17px]" />
-            <span>{i18n.t('post.download') || 'Download'} ({selectedFiles.length})</span>
-          </button>
-
-          <div class="selection-dock-divider"></div>
-
-          <button
-            type="button"
-            class="selection-dock-close-btn"
-            use:ripple
-            onclick={clearSelection}
-            use:tooltip={`${i18n.t('selection.cancel') || 'Cancel'} (Esc)`}
-            aria-label="Cancel selection"
-          >
-            <IconDismiss class="w-[18px] h-[18px]" />
-          </button>
+{#snippet dockFloating()}
+  {#if selectedIds.size > 0}
+    <aside class="modal-selection-dock-wrapper" aria-label="Selection actions">
+      <div class="selection-dock" role="toolbar">
+        <div class="selection-counter">
+          <span class="selection-count-badge active">
+            {selectedFiles.length}
+          </span>
+          <span class="selection-count-label">
+            {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : (i18n.t('selection.items_count') || 'selected')}
+          </span>
         </div>
-      </aside>
-    {/if}
-  {/snippet}
-</Modal>
+
+        <div class="selection-dock-divider"></div>
+
+        {#if allCurrentFiles.length > 0}
+          <button
+            type="button"
+            class="selection-dock-btn"
+            use:ripple
+            onclick={toggleSelectAll}
+            aria-label={i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all')}
+          >
+            <IconSelectAll class="w-[17px] h-[17px]" />
+            <span>{i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all') || (isAllCurrentSelected ? 'Deselect all' : 'Select all')}</span>
+          </button>
+
+          <div class="selection-dock-divider"></div>
+        {/if}
+
+        <button
+          type="button"
+          class="selection-dock-btn btn-accent"
+          use:ripple
+          onclick={downloadSelected}
+        >
+          <IconDownload class="w-[17px] h-[17px]" />
+          <span>{i18n.t('post.download') || 'Download'} ({selectedFiles.length})</span>
+        </button>
+
+        <div class="selection-dock-divider"></div>
+
+        <button
+          type="button"
+          class="selection-dock-close-btn"
+          use:ripple
+          onclick={clearSelection}
+          use:tooltip={`${i18n.t('selection.cancel') || 'Cancel'} (Esc)`}
+          aria-label="Cancel selection"
+        >
+          <IconDismiss class="w-[18px] h-[18px]" />
+        </button>
+      </div>
+    </aside>
+  {/if}
+{/snippet}
+
+{#if layoutState.isMobile}
+  <BottomSheet
+    isOpen={open}
+    title={folder?.title || 'Cloud Folder'}
+    {onclose}
+    tall={true}
+    flush={true}
+    scrollable={false}
+    floating={dockFloating}
+  >
+    {@render explorerContent()}
+  </BottomSheet>
+{:else}
+  <Modal
+    isOpen={open}
+    title={folder?.title || 'Cloud Folder'}
+    {onclose}
+    size="2xl"
+    position="top"
+    fixedHeight={true}
+    flush={true}
+    borderlessHeader={true}
+    scrollable={false}
+    floating={dockFloating}
+  >
+    {@render explorerContent()}
+  </Modal>
+{/if}
 
 {#if previewIndex !== null && mediaViewerItems.length > 0}
   <MediaViewer
@@ -848,7 +887,7 @@
 
   .modal-selection-dock-wrapper {
     position: absolute;
-    bottom: 16px;
+    bottom: max(16px, calc(12px + env(safe-area-inset-bottom, 0px)));
     left: 50%;
     transform: translateX(-50%);
     z-index: 40;

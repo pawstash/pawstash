@@ -6,6 +6,24 @@ import { matchesTriStateFilter } from '$lib/types/filter';
 import { configState } from './configState.svelte';
 import { providerState } from './providerState.svelte';
 
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+function parseTimestamp(value: unknown): number {
+  if (!value) return 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric > 10_000_000_000 ? Math.round(numeric / 1000) : numeric;
+  }
+  const ms = new Date(String(value)).getTime();
+  return Number.isNaN(ms) ? 0 : Math.round(ms / 1000);
+}
+
+function parseFavoriteCount(c: Creator): number {
+  const val = c.favorited ?? (c.extra as any)?.favorited ?? (c as any).kemono_favorited ?? (c.extra as any)?.kemono_favorited ?? (c as any).favorite_count ?? 0;
+  const num = Number(val);
+  return Number.isFinite(num) ? num : 0;
+}
+
 export class CreatorsState {
   creators = $state<Creator[]>([]);
   loading = $state(false);
@@ -72,25 +90,40 @@ export class CreatorsState {
       );
     }
 
+    const sortBy = this.sortBy;
+    const sortOrder = this.sortOrder;
+
     result = [...result].sort((a, b) => {
       let comparison = 0;
-      if (this.sortBy === 'name') {
-        comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-      } else if (this.sortBy === 'updated') {
-        const tA = a.updated ?? 0;
-        const tB = b.updated ?? 0;
+      if (sortBy === 'name') {
+        comparison = collator.compare(a.name || '', b.name || '');
+      } else if (sortBy === 'updated') {
+        const tA = parseTimestamp(a.updated || a.indexed);
+        const tB = parseTimestamp(b.updated || b.indexed);
         comparison = tA - tB;
-      } else if (this.sortBy === 'indexed') {
-        const tA = a.indexed ?? 0;
-        const tB = b.indexed ?? 0;
+        if (comparison === 0) {
+          comparison = collator.compare(a.name || '', b.name || '');
+        }
+      } else if (sortBy === 'indexed') {
+        const tA = parseTimestamp(a.indexed || a.updated);
+        const tB = parseTimestamp(b.indexed || b.updated);
         comparison = tA - tB;
-      } else if (this.sortBy === 'favorited') {
-        const favA = Number(a.favorited ?? 0);
-        const favB = Number(b.favorited ?? 0);
+        if (comparison === 0) {
+          comparison = collator.compare(a.name || '', b.name || '');
+        }
+      } else if (sortBy === 'favorited') {
+        const favA = parseFavoriteCount(a);
+        const favB = parseFavoriteCount(b);
         comparison = favA - favB;
+        if (comparison === 0) {
+          comparison = parseTimestamp(a.updated || a.indexed) - parseTimestamp(b.updated || b.indexed);
+          if (comparison === 0) {
+            comparison = collator.compare(a.name || '', b.name || '');
+          }
+        }
       }
 
-      return this.sortOrder === 'asc' ? comparison : -comparison;
+      return sortOrder === 'asc' ? comparison : -comparison;
     });
 
     return result;

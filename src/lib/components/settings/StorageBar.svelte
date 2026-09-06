@@ -1,5 +1,6 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
+  import { themeState } from '$lib/theme/themeState.svelte';
   import type { CacheStats } from '$lib/utils/ipc';
 
   interface Props {
@@ -16,42 +17,38 @@
 
   let categories = $derived.by(() => {
     if (!stats || totalUsed === 0) return [];
+    const p = themeState.palette;
 
     const items = [
       {
         id: 'previews',
         label: i18n.t('settings.cache_previews'),
         bytes: stats.preview_bytes,
-        color: '#a855f7',
-        bgClass: 'bg-purple-500'
+        color: p.primary
       },
       {
         id: 'avatars',
         label: i18n.t('settings.cache_avatars'),
         bytes: stats.avatar_bytes,
-        color: '#38bdf8',
-        bgClass: 'bg-sky-400'
+        color: p.quadrants[1]
       },
       {
         id: 'banners',
         label: i18n.t('settings.cache_banners'),
         bytes: stats.banner_bytes,
-        color: '#34d399',
-        bgClass: 'bg-emerald-400'
+        color: p.quadrants[3]
       },
       {
         id: 'metadata',
         label: i18n.t('settings.cache_metadata'),
         bytes: stats.metadata_bytes,
-        color: '#818cf8',
-        bgClass: 'bg-indigo-400'
+        color: p.quadrants[2]
       },
       {
         id: 'other',
         label: i18n.t('settings.cache_other'),
         bytes: stats.other_bytes,
-        color: '#94a3b8',
-        bgClass: 'bg-slate-400'
+        color: 'rgba(255, 255, 255, 0.38)'
       }
     ];
 

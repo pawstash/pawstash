@@ -66,7 +66,7 @@ export function cleanPostTitle(title?: string | null): string {
 export function parseTags(tagsValue?: any): string[] {
   if (!tagsValue) return [];
   if (Array.isArray(tagsValue)) {
-    return tagsValue.map((t) => String(t).trim()).filter(Boolean);
+    return tagsValue.map((t) => String(t).replace(/^#+/, '').trim()).filter(Boolean);
   }
   if (typeof tagsValue === 'string') {
     const trimmed = tagsValue.trim();
@@ -74,13 +74,42 @@ export function parseTags(tagsValue?: any): string[] {
       return trimmed
         .slice(1, -1)
         .split(',')
-        .map((t) => t.trim().replace(/^"(.*)"$/, '$1'))
+        .map((t) => t.trim().replace(/^"(.*)"$/, '$1').replace(/^#+/, '').trim())
         .filter(Boolean);
     }
     if (trimmed.includes(',')) {
-      return trimmed.split(',').map((t) => t.trim()).filter(Boolean);
+      return trimmed.split(',').map((t) => t.trim().replace(/^#+/, '').trim()).filter(Boolean);
     }
-    if (trimmed) return [trimmed];
+    if (trimmed.includes('#')) {
+      return trimmed.split(/\s+/).map((t) => t.replace(/^#+/, '').trim()).filter(Boolean);
+    }
+    if (trimmed) return [trimmed.replace(/^#+/, '').trim()].filter(Boolean);
   }
   return [];
+}
+
+export function getPostTags(post?: any): string[] {
+  if (!post) return [];
+  const direct = parseTags(post.tags ?? post.extra?.tags ?? post.extra?.categories);
+  const tagSet = new Set<string>(direct);
+
+  const extractHashtags = (text?: string | null) => {
+    if (!text || typeof text !== 'string') return;
+    const matches = text.match(/#([\p{L}\p{N}_-]+)/gu);
+    if (matches) {
+      for (const m of matches) {
+        const clean = m.slice(1).trim();
+        if (clean.length >= 2 && !/^\d+$/.test(clean)) {
+          tagSet.add(clean);
+        }
+      }
+    }
+  };
+
+  extractHashtags(post.title);
+  if (post.content && typeof post.content === 'string') {
+    extractHashtags(post.content.slice(0, 2000));
+  }
+
+  return Array.from(tagSet);
 }

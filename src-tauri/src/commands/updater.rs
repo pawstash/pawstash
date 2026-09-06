@@ -51,6 +51,24 @@ pub struct UpdateProgressPayload {
     pub speed_bytes_per_sec: u64,
 }
 
+fn strip_redundant_release_heading(body: &str) -> String {
+    let mut output = Vec::new();
+    let mut stripped_first_heading = false;
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if !stripped_first_heading && trimmed.starts_with('#') {
+            let heading_text = trimmed.trim_start_matches('#').trim().to_lowercase();
+            if heading_text.starts_with("changes") || heading_text.starts_with("what's") {
+                stripped_first_heading = true;
+                continue;
+            }
+        }
+        output.push(line);
+    }
+    output.join("\n").trim().to_string()
+}
+
 #[tauri::command]
 pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
@@ -111,17 +129,25 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
             .collect();
 
         let combined_notes = if newer_releases.len() <= 1 {
-            latest.body.clone().unwrap_or_default()
+            let title = latest.name.as_deref().unwrap_or(&latest.tag_name);
+            let body = latest.body.as_deref().unwrap_or("").trim();
+            let cleaned = strip_redundant_release_heading(body);
+            if cleaned.is_empty() {
+                title.to_string()
+            } else {
+                format!("### {title}\n{cleaned}")
+            }
         } else {
             newer_releases
                 .iter()
                 .filter_map(|r| {
                     let body = r.body.as_deref().unwrap_or("").trim();
-                    if body.is_empty() {
+                    let title = r.name.as_deref().unwrap_or(&r.tag_name);
+                    let cleaned = strip_redundant_release_heading(body);
+                    if cleaned.is_empty() && body.is_empty() {
                         None
                     } else {
-                        let title = r.name.as_deref().unwrap_or(&r.tag_name);
-                        Some(format!("### {title}\n{body}"))
+                        Some(format!("### {title}\n{cleaned}"))
                     }
                 })
                 .collect::<Vec<_>>()
@@ -187,13 +213,15 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
                     }
                 }
             }
-            Ok(std::path::PathBuf::from(
-                "/data/data/app.pawstash.client/cache",
-            ))
+            let pkg = crate::db::storage::android_package_name();
+            Ok(std::path::PathBuf::from(format!(
+                "/data/data/{pkg}/cache",
+            )))
         }) {
             return Ok(path);
         }
-        let fallback = std::path::PathBuf::from("/data/data/app.pawstash.client/cache");
+        let pkg = crate::db::storage::android_package_name();
+        let fallback = std::path::PathBuf::from(format!("/data/data/{pkg}/cache"));
         if fallback.exists() {
             return Ok(fallback);
         }

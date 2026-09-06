@@ -106,6 +106,15 @@
     --bg-dropdown: rgba(24, 24, 27, 0.995);
     --bg-card: rgba(255, 255, 255, 0.03);
     --bg-card-hover: rgba(255, 255, 255, 0.07);
+    --input-bg: rgba(255, 255, 255, 0.06);
+    --input-bg-hover: rgba(255, 255, 255, 0.095);
+    --select-bg: rgba(255, 255, 255, 0.11);
+    --select-bg-hover: rgba(255, 255, 255, 0.15);
+
+    --settings-row-min-height: 58px;
+    --settings-control-max-width: 360px;
+    --settings-row-bg: rgba(255, 255, 255, 0.025);
+    --settings-row-divider: rgba(255, 255, 255, 0.025);
 
     --floating-bg: var(--bg-dropdown);
     --floating-border: var(--border-width) solid var(--border-color);
@@ -118,6 +127,24 @@
 
     --modal-radius: 20px;
     --modal-padding: 6px;
+
+    --bottom-sheet-width: 640px;
+    --bottom-sheet-max-height: 78dvh;
+    --bottom-sheet-radius: var(--radius-xl);
+    --bottom-sheet-surface: var(--bg-dropdown);
+    --bottom-sheet-backdrop: rgba(0, 0, 0, 0.64);
+    --bottom-sheet-shadow: 0 18px 55px rgba(0, 0, 0, 0.6);
+    --bottom-sheet-padding-x: 20px;
+    --bottom-sheet-padding-top: 20px;
+    --bottom-sheet-padding-bottom: 20px;
+    --bottom-sheet-title-content-gap: 12px;
+    --bottom-sheet-content-action-gap: 20px;
+    --bottom-sheet-drag-target-height: 44px;
+    --bottom-sheet-handle-width: 36px;
+    --bottom-sheet-handle-height: 4px;
+    --bottom-sheet-handle-color: rgba(255, 255, 255, 0.34);
+    --bottom-sheet-icon-size: 20px;
+    --sheet-action-icon-size: var(--bottom-sheet-icon-size);
 
     --floating-item-height: 36px;
     --floating-item-radius: 12px;
@@ -148,9 +175,19 @@
     --text-secondary: #9ca3af;
     --text-muted: #6b7280;
 
-    --accent-primary: #ffffff;
-    --accent-primary-hover: #e5e7eb;
-    --accent-glow: rgba(255, 255, 255, 0.12);
+    --accent-primary: #f43f5e;
+    --accent-primary-hover: #e11d48;
+    --accent-on-primary: #ffffff;
+    --accent-container: rgba(244, 63, 94, 0.16);
+    --accent-on-container: #f43f5e;
+    --accent-subtle: rgba(244, 63, 94, 0.22);
+    --accent-glow: rgba(244, 63, 94, 0.35);
+    --text-on-accent: var(--accent-on-primary);
+
+    --choice-active-bg: #fda4af;
+    --choice-active-text: #3b040e;
+    --choice-inactive-bg: #270912;
+    --choice-inactive-text: rgba(255, 255, 255, 0.82);
 
     --color-mac-close: #ff5f57;
     --color-mac-close-border: rgba(224, 68, 62, 0.6);
@@ -179,6 +216,7 @@
     --z-titlebar: 50;
     --z-overlay: 100;
     --z-modal: 200;
+    --z-bottom-sheet: 2100;
     --z-viewer: 2147483000;
     --z-tooltip: 2147483647;
     --z-toast: 1000;
@@ -190,6 +228,68 @@
     --backdrop-blur: 24px;
     --shadow-card: 0 12px 30px -8px rgba(0, 0, 0, 0.8);
     --shadow-glow: 0 0 20px -5px var(--accent-glow);
+
+    --control-height-sm: 34px;
+    --control-font-sm: 12.5px;
+    --control-icon-sm: 16px;
+    --control-padding-sm: 12px;
+    --control-radius-sm: var(--radius-sm);
+
+    --control-height-base: 40px;
+    --control-font-base: 13.5px;
+    --control-icon-base: 18px;
+    --control-padding-base: 14px;
+    --control-radius-base: var(--radius-md);
+
+    --control-height-md: 46px;
+    --control-font-md: 14px;
+    --control-icon-md: 20px;
+    --control-padding-md: 16px;
+    --control-radius-md: var(--radius-md);
+
+    --control-height-lg: 52px;
+    --control-font-lg: 15px;
+    --control-icon-lg: 22px;
+    --control-padding-lg: 20px;
+    --control-radius-lg: var(--radius-lg);
+
+    --control-height: var(--control-height-md);
+    --control-font-size: var(--control-font-md);
+    --control-icon-size: var(--control-icon-md);
+    --control-padding-x: var(--control-padding-md);
+    --control-radius: var(--control-radius-md);
+  }
+
+  [data-control-size="sm"], .control-size-sm {
+    --control-height: var(--control-height-sm);
+    --control-font-size: var(--control-font-sm);
+    --control-icon-size: var(--control-icon-sm);
+    --control-padding-x: var(--control-padding-sm);
+    --control-radius: var(--control-radius-sm);
+  }
+
+  [data-control-size="base"], .control-size-base {
+    --control-height: var(--control-height-base);
+    --control-font-size: var(--control-font-base);
+    --control-icon-size: var(--control-icon-base);
+    --control-padding-x: var(--control-padding-base);
+    --control-radius: var(--control-radius-base);
+  }
+
+  [data-control-size="md"], .control-size-md {
+    --control-height: var(--control-height-md);
+    --control-font-size: var(--control-font-md);
+    --control-icon-size: var(--control-icon-md);
+    --control-padding-x: var(--control-padding-md);
+    --control-radius: var(--control-radius-md);
+  }
+
+  [data-control-size="lg"], .control-size-lg {
+    --control-height: var(--control-height-lg);
+    --control-font-size: var(--control-font-lg);
+    --control-icon-size: var(--control-icon-lg);
+    --control-padding-x: var(--control-padding-lg);
+    --control-radius: var(--control-radius-lg);
   }
 
   html,
@@ -253,6 +353,52 @@
   border-color: var(--border-color-hover);
   transform: translateY(-2px);
   box-shadow: var(--shadow-card), var(--shadow-glow);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  gap: calc(10px * var(--ui-scale, 1));
+  scroll-margin-top: 92px;
+  overflow-wrap: anywhere;
+}
+
+.settings-section .select-root {
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  gap: 1px;
+  padding: 0;
+  border-radius: calc(var(--radius-xl) * var(--ui-scale, 1));
+  background: var(--settings-row-divider);
+  overflow: clip;
+}
+
+.settings-list > .setting-item:first-child {
+  border-radius: calc(var(--radius-xl) * var(--ui-scale, 1))
+    calc(var(--radius-xl) * var(--ui-scale, 1))
+    calc(var(--radius-sm) * var(--ui-scale, 1))
+    calc(var(--radius-sm) * var(--ui-scale, 1));
+}
+
+.settings-list > .setting-item:last-child {
+  border-radius: calc(var(--radius-sm) * var(--ui-scale, 1))
+    calc(var(--radius-sm) * var(--ui-scale, 1))
+    calc(var(--radius-xl) * var(--ui-scale, 1))
+    calc(var(--radius-xl) * var(--ui-scale, 1));
+}
+
+.settings-list > .setting-item:only-child {
+  border-radius: calc(var(--radius-xl) * var(--ui-scale, 1));
 }
 
 .os-scrollbar {
@@ -1023,7 +1169,7 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   gap: var(--floating-item-gap);
   width: 100%;
   height: var(--floating-item-height);
-  padding: 0 var(--floating-item-px) 1.5px var(--floating-item-px);
+  padding: 0 var(--floating-item-px);
   border-radius: var(--floating-item-radius);
   background: transparent;
   border: none;
@@ -1058,6 +1204,56 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 
 .floating-item.is-selected:hover {
   background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+}
+
+.floating-item svg,
+.floating-item .floating-item-icon {
+  width: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  height: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-width: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-height: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  flex-shrink: 0;
+}
+
+.sheet-action-item {
+  display: flex;
+  align-items: center;
+  gap: calc(14px * var(--ui-scale, 1));
+  width: 100%;
+  padding: calc(14px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1));
+  border-radius: calc(var(--radius-xl) * var(--ui-scale, 1));
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background var(--duration-fast, 150ms) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.sheet-action-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sheet-action-item:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sheet-action-item svg,
+.sheet-action-item .sheet-action-icon {
+  width: calc(var(--sheet-action-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  height: calc(var(--sheet-action-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-width: calc(var(--sheet-action-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-height: calc(var(--sheet-action-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  flex-shrink: 0;
+}
+
+.download-play-menu-item svg {
+  width: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  height: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-width: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  min-height: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  flex-shrink: 0;
 }
 
 .floating-divider {
@@ -1327,10 +1523,11 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   cursor: pointer;
 }
 
-.unified-filter-menu .view-option-icon {
-  flex: 0 0 var(--floating-card-icon-size, 20px);
-  width: var(--floating-card-icon-size, 20px);
-  height: var(--floating-card-icon-size, 20px);
+.unified-filter-menu .view-option-icon,
+.view-option-icon {
+  flex: 0 0 calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  width: calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
+  height: calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
   opacity: 0.5;
 }
 
@@ -1462,4 +1659,4 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   transform: translateY(-50%) rotate(90deg);
   filter: drop-shadow(-2px 0 2px rgba(0, 0, 0, 0.4));
 }
-
+

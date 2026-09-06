@@ -20,6 +20,8 @@
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
+  import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
@@ -42,6 +44,10 @@
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
+  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
+  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
+  import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
+  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
@@ -80,6 +86,7 @@
   let searchOpen = $state(savedState?.searchOpen ?? Boolean(savedState?.searchQuery));
   let filterOpen = $state(false);
   let stickyFilterOpen = $state(false);
+  let mobileMoreOpen = $state(false);
   let scaleVisible = $state(false);
   let scaleTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -90,6 +97,25 @@
   let activeFilterCount = $derived((groupByPosts ? 1 : 0) + countActiveFilters([formatFilters]));
   let completedCount = $derived(downloadState.downloads.filter((item) => item.status === 'completed').length);
   let totalCount = $derived(downloadState.downloads.length);
+  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`) || 'Sort');
+
+  let downloadTabOptions = $derived<ChoiceOption<DownloadFilter>[]>([
+    {
+      value: 'all',
+      label: i18n.t('downloads.all') || 'All',
+      count: totalCount
+    },
+    ...(downloadState.activeDownloadsCount > 0 ? [{
+      value: 'active' as DownloadFilter,
+      label: i18n.t('downloads.active') || 'Active',
+      count: downloadState.activeDownloadsCount
+    }] : []),
+    ...(completedCount < totalCount ? [{
+      value: 'completed' as DownloadFilter,
+      label: i18n.t('downloads.completed') || 'Completed',
+      count: completedCount
+    }] : [])
+  ]);
 
   $effect(() => {
     navigationState.saveViewState(navigationState.entryKey, {
@@ -441,33 +467,28 @@
 <svelte:window onkeydown={handleGridKeydown} />
 
 {#snippet downloadTabs()}
-  <nav class="downloads-tabs" aria-label={i18n.t('downloads.title')}>
-    {#each filters as filter}
-      {#if (filter !== 'active' || downloadState.activeDownloadsCount > 0) && (filter !== 'completed' || completedCount < totalCount)}
-        <Button variant={downloadState.filter === filter ? 'accent' : 'ghost'} onclick={() => { downloadState.filter = filter; if (selectionState.active) selectionState.clear(); }} class="downloads-tab">
-          <span>{i18n.t(`downloads.${filter}`)}</span>
-          {#if filter === 'active'}
-            <CountBadge count={downloadState.activeDownloadsCount} />
-          {:else if filter === 'completed'}
-            <CountBadge count={completedCount} />
-          {:else if filter === 'all'}
-            <CountBadge count={totalCount} />
-          {/if}
-        </Button>
-      {/if}
-    {/each}
-  </nav>
-{/snippet}
-
-{#snippet downloadSort()}
-  <Select
-    variant="ghost"
-    options={sortOptions.map((option) => ({ value: option, label: i18n.t(`downloads.sort_${option}`) }))}
-    value={sortBy}
-    onchange={(value) => sortBy = value as DownloadSort}
-    class="downloads-sort-select"
-    style="height: 44px;"
-  />
+  <ChoiceGroup
+    options={downloadTabOptions}
+    value={downloadState.filter}
+    onchange={(filter) => {
+      downloadState.filter = filter as DownloadFilter;
+      if (selectionState.active) selectionState.clear();
+    }}
+    align="left"
+    class="downloads-mode-choice"
+  >
+    {#snippet activeAddon()}
+      <Select
+        options={sortOptions.map((option) => ({ value: option, label: i18n.t(`downloads.sort_${option}`) }))}
+        value={sortBy}
+        onchange={(value) => sortBy = value as DownloadSort}
+        class="downloads-sort-select"
+        icon={IconArrowSort}
+        iconOnly={true}
+        ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+      />
+    {/snippet}
+  </ChoiceGroup>
 {/snippet}
 
 {#snippet downloadFilterInnerContent()}
@@ -483,7 +504,7 @@
       <strong>{i18n.t('downloads.group_by_posts')}</strong>
       <small>{i18n.t('downloads.group_by_posts_desc')}</small>
     </span>
-    <IconStack class="view-option-icon w-[20px] h-[20px]" />
+    <IconStack class="view-option-icon" />
   </button>
 
   <div class="floating-divider"></div>
@@ -541,30 +562,55 @@
     bind:searchQuery
     searchPlaceholder={i18n.t('downloads.search_placeholder')}
   >
-    <Button
-      variant={isSelectionActive ? 'accent' : 'ghost'}
-      class="btn-icon"
-      onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('downloads'))}
-      title={i18n.t('selection.select_mode') || 'Select mode'}
-      aria-label="Select mode"
-    >
-      <IconCheckboxChecked class="w-5 h-5" />
-    </Button>
-    <Button variant="ghost" class="btn-icon" onclick={openDownloadsFolder} title={i18n.t('downloads.open_folder')} aria-label={i18n.t('downloads.open_folder')}>
-      <IconFolderOpen class="w-5 h-5" />
-    </Button>
-    {@render filterControl(source)}
+    {#if !layoutState.isMobile}
+      <Button
+        variant={isSelectionActive ? 'accent' : 'ghost'}
+        class="btn-icon"
+        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('downloads'))}
+        title={i18n.t('selection.select_mode') || 'Select mode'}
+        aria-label="Select mode"
+      >
+        <IconCheckboxChecked class="w-5 h-5" />
+      </Button>
+      <Button variant="ghost" class="btn-icon" onclick={openDownloadsFolder} title={i18n.t('downloads.open_folder')} aria-label={i18n.t('downloads.open_folder')}>
+        <IconFolderOpen class="w-5 h-5" />
+      </Button>
+      {@render filterControl(source)}
+    {:else}
+      {@render filterControl(source)}
+
+      {#if isSelectionActive}
+        <Button
+          variant="accent"
+          size="sm"
+          class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
+          onclick={() => selectionState.exit()}
+          title={i18n.t('common.done') || 'Done'}
+          aria-label="Exit selection mode"
+        >
+          <IconCheckmark class="w-4 h-4" />
+          <span>{i18n.t('common.done') || 'Done'}</span>
+        </Button>
+      {:else}
+        <Button
+          variant="ghost"
+          class="btn-icon"
+          onclick={() => (mobileMoreOpen = true)}
+          title={i18n.t('common.more') || 'More'}
+          aria-label="More actions"
+        >
+          <IconMoreVertical class="w-5 h-5" />
+        </Button>
+      {/if}
+    {/if}
   </HeaderActions>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => downloadState.refresh()}>
   {#snippet overlay()}
-    <StickyHeader threshold={120} title={i18n.t('downloads.title') || 'Downloads'}>
+    <StickyHeader threshold={120}>
       {#snippet center()}
-        <div class="flex items-center gap-2">
-          {@render downloadTabs()}
-          {@render downloadSort()}
-        </div>
+        {@render downloadTabs()}
       {/snippet}
       {#snippet trailing()}
         {@render actionsCluster('sticky')}
@@ -574,10 +620,7 @@
 
   <PageHeader>
     {#snippet tabs()}
-      <div class="flex items-center gap-2">
-        {@render downloadTabs()}
-        {@render downloadSort()}
-      </div>
+      {@render downloadTabs()}
     {/snippet}
     {#snippet actions()}
       {@render actionsCluster('main')}
@@ -700,12 +743,115 @@
   />
 {/if}
 
-<style>
-  .downloads-tabs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .downloads-tabs::-webkit-scrollbar { display: none; }
+{#if layoutState.isMobile}
+  <BottomSheet
+    open={mobileMoreOpen}
+    title={i18n.t('common.more') || 'More'}
+    onclose={() => (mobileMoreOpen = false)}
+  >
+    <div class="flex flex-col gap-1 py-1">
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          selectionState.enter('downloads');
+        }}
+      >
+        <IconCheckboxChecked class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select mode'}</span>
+        </div>
+      </button>
 
-  :global(.select-root.downloads-sort-select) { height: 44px !important; width: auto !important; min-width: 170px !important; max-width: none !important; flex: none !important; }
-  :global(.select-root.downloads-sort-select .select-trigger.variant-ghost) { height: 44px !important; width: 100% !important; padding: 0 14px !important; border-radius: var(--radius-full) !important; font-size: 13px !important; }
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          void openDownloadsFolder();
+        }}
+      >
+        <IconFolderOpen class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('downloads.open_folder') || 'Open folder'}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        disabled={downloadState.loading}
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          void downloadState.refresh();
+        }}
+      >
+        <IconArrowClockwise class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+        </div>
+      </button>
+    </div>
+  </BottomSheet>
+{/if}
+
+<style>
+  :global(.downloads-mode-choice) {
+    flex-shrink: 0 !important;
+  }
+
+  :global(.downloads-sort-select) {
+    width: auto !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  :global(.downloads-sort-select .select-trigger),
+  :global(.downloads-sort-select .select-trigger.icon-only) {
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
+    background: var(--accent-container) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border: none !important;
+    box-shadow: none !important;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
+  }
+
+  :global(.downloads-sort-select .select-trigger:hover),
+  :global(.downloads-sort-select .select-trigger.icon-only:hover) {
+    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+  }
+
+  :global(.downloads-sort-select .select-trigger:active),
+  :global(.downloads-sort-select .select-trigger.icon-only:active) {
+    opacity: 0.85 !important;
+  }
+
+  :global(.downloads-sort-select .select-trigger svg),
+  :global(.downloads-sort-select .select-trigger.icon-only svg) {
+    width: 20px !important;
+    height: 20px !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    opacity: 1 !important;
+  }
   .downloads-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width)), 1fr)); align-items: start; gap: var(--grid-gap); width: 100%; }
   .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(10,10,14,.82); color: white; font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
   .empty-state { min-height: 310px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255, 255, 255, 0.42); text-align: center; }

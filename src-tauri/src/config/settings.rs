@@ -116,7 +116,7 @@ impl Default for AppSettings {
             proxy_username: String::new(),
             proxy_password: String::new(),
             proxy_bypass_local: true,
-            grid_scale: 85,
+            grid_scale: 100,
             grid_aspect_ratio: GridAspectRatio::Square,
             dynamic_accent: true,
             sticky_header: true,
@@ -396,7 +396,7 @@ impl AppSettings {
         #[cfg(target_os = "android")]
         if self
             .download_dir
-            .contains("/data/data/app.pawstash.client/files")
+            .contains("/data/data/app.pawstash")
         {
             self.download_dir = "/storage/emulated/0/Download/Pawstash".to_string();
         }
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(settings.api_domain, "mirror.example");
         assert_eq!(settings.file_domain, "file.pawchive.pw");
         assert!(settings.proxy_bypass_local);
-        assert_eq!(settings.grid_scale, 85);
+        assert_eq!(settings.grid_scale, 100);
         assert_eq!(settings.grid_aspect_ratio, GridAspectRatio::Square);
     }
 

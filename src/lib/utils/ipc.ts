@@ -27,6 +27,7 @@ import type {
   ResolvedPostLink
 } from '$lib/types/content';
 
+export const apiGetSystemAccentColor = () => invoke<string | null>('get_system_accent_color');
 export const apiGetAxumPort = () => invoke<number>('get_axum_port');
 export const apiCheckAria2c = () => invoke<boolean>('check_aria2c_installed');
 export const apiGetSettings = () => invoke<AppSettings>('get_settings');

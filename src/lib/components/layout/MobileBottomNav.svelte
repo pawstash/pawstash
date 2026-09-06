@@ -14,6 +14,7 @@
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
   import IconSettings from '~icons/fluent/settings-24-regular';
   import IconSettingsFilled from '~icons/fluent/settings-24-filled';
+  import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
 
   interface NavItem {
     id: 'feed' | 'creators' | 'favorites' | 'library' | 'downloads' | 'settings';
@@ -57,7 +58,9 @@
             <span class="dock-badge">{item.badge() > 99 ? '99+' : item.badge()}</span>
           {/if}
         </div>
-        <span class="dock-label">{title}</span>
+        <span class="dock-label">
+          <StableWeightLabel text={title} reserveWeight="var(--font-weight-bold)" />
+        </span>
       </button>
     {/each}
   </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { contentState, creatorCacheKey, type CachedCreator } from '$lib/state/contentState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -36,7 +36,7 @@
     getPostFormats
   } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
-  import { parseTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
+  import { parseTags, getPostTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import { logger } from '$lib/utils/logger';
   import type { DownloadScope, InitialImport } from '$lib/types/subscription';
   import type { Post, CreatorProfile, Announcement, Fancard } from '$lib/types/content';
@@ -44,8 +44,9 @@
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
+  import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
-  import SearchBar from '$lib/components/ui/SearchBar.svelte';
   import TagList from '$lib/components/ui/TagList.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import PostGrid from './PostGrid.svelte';
@@ -53,6 +54,7 @@
   import MediaViewer, { type MediaViewerItem } from './MediaViewer.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
+  import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
@@ -62,6 +64,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
+  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import IconAdd from '~icons/fluent/add-24-regular';
   import IconSettings from '~icons/fluent/settings-24-regular';
   import IconGrid from '~icons/fluent/grid-24-regular';
@@ -85,6 +88,7 @@
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconCopy from '~icons/fluent/copy-24-regular';
   import IconCheck from '~icons/fluent/checkmark-24-regular';
+  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLink from '~icons/fluent/link-24-regular';
   import IconNews from '~icons/fluent/news-24-regular';
@@ -99,9 +103,10 @@
   interface Props {
     service: string;
     creatorId: string;
+    initialTag?: string;
   }
 
-  let { service, creatorId }: Props = $props();
+  let { service, creatorId, initialTag }: Props = $props();
 
   const ratios = {
     square: '1 / 1',
@@ -150,6 +155,15 @@
   let sortOrder = $state<'default' | 'newest' | 'oldest' | 'popular'>(savedState?.sortOrder ?? 'default');
   let selectedTag = $state<string | null>(savedState?.selectedTag ?? null);
 
+  let lastHandledInitialTag: string | undefined = undefined;
+  $effect(() => {
+    if (initialTag && initialTag !== lastHandledInitialTag) {
+      lastHandledInitialTag = initialTag;
+      selectedTag = initialTag;
+      activeTab = 'posts';
+    }
+  });
+
   let similarCreators = $state<CreatorProfile[]>([]);
   let creatorLinks = $state<CreatorProfile[]>([]);
   let announcements = $state<Announcement[]>([]);
@@ -163,6 +177,8 @@
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
+  let mobileMoreOpen = $state(false);
+  let mobileSubSettingsOpen = $state(false);
   let activeFilterCount = $derived(countActiveFilters([formatFilters]) + (onlyWithAttachments ? 1 : 0));
 
   let postSearchLoading = $state(false);
@@ -265,24 +281,45 @@
       : providerState.getSelectedProvider(service, creatorId, '*')
   );
 
-  let creatorTags = $derived.by(() => {
-    const direct = parseTags(entry.profile?.tags || (entry.profile?.extra as any)?.tags || (entry.profile?.extra as any)?.categories);
-    const combined = new Set<string>([...direct, ...apiCreatorTags]);
+  let creatorTags = $derived.by<Array<{ name: string; count: number }>>(() => {
+    const tagCountMap = new Map<string, number>();
+    const tagDisplayNameMap = new Map<string, string>();
 
-    const tagCounts = new Map<string, number>();
     for (const post of entry.posts) {
-      const pTags = parseTags(post.tags);
-      for (const t of pTags) {
-        tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
-        combined.add(t);
+      const pTags = getPostTags(post);
+      for (const rawTag of pTags) {
+        const clean = rawTag.replace(/^#+/, '').trim();
+        if (!clean) continue;
+        const lower = clean.toLowerCase();
+        tagCountMap.set(lower, (tagCountMap.get(lower) || 0) + 1);
+        if (!tagDisplayNameMap.has(lower)) {
+          tagDisplayNameMap.set(lower, clean);
+        }
       }
     }
-    if (combined.size > 0) {
-      return Array.from(combined)
-        .sort((a, b) => (tagCounts.get(b) || 0) - (tagCounts.get(a) || 0))
-        .slice(0, 32);
+
+    if (entry.posts.length === 0) {
+      const direct = parseTags(entry.profile?.tags || (entry.profile?.extra as any)?.tags || (entry.profile?.extra as any)?.categories);
+      for (const t of [...direct, ...apiCreatorTags]) {
+        const clean = t.replace(/^#+/, '').trim();
+        if (!clean) continue;
+        const lower = clean.toLowerCase();
+        if (!tagDisplayNameMap.has(lower)) {
+          tagDisplayNameMap.set(lower, clean);
+          tagCountMap.set(lower, 0);
+        }
+      }
     }
-    return [];
+
+    if (tagDisplayNameMap.size === 0) return [];
+
+    return Array.from(tagDisplayNameMap.entries())
+      .map(([lower, name]) => ({
+        name,
+        count: tagCountMap.get(lower) || 0
+      }))
+      .filter((item) => (entry.posts.length > 0 ? item.count > 0 : true))
+      .sort((a, b) => b.count - a.count);
   });
 
   let normalizedPostSearch = $derived(postSearchQuery.trim().toLocaleLowerCase());
@@ -321,10 +358,11 @@
     }
 
     if (selectedTag) {
-      const normTag = selectedTag.trim().toLocaleLowerCase();
+      const normTag = selectedTag.trim().toLowerCase().replace(/^#+/, '');
+      const normSpaceTag = normTag.replace(/_/g, ' ');
       posts = posts.filter((post) => {
-        const pTags = parseTags(post.tags).map((t) => t.toLocaleLowerCase());
-        return pTags.includes(normTag);
+        const pTags = getPostTags(post).map((t) => t.trim().toLowerCase().replace(/^#+/, ''));
+        return pTags.some((pt) => pt === normTag || pt.replace(/_/g, ' ') === normSpaceTag);
       });
     }
 
@@ -375,18 +413,87 @@
     return posts;
   });
 
-  const sortOptions = [
-    { value: 'default', label: 'Default Order' },
-    { value: 'newest', label: 'Newest First' },
-    { value: 'oldest', label: 'Oldest First' },
-    { value: 'popular', label: 'Most Favorited' }
-  ];
+  let sortOptions = $derived([
+    { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
+    { value: 'newest', label: i18n.t('favorites.sort_published_desc') || 'Newest First' },
+    { value: 'oldest', label: i18n.t('favorites.sort_published_asc') || 'Oldest First' },
+    { value: 'popular', label: i18n.t('creators.sort_favorited_desc') || 'Most Favorited' }
+  ]);
 
-  async function openPostSearch() {
-    postSearchOpen = true;
-    await tick();
-    document.querySelector<HTMLInputElement>('.creator-post-search-input')?.focus();
-  }
+  let currentSortLabel = $derived.by(() => {
+    const opt = sortOptions.find((o) => o.value === sortOrder);
+    return opt?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+  });
+
+  let isPostsFiltered = $derived(
+    Boolean(selectedTag || onlyWithAttachments || Object.keys(formatFilters).length > 0 || normalizedPostSearch)
+  );
+
+  let creatorTabOptions = $derived.by(() => {
+    let postsCount: string | number | undefined;
+    if (isPostsFiltered) {
+      postsCount = visibleCreatorPosts.length;
+    } else if (entry.posts.length > 0) {
+      postsCount = `${entry.posts.length}${entry.hasMore ? '+' : ''}`;
+    }
+
+    const list: Array<ChoiceOption<'posts' | 'similar' | 'links' | 'announcements' | 'fancards'>> = [
+      {
+        value: 'posts',
+        label: i18n.t('creator.posts') || 'Posts',
+        count: postsCount
+      }
+    ];
+
+    if (similarCreators.length > 0) {
+      list.push({
+        value: 'similar',
+        label: i18n.t('creator.similar_artists') || 'Similar Artists',
+        count: similarCreators.length
+      });
+    }
+
+    if (creatorLinks.length > 0) {
+      list.push({
+        value: 'links',
+        label: i18n.t('creator.linked_accounts') || 'Linked Accounts',
+        count: creatorLinks.length
+      });
+    }
+
+    if (announcements.length > 0) {
+      list.push({
+        value: 'announcements',
+        label: i18n.t('creator.announcements') || 'Announcements',
+        count: announcements.length
+      });
+    }
+
+    if (fancards.length > 0) {
+      list.push({
+        value: 'fancards',
+        label: i18n.t('creator.fancards') || 'Fancards',
+        count: fancards.length
+      });
+    }
+
+    return list;
+  });
+
+  $effect(() => {
+    if (!postSearchOpen) return;
+    void tick().then(() => {
+      const isStickyVisible = Boolean(document.querySelector('.sticky-header-bar.visible'));
+      const selector = isStickyVisible
+        ? '.sticky-header-bar.visible .search-input-field'
+        : '.media-controls-right .search-input-field, .post-content-wrapper .search-input-field';
+      const input = document.querySelector<HTMLInputElement>(selector);
+      if (input) {
+        input.focus();
+        input.select?.();
+      }
+    });
+  });
 
   function closePostSearch() {
     postSearchRequest += 1;
@@ -415,6 +522,30 @@
       postSearchResults = reset ? posts : [...postSearchResults, ...posts];
       postSearchOffset = offset + posts.length;
       postSearchHasMore = posts.length === CREATOR_POST_PAGE_SIZE;
+
+      if (postSearchHasMore) {
+        void (async () => {
+          while (postSearchHasMore && request === postSearchRequest && query === postSearchQuery.trim()) {
+            await new Promise((resolve) => setTimeout(resolve, 180));
+            if (request !== postSearchRequest || query !== postSearchQuery.trim()) break;
+
+            try {
+              const nextBatch = await apiFetchCreatorPosts(service, creatorId, query, postSearchOffset);
+              if (request !== postSearchRequest || query !== postSearchQuery.trim()) break;
+
+              const existingIds = new Set(postSearchResults.map((p) => p.id));
+              const newItems = nextBatch.filter((p) => !existingIds.has(p.id));
+              postSearchResults = [...postSearchResults, ...newItems];
+              postSearchOffset += nextBatch.length;
+              postSearchHasMore = nextBatch.length === CREATOR_POST_PAGE_SIZE;
+              if (!postSearchHasMore || nextBatch.length === 0) break;
+            } catch (err) {
+              logger.warn('Search auto-fetch error:', err);
+              break;
+            }
+          }
+        })();
+      }
     } catch (error) {
       if (request === postSearchRequest) {
         postSearchError = error instanceof Error ? error.message : String(error);
@@ -491,13 +622,21 @@
         apiCreatorTags = [];
       }
       untrack(() => {
-        void contentState.loadCreator(currentService, currentCreatorId);
+        void contentState.loadCreator(currentService, currentCreatorId, true);
         void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {});
         void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {});
         void loadExtraData();
         void checkFavoriteStatus();
       });
     }
+  });
+
+  $effect(() => {
+    const s = service;
+    const c = creatorId;
+    return () => {
+      contentState.stopAutoFetchCreatorPosts(s, c);
+    };
   });
 
   $effect(() => {
@@ -579,11 +718,7 @@
     const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumbhash) || thumbHashToAverageColor(avatarThumbhash);
 
     if (thumbColor) {
-      const root = document.documentElement;
-      root.style.setProperty('--accent-primary', thumbColor);
-      root.style.setProperty('--accent-primary-hover', thumbColor);
-      root.style.setProperty('--accent-glow', thumbColor.replace('rgb', 'rgba').replace(')', ', 0.35)'));
-      root.style.setProperty('--text-on-accent', getContrastColor(thumbColor));
+      themeState.setOverrideAccent(thumbColor);
     }
 
     const hasBanner = Boolean(effectiveBanner);
@@ -593,17 +728,13 @@
       void getCreatorAccentColor(hasBanner, hasAvatar).then((color) => {
         if (!color || cancelled) return;
         contentState.setCreatorAccent(service, creatorId, color);
-        const root = document.documentElement;
-        root.style.setProperty('--accent-primary', color);
-        root.style.setProperty('--accent-primary-hover', color);
-        root.style.setProperty('--accent-glow', color.replace('rgb', 'rgba').replace(')', ', 0.35)'));
-        root.style.setProperty('--text-on-accent', getContrastColor(color));
+        themeState.setOverrideAccent(color);
       });
     }
 
     return () => {
       cancelled = true;
-      themeState.applyCssTokens();
+      themeState.clearOverrideAccent();
     };
   });
 
@@ -688,6 +819,7 @@
         poll_interval_minutes: interval
       });
       subscriptionMenuOpen = false;
+      mobileSubSettingsOpen = false;
       notify.success(i18n.t('subscriptions.saved'), creatorName);
     } catch (error) {
       notify.error(i18n.t('subscriptions.action_error'), error);
@@ -702,6 +834,7 @@
     try {
       await subscriptionState.remove(subscription.id);
       subscriptionMenuOpen = false;
+      mobileSubSettingsOpen = false;
       notify.success(i18n.t('subscriptions.removed'), creatorName);
     } catch (error) {
       notify.error(i18n.t('subscriptions.action_error'), error);
@@ -722,10 +855,37 @@
     }
   }
 
-  function openInBrowser() {
-    const url = creatorPageUrl(service, creatorId);
-    apiOpenInBrowser(url);
+  let currentProviderName = $derived.by(() => {
+    if (activeProviderId && activeProviderId !== 'auto') {
+      const p = providerState.getProviderById(activeProviderId);
+      if (p) return formatProviderName(p.name);
+    }
+    const defaultProv = providerState.getDriverForService(service)?.config;
+    if (defaultProv) return formatProviderName(defaultProv.name || defaultProv.id);
+    return 'Provider';
+  });
+
+  function openInProvider() {
+    const url = creatorPageUrl(
+      service,
+      creatorId,
+      activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined
+    );
+    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator in provider', err));
   }
+
+  function openOriginalProfile() {
+    const url = getPlatformProfileUrl(service, creatorId, entry.profile?.public_id);
+    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator original profile', err));
+  }
+
+  function openInBrowser() {
+    openInProvider();
+  }
+
+  onDestroy(() => {
+    contentState.stopAutoFetchCreatorPosts(service, creatorId);
+  });
 
   let copiedId = $state(false);
   async function copyCreatorId() {
@@ -886,7 +1046,7 @@
 </script>
 
 {#snippet subscriptionEditorFields()}
-  <div class="sub-form flex flex-col gap-4 p-2">
+  <div class="sub-form flex flex-col gap-4">
     <div class="field-group">
       <div class="field-label text-xs font-semibold text-[var(--fg-muted)] mb-1">
         {i18n.t('subscriptions.destination')}
@@ -941,19 +1101,26 @@
       <Input
         type="text"
         value={String(interval)}
-        oninput={(e) => interval = Number((e.target as HTMLInputElement).value)}
-      />
+        oninput={(e) => {
+          const val = Number((e.target as HTMLInputElement).value);
+          if (!isNaN(val) && val > 0) interval = val;
+        }}
+      >
+        {#snippet right()}
+          <span class="text-xs font-medium text-[var(--fg-muted)] select-none pr-1.5 pointer-events-none">
+            {i18n.t('subscriptions.minutes_unit')}
+          </span>
+        {/snippet}
+      </Input>
     </div>
 
-    <div class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-[var(--border-color)]">
+    <div class="flex items-center gap-2.5 mt-3 pt-3 border-t border-[var(--border-color)]">
       {#if subscription}
-        <Button variant="danger" size="sm" onclick={unsubscribe} disabled={saving}>
-          {i18n.t('selection.unsubscribe')}
+        <Button variant="danger" size="base" class="flex-1" onclick={unsubscribe} disabled={saving}>
+          {i18n.t('subscriptions.unsubscribe') || i18n.t('selection.unsubscribe')}
         </Button>
-      {:else}
-        <div></div>
       {/if}
-      <Button variant="accent" size="sm" onclick={saveSubscription} disabled={saving}>
+      <Button variant="accent" size="base" class="flex-1" onclick={saveSubscription} disabled={saving}>
         {i18n.t('subscriptions.save')}
       </Button>
     </div>
@@ -976,23 +1143,25 @@
   {:else}
     <PopoverMenu
       bind:open={subscriptionMenuOpen}
-      title={i18n.t('subscriptions.settings')}
-      width="320px"
+      title={i18n.t('subscriptions.subscription')}
+      width="340px"
     >
       {#snippet trigger()}
         <Button
           variant="accent"
           onclick={() => { initEditorFields(); subscriptionMenuOpen = !subscriptionMenuOpen; }}
           class="action-btn"
-          title={i18n.t('subscriptions.settings')}
-          aria-label={i18n.t('subscriptions.settings')}
+          title={i18n.t('subscriptions.subscription')}
+          aria-label={i18n.t('subscriptions.subscription')}
         >
           <IconSettings class="w-[18px] h-[18px]" />
-          <span class="btn-text">{i18n.t('subscriptions.settings')}</span>
+          <span class="btn-text">{i18n.t('subscriptions.subscription')}</span>
         </Button>
       {/snippet}
 
-      {@render subscriptionEditorFields()}
+      <div class="subscription-popover-form">
+        {@render subscriptionEditorFields()}
+      </div>
     </PopoverMenu>
   {/if}
 {/snippet}
@@ -1038,15 +1207,15 @@
       <strong>{i18n.t('feed.with_attachments')}</strong>
       <small>{i18n.t('feed.with_attachments_desc')}</small>
     </span>
-    <IconDocument class="view-option-icon w-[20px] h-[20px]" />
+    <IconDocument class="view-option-icon" />
   </button>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={refreshCreator}>
   {#snippet overlay()}
     <StickyHeader threshold={120}>
-      <div class="sticky-post-info">
-        <Button variant="ghost" onclick={() => navigationState.back()} class="sticky-back-btn" title={i18n.t('nav.back')}>
+      {#snippet leading()}
+        <Button variant="ghost" onclick={() => navigationState.back()} class="sticky-back-btn btn-icon" title={i18n.t('nav.back')}>
           <IconArrowLeft class="w-[20px] h-[20px]" />
         </Button>
         <div class="creator-header-avatar sticky-avatar">
@@ -1072,51 +1241,89 @@
             <IconHeart class="w-[18px] h-[18px]" />
           {/if}
         </Button>
-      </div>
+      {/snippet}
 
-      <div class="sticky-post-actions">
-        <SearchBar
-          bind:value={postSearchQuery}
-          bind:open={postSearchOpen}
-          placeholder={i18n.t('feed.search_placeholder')}
-          onclose={closePostSearch}
-        />
-
-        <PopoverMenu
-          bind:open={stickyFiltersOpen}
-          title={i18n.t('feed.filters')}
-          icon={IconOptions}
-          badge={activeFilterCount}
-          active={activeFilterCount > 0}
+      {#snippet trailing()}
+        <HeaderActions
+          bind:searchOpen={postSearchOpen}
+          bind:searchQuery={postSearchQuery}
+          searchPlaceholder={i18n.t('feed.search_placeholder')}
+          onsearchtoggle={(open) => {
+            if (!open) closePostSearch();
+          }}
         >
-          {@render filterInnerContent()}
-        </PopoverMenu>
+          {#if !layoutState.isMobile}
+            <PopoverMenu
+              bind:open={stickyFiltersOpen}
+              title={i18n.t('feed.filters')}
+              icon={IconOptions}
+              badge={activeFilterCount}
+              active={activeFilterCount > 0}
+            >
+              {@render filterInnerContent()}
+            </PopoverMenu>
 
-        <Button
-          variant="ghost"
-          class="btn-icon action-btn"
-          onclick={refreshCreator}
-          disabled={entry.loading}
-          title={i18n.t('feed.refresh') || 'Refresh'}
-          aria-label="Refresh"
-        >
-          {#if entry.loading}
-            <IconLoading class="w-[18px] h-[18px]" />
+            <Button
+              variant="ghost"
+              class="btn-icon action-btn"
+              onclick={refreshCreator}
+              disabled={entry.loading}
+              title={i18n.t('feed.refresh') || 'Refresh'}
+              aria-label="Refresh"
+            >
+              {#if entry.loading}
+                <IconLoading class="w-[18px] h-[18px]" />
+              {:else}
+                <IconArrowClockwise class="w-[18px] h-[18px]" />
+              {/if}
+            </Button>
+
+            <Button
+              variant={isSelectionActive ? 'accent' : 'ghost'}
+              class="btn-icon action-btn"
+              onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
+              title={i18n.t('selection.select_mode') || 'Select mode'}
+              aria-label="Select mode"
+            >
+              <IconCheckboxChecked class="w-[18px] h-[18px]" />
+            </Button>
           {:else}
-            <IconArrowClockwise class="w-[18px] h-[18px]" />
-          {/if}
-        </Button>
+            <PopoverMenu
+              bind:open={stickyFiltersOpen}
+              title={i18n.t('feed.filters')}
+              icon={IconOptions}
+              badge={activeFilterCount}
+              active={activeFilterCount > 0}
+            >
+              {@render filterInnerContent()}
+            </PopoverMenu>
 
-        <Button
-          variant={isSelectionActive ? 'accent' : 'ghost'}
-          class="btn-icon action-btn"
-          onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-          title={i18n.t('selection.select_mode') || 'Select mode'}
-          aria-label="Select mode"
-        >
-          <IconCheckboxChecked class="w-[18px] h-[18px]" />
-        </Button>
-      </div>
+            {#if isSelectionActive}
+              <Button
+                variant="accent"
+                size="sm"
+                class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
+                onclick={() => selectionState.exit()}
+                title={i18n.t('common.done') || 'Done'}
+                aria-label="Exit selection mode"
+              >
+                <IconCheck class="w-4 h-4" />
+                <span>{i18n.t('common.done') || 'Done'}</span>
+              </Button>
+            {:else}
+              <Button
+                variant="ghost"
+                class="btn-icon action-btn"
+                onclick={() => (mobileMoreOpen = true)}
+                title={i18n.t('common.more') || 'More'}
+                aria-label="More actions"
+              >
+                <IconMoreVertical class="w-5 h-5" />
+              </Button>
+            {/if}
+          {/if}
+        </HeaderActions>
+      {/snippet}
     </StickyHeader>
   {/snippet}
 
@@ -1127,41 +1334,93 @@
   <div class="post-content-wrapper">
     <!-- Top Action Bar -->
     <div class="post-actions-bar">
-      <div class="left-actions flex items-center gap-2">
-        <Button variant="ghost" onclick={() => navigationState.back()} class="action-btn">
-          <IconArrowLeft class="w-[18px] h-[18px]" />
-          <span>{i18n.t('nav.back')}</span>
-        </Button>
+      {#if !layoutState.isMobile}
+        <div class="left-actions flex items-center flex-wrap gap-2 min-w-0">
+          <Button variant="ghost" onclick={() => navigationState.back()} class="action-btn">
+            <IconArrowLeft class="w-[18px] h-[18px]" />
+            <span>{i18n.t('nav.back')}</span>
+          </Button>
 
-        <Button
-          variant={isFavorited ? 'accent' : 'ghost'}
-          disabled={favoritingPending}
-          onclick={toggleFavorite}
-          class="action-btn"
-          title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-        >
-          {#if isFavorited}
-            <IconHeartFilled class="w-[18px] h-[18px] fav-active-heart" />
+          <Button
+            variant={isFavorited ? 'accent' : 'ghost'}
+            disabled={favoritingPending}
+            onclick={toggleFavorite}
+            class="action-btn"
+            title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
+          >
+            {#if isFavorited}
+              <IconHeartFilled class="w-[18px] h-[18px] fav-active-heart" />
+            {:else}
+              <IconHeart class="w-[18px] h-[18px]" />
+            {/if}
+            <span>{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
+          </Button>
+
+          {@render subscriptionControl()}
+        </div>
+      {:else}
+        <div class="left-actions flex items-center gap-2 min-w-0">
+          <Button
+            variant="ghost"
+            onclick={() => navigationState.back()}
+            class="action-btn btn-icon"
+            title={i18n.t('nav.back')}
+            aria-label={i18n.t('nav.back')}
+          >
+            <IconArrowLeft class="w-5 h-5" />
+          </Button>
+
+          <Button
+            variant={isFavorited ? 'accent' : 'ghost'}
+            disabled={favoritingPending}
+            onclick={toggleFavorite}
+            class="action-btn btn-icon"
+            title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
+            aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
+          >
+            {#if isFavorited}
+              <IconHeartFilled class="w-5 h-5 fav-active-heart" />
+            {:else}
+              <IconHeart class="w-5 h-5" />
+            {/if}
+          </Button>
+
+          {#if !subscription}
+            <Button
+              variant="ghost"
+              onclick={subscribeDefault}
+              disabled={saving}
+              class="action-btn btn-icon"
+              title={i18n.t('subscriptions.subscribe')}
+              aria-label={i18n.t('subscriptions.subscribe')}
+            >
+              <IconAdd class="w-5 h-5" />
+            </Button>
           {:else}
-            <IconHeart class="w-[18px] h-[18px]" />
+            <Button
+              variant="accent"
+              onclick={() => { initEditorFields(); mobileSubSettingsOpen = true; }}
+              class="action-btn btn-icon"
+              title={i18n.t('subscriptions.subscription')}
+              aria-label={i18n.t('subscriptions.subscription')}
+            >
+              <IconSettings class="w-5 h-5" />
+            </Button>
           {/if}
-          <span>{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
-        </Button>
+        </div>
 
-        {@render subscriptionControl()}
-      </div>
-
-      <div class="right-actions flex items-center gap-2 ml-auto">
-        <Button
-          variant="ghost"
-          onclick={openInBrowser}
-          class="action-btn"
-          title={i18n.t('post.open_in_browser')}
-        >
-          <IconOpen class="w-[18px] h-[18px]" />
-          <span>{i18n.t('post.open_in_browser')}</span>
-        </Button>
-      </div>
+        <div class="right-actions flex items-center gap-2 ml-auto">
+          <Button
+            variant="ghost"
+            class="action-btn btn-icon"
+            onclick={() => (mobileMoreOpen = true)}
+            title={i18n.t('common.more') || 'More'}
+            aria-label="More options"
+          >
+            <IconMoreVertical class="w-5 h-5" />
+          </Button>
+        </div>
+      {/if}
     </div>
 
     <!-- Creator Header Info -->
@@ -1188,15 +1447,23 @@
       <div class="post-date post-meta-row flex items-center flex-wrap gap-2 mt-2 min-h-[38px] text-sm text-[var(--fg-muted)]">
         <Button
           variant="ghost"
-          onclick={() => {
-            const url = getPlatformProfileUrl(service, creatorId, entry.profile?.public_id as any);
-            if (url) void apiOpenInBrowser(url);
-          }}
-          tooltip={i18n.t('creator.open_platform') || `Open on ${service}`}
+          onclick={openOriginalProfile}
+          tooltip={`${i18n.t('creator.open_original_profile') || 'Open original profile'}: ${service}`}
           aria-label={`Open on ${service}`}
         >
           <ServiceIcon {service} class="w-4 h-4" />
           <span class="capitalize">{service}</span>
+        </Button>
+
+        <span class="text-[var(--fg-subtle)]">·</span>
+        <Button
+          variant="ghost"
+          onclick={openInProvider}
+          tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+          aria-label={`Open in ${currentProviderName}`}
+        >
+          <IconOpen class="w-4 h-4" />
+          <span>{currentProviderName}</span>
         </Button>
 
         <span class="text-[var(--fg-subtle)]">·</span>
@@ -1213,12 +1480,12 @@
           {/if}
         </Button>
 
-        {#if candidateProviders.length > 0}
+        {#if candidateProviders.length > 1}
           <span class="text-[var(--fg-subtle)]">·</span>
-          <div class="inline-flex items-center shrink-0">
+          <div class="inline-flex items-center gap-1 shrink-0">
+            <span class="text-xs text-[var(--fg-subtle)]">{i18n.t('post.source') || 'Source'}:</span>
             <Select
               variant="ghost"
-              disabled={candidateProviders.length === 1}
               options={providerSelectOptions}
               value={activeProviderId}
               onchange={(val) => providerState.setSelectedProvider(service, creatorId, '*', val)}
@@ -1228,122 +1495,86 @@
       </div>
     </header>
 
-    <!-- Tags Row flush to the left edge before sections -->
-    {#if creatorTags.length > 0}
-      <div class="creator-tags-row mt-1 mb-5">
-        <TagList
-          tags={creatorTags}
-          activeTag={selectedTag}
-          size="md"
-          maxVisible={14}
-          onclick={(tag) => {
-            if (selectedTag === tag) {
-              selectedTag = null;
-            } else {
-              selectedTag = tag;
-              activeTab = 'posts';
-            }
-          }}
-        />
-      </div>
-    {/if}
-
-    <!-- Sections Toolbar (Same as PostPage's media-controls-row) -->
     <div class="media-controls-row mt-2">
-      <nav class="media-tabs" aria-label="Creator sections">
-        <Button
-          variant={activeTab === 'posts' ? 'accent' : 'ghost'}
-          onclick={() => activeTab = 'posts'}
+      <div class="creator-tabs-scroll">
+        <ChoiceGroup
+          options={creatorTabOptions}
+          value={activeTab}
+          onchange={(val) => activeTab = val as typeof activeTab}
+          hasActiveAddon={(opt) => opt.value === 'posts'}
+          align="left"
+          class="creator-sections-choice"
         >
-          <IconGrid class="w-[16px] h-[16px]" />
-          <span>{i18n.t('creator.posts')}</span>
-          {#if entry.posts.length > 0}
-            <CountBadge count={`${entry.posts.length}${entry.hasMore ? '+' : ''}`} />
-          {/if}
-        </Button>
-
-        {#if similarCreators.length > 0}
-          <Button
-            variant={activeTab === 'similar' ? 'accent' : 'ghost'}
-            onclick={() => activeTab = 'similar'}
-          >
-            <IconSparkle class="w-[16px] h-[16px]" />
-            <span>{i18n.t('creator.similar_artists')}</span>
-            <CountBadge count={similarCreators.length} />
-          </Button>
-        {/if}
-
-        {#if creatorLinks.length > 0}
-          <Button
-            variant={activeTab === 'links' ? 'accent' : 'ghost'}
-            onclick={() => activeTab = 'links'}
-          >
-            <IconLink class="w-[16px] h-[16px]" />
-            <span>{i18n.t('creator.linked_accounts')}</span>
-            <CountBadge count={creatorLinks.length} />
-          </Button>
-        {/if}
-
-        {#if announcements.length > 0}
-          <Button
-            variant={activeTab === 'announcements' ? 'accent' : 'ghost'}
-            onclick={() => activeTab = 'announcements'}
-          >
-            <IconNews class="w-[16px] h-[16px]" />
-            <span>{i18n.t('creator.announcements')}</span>
-            <CountBadge count={announcements.length} />
-          </Button>
-        {/if}
-
-        {#if fancards.length > 0}
-          <Button
-            variant={activeTab === 'fancards' ? 'accent' : 'ghost'}
-            onclick={() => activeTab = 'fancards'}
-          >
-            <IconCard class="w-[16px] h-[16px]" />
-            <span>{i18n.t('creator.fancards')}</span>
-            <CountBadge count={fancards.length} />
-          </Button>
-        {/if}
-      </nav>
-
-      <div class="media-controls-right flex items-center gap-2">
-        {#if activeTab === 'posts'}
-          <div class="media-sort-selector">
+          {#snippet activeAddon()}
             <Select
-              variant="ghost"
               options={sortOptions}
               value={sortOrder}
               onchange={(v) => sortOrder = v as typeof sortOrder}
+              class="creator-sort-select"
+              icon={IconArrowSort}
+              iconOnly={true}
+              ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
             />
-          </div>
+          {/snippet}
+        </ChoiceGroup>
+      </div>
 
-          <SearchBar
-            bind:value={postSearchQuery}
-            bind:open={postSearchOpen}
-            placeholder={i18n.t('feed.search_placeholder')}
-            onclose={closePostSearch}
-          />
-
-          <PopoverMenu
-            bind:open={filtersOpen}
-            title={i18n.t('feed.filters')}
-            icon={IconOptions}
-            badge={activeFilterCount}
-            active={activeFilterCount > 0}
+      <div class="media-controls-right">
+        {#if activeTab === 'posts'}
+          <HeaderActions
+            bind:searchOpen={postSearchOpen}
+            bind:searchQuery={postSearchQuery}
+            searchPlaceholder={i18n.t('feed.search_placeholder')}
+            onsearchtoggle={(open) => {
+              if (!open) closePostSearch();
+            }}
           >
-            {@render filterInnerContent()}
-          </PopoverMenu>
+            {#if !layoutState.isMobile}
+              <PopoverMenu
+                bind:open={filtersOpen}
+                title={i18n.t('feed.filters')}
+                icon={IconOptions}
+                badge={activeFilterCount}
+                active={activeFilterCount > 0}
+              >
+                {@render filterInnerContent()}
+              </PopoverMenu>
 
-          <Button
-            variant={isSelectionActive ? 'accent' : 'ghost'}
-            class="btn-icon"
-            onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-            title={i18n.t('selection.select_mode') || 'Select mode'}
-            aria-label="Select mode"
-          >
-            <IconCheckboxChecked class="w-5 h-5" />
-          </Button>
+              <Button
+                variant={isSelectionActive ? 'accent' : 'ghost'}
+                class="btn-icon"
+                onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
+                title={i18n.t('selection.select_mode') || 'Select mode'}
+                aria-label="Select mode"
+              >
+                <IconCheckboxChecked class="w-5 h-5" />
+              </Button>
+            {:else}
+              <PopoverMenu
+                bind:open={filtersOpen}
+                title={i18n.t('feed.filters')}
+                icon={IconOptions}
+                badge={activeFilterCount}
+                active={activeFilterCount > 0}
+              >
+                {@render filterInnerContent()}
+              </PopoverMenu>
+
+              {#if isSelectionActive}
+                <Button
+                  variant="accent"
+                  size="sm"
+                  class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
+                  onclick={() => selectionState.exit()}
+                  title={i18n.t('common.done') || 'Done'}
+                  aria-label="Exit selection mode"
+                >
+                  <IconCheck class="w-4 h-4" />
+                  <span>{i18n.t('common.done') || 'Done'}</span>
+                </Button>
+              {/if}
+            {/if}
+          </HeaderActions>
         {/if}
       </div>
     </div>
@@ -1351,14 +1582,48 @@
     <!-- Active Tab Content -->
     {#if activeTab === 'posts'}
       <div class="creator-posts-section">
-        {#if postSearchError && visibleCreatorPosts.length === 0}
+        {#if creatorTags.length > 0}
+          <div class="creator-tags-bar mb-3">
+            <TagList
+              tags={creatorTags}
+              activeTag={selectedTag}
+              showAll={true}
+              allLabel={i18n.t('common.all') || 'All'}
+              allCount={entry.posts.length}
+              size="sm"
+              onclick={(tag) => {
+                const norm = tag.trim().toLowerCase().replace(/^#+/, '');
+                const currentNorm = selectedTag?.trim().toLowerCase().replace(/^#+/, '');
+                if (currentNorm === norm || currentNorm?.replace(/_/g, ' ') === norm.replace(/_/g, ' ')) {
+                  selectedTag = null;
+                } else {
+                  selectedTag = tag;
+                }
+              }}
+              onclear={() => {
+                selectedTag = null;
+              }}
+            />
+          </div>
+        {/if}
+
+        {#if selectedTag && visibleCreatorPosts.length === 0}
+          <div class="status-container empty py-12 text-center">
+            <p class="text-sm font-medium text-[var(--text-secondary)]">
+              {i18n.t('creator.no_posts_with_tag') || 'No posts found matching tag'} <span class="text-[var(--accent-primary)] font-semibold">#{selectedTag}</span>
+            </p>
+            <Button variant="tonal" size="sm" class="mt-3" onclick={() => selectedTag = null}>
+              {i18n.t('creator.clear_tag_filter') || 'Clear tag filter'}
+            </Button>
+          </div>
+        {:else if postSearchError && visibleCreatorPosts.length === 0}
           <div class="creator-error">{postSearchError}</div>
         {:else if entry.error && entry.posts.length === 0}
           <div class="creator-error">{entry.error}</div>
         {:else}
           <PostGrid
             posts={visibleCreatorPosts}
-            loading={entry.loading && entry.posts.length === 0}
+            loading={entry.loading || entry.loadingMore || (normalizedPostSearch.length >= 2 && postSearchLoading)}
             hasMore={normalizedPostSearch.length >= 2 ? postSearchHasMore : entry.hasMore}
             emptyTitle={postSearchQuery ? (i18n.t('feed.no_results') || 'No posts found') : (i18n.t('feed.empty') || 'No posts available')}
             ariaLabel={creatorName}
@@ -1686,10 +1951,168 @@
   </Button>
 </SelectionActionBar>
 
+{#if layoutState.isMobile}
+  <BottomSheet
+    open={mobileMoreOpen}
+    title={creatorName}
+    onclose={() => (mobileMoreOpen = false)}
+  >
+    <div class="flex flex-col gap-1 py-1">
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          if (isSelectionActive) {
+            selectionState.exit();
+          } else {
+            selectionState.enter('posts');
+          }
+        }}
+      >
+        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select posts')}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        disabled={entry.loading}
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          void refreshCreator();
+        }}
+      >
+        {#if entry.loading}
+          <IconLoading class="text-accent" />
+        {:else}
+          <IconArrowClockwise class="text-secondary" />
+        {/if}
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+        </div>
+      </button>
+
+      {#if subscription}
+        <button
+          type="button"
+          class="sheet-action-item"
+          use:ripple
+          onclick={() => {
+            mobileMoreOpen = false;
+            initEditorFields();
+            mobileSubSettingsOpen = true;
+          }}
+        >
+          <IconSettings class="text-secondary" />
+          <div class="flex flex-col min-w-0">
+            <span class="text-sm font-semibold text-primary">{i18n.t('subscriptions.subscription')}</span>
+            <span class="text-xs text-[var(--fg-muted)]">{i18n.t('subscriptions.destination')}: {stashes.find(s => s.id === subscription?.destination_collection_id)?.name || 'Default'}</span>
+          </div>
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="sheet-action-item"
+          disabled={saving}
+          use:ripple
+          onclick={() => {
+            mobileMoreOpen = false;
+            void subscribeDefault();
+          }}
+        >
+          <IconAdd class="text-accent" />
+          <div class="flex flex-col min-w-0">
+            <span class="text-sm font-semibold text-primary">{i18n.t('subscriptions.subscribe')}</span>
+          </div>
+        </button>
+      {/if}
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          openOriginalProfile();
+        }}
+      >
+        <ServiceIcon {service} />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_original_profile') || 'Open original profile'}</span>
+          <span class="text-xs text-muted capitalize">{service}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          openInProvider();
+        }}
+      >
+        <IconOpen class="text-secondary" />
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
+          <span class="text-xs text-muted">{currentProviderName}</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          void copyCreatorId();
+        }}
+      >
+        {#if copiedId}
+          <IconCheck class="text-accent" />
+        {:else}
+          <IconCopy class="text-secondary" />
+        {/if}
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">{i18n.t('common.copy') || 'Copy ID'}</span>
+          <span class="text-xs text-[var(--fg-muted)] font-mono">{creatorId}</span>
+        </div>
+      </button>
+
+      {#if candidateProviders.length > 1}
+        <div class="px-4 py-3 border-t border-[var(--border-color)]">
+          <div class="text-xs font-semibold text-[var(--fg-muted)] mb-1.5">{i18n.t('post.source') || 'Provider'}</div>
+          <Select
+            variant="ghost"
+            options={providerSelectOptions}
+            value={activeProviderId}
+            onchange={(val) => providerState.setSelectedProvider(service, creatorId, '*', val)}
+          />
+        </div>
+      {/if}
+    </div>
+  </BottomSheet>
+
+  <BottomSheet
+    open={mobileSubSettingsOpen}
+    title={i18n.t('subscriptions.subscription')}
+    onclose={() => (mobileSubSettingsOpen = false)}
+  >
+    {@render subscriptionEditorFields()}
+  </BottomSheet>
+{/if}
+
 <style>
   .post-content-wrapper {
     position: relative;
     z-index: 2;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
   }
 
   .post-actions-bar {
@@ -1702,16 +2125,46 @@
     margin-bottom: 20px;
     padding-bottom: 14px;
     z-index: 10;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .post-actions-bar :global(.btn),
   .media-controls-row :global(.btn),
-  :global(.sticky-post-info .btn) {
-    height: 44px !important;
+  :global(.sticky-leading-zone .btn) {
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 18px !important;
-    font-size: 13.5px !important;
+    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1)) !important;
     border-radius: var(--radius-full) !important;
     gap: 8px !important;
+  }
+
+  .post-actions-bar :global(.btn.btn-icon),
+  .media-controls-row :global(.btn.btn-icon),
+  :global(.sticky-leading-zone .btn.btn-icon),
+  :global(.sticky-trailing-zone .btn.btn-icon) {
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  :global(.page-shell.mobile) .post-actions-bar,
+  :global(.page-shell.is-mobile) .post-actions-bar {
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    gap: 6px;
+  }
+
+  @media (max-width: 640px) {
+    .post-actions-bar {
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      gap: 6px;
+    }
   }
 
   .post-actions-bar :global(.btn svg),
@@ -1731,6 +2184,8 @@
     align-items: flex-start;
     padding-bottom: 14px;
     z-index: 10;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .creator-title-row {
@@ -1738,6 +2193,7 @@
     align-items: center;
     gap: 14px;
     min-width: 0;
+    max-width: 100%;
   }
 
   .creator-header-avatar {
@@ -1772,6 +2228,44 @@
     font-size: clamp(28px, 4.5vw, 42px);
     font-weight: var(--font-weight-normal);
     line-height: 1.12;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    min-width: 0;
+  }
+
+  :global(.page-shell.mobile) .detail-header,
+  :global(.page-shell.is-mobile) .detail-header {
+    padding-bottom: 4px;
+  }
+
+  :global(.page-shell.mobile) .creator-title-row,
+  :global(.page-shell.is-mobile) .creator-title-row {
+    gap: 10px;
+  }
+
+  :global(.page-shell.mobile) .creator-title-row h1,
+  :global(.page-shell.is-mobile) .creator-title-row h1 {
+    font-size: clamp(22px, 6vw, 30px);
+  }
+
+  :global(.page-shell.mobile) .creator-tags-bar,
+  :global(.page-shell.is-mobile) .creator-tags-bar {
+    margin-bottom: 10px;
+  }
+
+  @media (max-width: 640px) {
+    .detail-header {
+      padding-bottom: 4px;
+    }
+    .creator-title-row {
+      gap: 10px;
+    }
+    .creator-title-row h1 {
+      font-size: clamp(22px, 6vw, 30px);
+    }
+    .creator-tags-bar {
+      margin-bottom: 10px;
+    }
   }
 
   .post-date {
@@ -1780,51 +2274,142 @@
     font-size: 12px;
   }
 
+  .creator-tags-bar {
+    margin-bottom: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .media-controls-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    flex-wrap: wrap;
     gap: 16px;
     margin-bottom: 20px;
+    min-width: 0;
+    max-width: 100%;
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+    --control-padding-x: var(--control-padding-md, 20px);
   }
 
-  .media-tabs {
+  .creator-tabs-scroll {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    padding-right: 20px;
+  }
+
+  .creator-tabs-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .creator-tabs-scroll :global(.choice-group) {
+    flex-wrap: nowrap !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  .media-controls-right {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .media-tabs :global(.btn) {
-    gap: 6px !important;
-  }
-
-  .media-sort-selector {
-    width: 180px;
+    margin-left: auto;
     flex-shrink: 0;
   }
 
-  .media-sort-selector :global(.select-trigger) {
-    height: 44px !important;
-    font-size: 13.5px !important;
-    padding: 0 18px !important;
-    border-radius: var(--radius-full) !important;
+  :global(.page-shell.mobile) .media-controls-row:has(:global(.search-active)) .creator-tabs-scroll,
+  :global(.page-shell.is-mobile) .media-controls-row:has(:global(.search-active)) .creator-tabs-scroll {
+    display: none !important;
   }
 
-  .sticky-post-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
+  @media (max-width: 640px) {
+    .media-controls-row:has(:global(.search-active)) .creator-tabs-scroll {
+      display: none !important;
+    }
   }
 
-  .sticky-post-info :global(.sticky-back-btn) {
-    flex: 0 0 44px !important;
-    width: 44px !important;
-    height: 44px !important;
-    min-width: 44px !important;
+  :global(.page-shell.mobile) .media-controls-row:has(:global(.search-active)) .media-controls-right,
+  :global(.page-shell.is-mobile) .media-controls-row:has(:global(.search-active)) .media-controls-right {
+    width: 100% !important;
+    flex: 1 !important;
+    margin-left: 0 !important;
+  }
+
+  @media (max-width: 640px) {
+    .media-controls-row:has(:global(.search-active)) .media-controls-right {
+      width: 100% !important;
+      flex: 1 !important;
+      margin-left: 0 !important;
+    }
+  }
+
+  :global(.creator-sections-choice) {
+    flex-shrink: 0 !important;
+  }
+
+  :global(.creator-sort-select) {
+    width: auto !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  :global(.creator-sort-select .select-trigger),
+  :global(.creator-sort-select .select-trigger.icon-only) {
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
+    background: var(--accent-container) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
+                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
+    border: none !important;
+    box-shadow: none !important;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-expo) !important;
+  }
+
+  :global(.creator-sort-select .select-trigger:hover),
+  :global(.creator-sort-select .select-trigger.icon-only:hover) {
+    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+  }
+
+  :global(.creator-sort-select .select-trigger:active),
+  :global(.creator-sort-select .select-trigger.icon-only:active) {
+    opacity: 0.85 !important;
+  }
+
+  :global(.creator-sort-select .select-trigger svg),
+  :global(.creator-sort-select .select-trigger.icon-only svg) {
+    width: 20px !important;
+    height: 20px !important;
+    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    opacity: 1 !important;
+  }
+
+  :global(.sticky-header-bar) :global(.sticky-back-btn) {
+    flex: 0 0 calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     border-radius: 50% !important;
     padding: 0 !important;
     display: flex !important;
@@ -1833,7 +2418,7 @@
     flex-shrink: 0 !important;
   }
 
-  .sticky-post-info :global(.sticky-back-btn svg) {
+  :global(.sticky-header-bar) :global(.sticky-back-btn svg) {
     width: 20px !important;
     height: 20px !important;
     flex-shrink: 0 !important;
@@ -1876,24 +2461,13 @@
     min-width: 0;
   }
 
-  .sticky-post-info :global(.sticky-fav-btn) {
+  :global(.sticky-header-bar) :global(.sticky-fav-btn) {
     width: 36px !important;
     height: 36px !important;
     min-width: 36px !important;
     padding: 0 !important;
     border-radius: 50% !important;
     flex-shrink: 0 !important;
-  }
-
-  .sticky-post-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  :global(.sticky-header-bar.is-mobile) .sticky-post-actions :global(.btn-text) {
-    display: none;
   }
 
   .creator-section-view {
@@ -2004,5 +2578,11 @@
     place-items: center;
     color: var(--text-muted);
     font-size: 14px;
+  }
+
+
+  .subscription-popover-form {
+    padding: 8px 10px 6px;
+    box-sizing: border-box;
   }
 </style>

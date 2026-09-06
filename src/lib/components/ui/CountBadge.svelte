@@ -66,11 +66,16 @@
 
   .variant-tab,
   .variant-pill {
-    padding: 1px 6.5px 2px 6.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: calc(19px * var(--ui-scale, 1));
+    height: calc(19px * var(--ui-scale, 1));
+    padding: calc(1px * var(--ui-scale, 1)) calc(6px * var(--ui-scale, 1)) 0 calc(6px * var(--ui-scale, 1));
     border-radius: var(--radius-full, 9999px);
     background: rgba(255, 255, 255, 0.12);
     color: inherit;
-    font-size: 11px;
+    font-size: calc(12px * var(--ui-scale, 1));
     font-weight: 600;
   }
 

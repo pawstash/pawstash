@@ -3,6 +3,8 @@
   import { notify } from '$lib/utils/toast';
   import { apiOpenInBrowser } from '$lib/utils/ipc';
   import Modal from '$lib/components/ui/Modal.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import IconCopy from '~icons/fluent/copy-24-regular';
@@ -53,18 +55,12 @@
   }
 </script>
 
-<Modal
-  isOpen={open}
-  title={i18n.t('post.codec_guide_title') || 'Кодек H.265 / HEVC'}
-  size="md"
-  {onclose}
->
+{#snippet codecBody()}
   <div class="codec-modal-body">
     <p class="codec-intro">
       {i18n.t('post.codec_why_desc') || 'Для воспроизведения видео в формате H.265 (HEVC) установите кодек в систему.'}
     </p>
 
-    <!-- Predefined SegmentedControl Component -->
     <div class="segmented-wrapper">
       <SegmentedControl
         options={tabOptions}
@@ -74,7 +70,6 @@
       />
     </div>
 
-    <!-- Windows Tab -->
     {#if activeTab === 'windows'}
       <div class="tab-content">
         <span class="cmd-label">Microsoft Store:</span>
@@ -121,7 +116,26 @@
       </div>
     {/if}
   </div>
-</Modal>
+{/snippet}
+
+{#if layoutState.isMobile}
+  <BottomSheet
+    isOpen={open}
+    title={i18n.t('post.codec_guide_title') || 'Кодек H.265 / HEVC'}
+    {onclose}
+  >
+    {@render codecBody()}
+  </BottomSheet>
+{:else}
+  <Modal
+    isOpen={open}
+    title={i18n.t('post.codec_guide_title') || 'Кодек H.265 / HEVC'}
+    size="md"
+    {onclose}
+  >
+    {@render codecBody()}
+  </Modal>
+{/if}
 
 <style>
   .codec-modal-body {
@@ -130,6 +144,10 @@
     gap: var(--floating-item-gap, 10px);
     padding: var(--floating-padding, 6px) var(--floating-card-px, 10px) var(--floating-card-px, 10px);
     box-sizing: border-box;
+  }
+
+  :global(.bottom-sheet) .codec-modal-body {
+    padding: 0;
   }
 
   .codec-intro {

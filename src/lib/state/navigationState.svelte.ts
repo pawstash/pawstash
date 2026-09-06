@@ -5,7 +5,7 @@ export type RootRouteName = 'feed' | 'favorites' | 'library' | 'creators' | 'dow
 export type AppRoute =
   | { name: RootRouteName }
   | { name: 'post'; service: string; creatorId: string; postId: string; initialMedia?: string; openViewer?: boolean }
-  | { name: 'creator'; service: string; creatorId: string };
+  | { name: 'creator'; service: string; creatorId: string; initialTag?: string };
 
 interface HistoryEntry {
   pawstash: true;
@@ -39,7 +39,8 @@ function parseRoute(hash: string): AppRoute {
     };
   }
   if (parts[0] === 'creator' && parts.length >= 3) {
-    return { name: 'creator', service: parts[1], creatorId: parts[2] };
+    const initialTag = searchParams.get('tag') || undefined;
+    return { name: 'creator', service: parts[1], creatorId: parts[2], initialTag };
   }
   if (
     parts[0] === 'library' ||
@@ -63,7 +64,10 @@ function routeHash(route: AppRoute) {
     return `#/post/${encode(route.service)}/${encode(route.creatorId)}/${encode(route.postId)}${qs ? `?${qs}` : ''}`;
   }
   if (route.name === 'creator') {
-    return `#/creator/${encode(route.service)}/${encode(route.creatorId)}`;
+    const params = new URLSearchParams();
+    if (route.initialTag) params.set('tag', route.initialTag);
+    const qs = params.toString();
+    return `#/creator/${encode(route.service)}/${encode(route.creatorId)}${qs ? `?${qs}` : ''}`;
   }
   return `#/${route.name}`;
 }
@@ -178,8 +182,8 @@ export class NavigationState {
     this.navigate({ name: 'post', service, creatorId, postId, initialMedia, openViewer });
   }
 
-  openCreator(service: string, creatorId: string) {
-    this.navigate({ name: 'creator', service, creatorId });
+  openCreator(service: string, creatorId: string, initialTag?: string) {
+    this.navigate({ name: 'creator', service, creatorId, initialTag });
   }
 
   back() {

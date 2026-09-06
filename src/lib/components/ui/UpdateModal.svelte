@@ -1,105 +1,164 @@
 <script lang="ts">
   import Modal from '$lib/components/ui/Modal.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { scrollable } from '$lib/actions/scrollable';
   import { updateState } from '$lib/state/updateState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatBytes } from '$lib/utils/formatters';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+
+  interface ParsedNoteLine {
+    isHeader: boolean;
+    text: string;
+  }
+
+  let parsedNotes = $derived.by<ParsedNoteLine[]>(() => {
+    if (!updateState.info?.release_notes) return [];
+
+    const lines = updateState.info.release_notes
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const result: ParsedNoteLine[] = [];
+
+    for (const line of lines) {
+      if (line.toLowerCase().startsWith('**full changelog**:') || line.toLowerCase().startsWith('full changelog:')) {
+        continue;
+      }
+
+      const isHeader = line.startsWith('#');
+      if (isHeader) {
+        const cleanText = line.replace(/^#+\s*/, '').trim();
+        if (/^(changes(\s+in)?|what'?s\s+(new|changed))/i.test(cleanText)) {
+          continue;
+        }
+        result.push({ isHeader: true, text: cleanText });
+      } else {
+        const cleanText = line.replace(/^[-*•]\s*/, '').trim();
+        if (cleanText) {
+          result.push({ isHeader: false, text: cleanText });
+        }
+      }
+    }
+
+    return result;
+  });
 </script>
 
-{#if updateState.modalOpen && updateState.info}
-  <Modal
-    isOpen={updateState.modalOpen}
-    title={i18n.t('update_modal_title')}
-    size="md"
-    onclose={() => updateState.closeModal()}
-  >
-    <div class="update-modal-layout">
-      <div class="update-version-row">
-        <span class="update-version-tag">
-          v{updateState.info.latest_version}
-        </span>
-        {#if updateState.info.asset_size}
-          <span class="update-size-tag">
-            {formatBytes(updateState.info.asset_size)}
-          </span>
-        {/if}
-      </div>
-
-      {#if updateState.info.release_notes}
-        <div class="release-notes-box" use:scrollable>
-          <div class="release-notes-content">
-            {#each updateState.info.release_notes.split('\n').map(l => l.trim()).filter(Boolean) as line}
-              {#if line.startsWith('### ') || line.startsWith('## ')}
-                <div class="release-note-header">
-                  {line.replace(/^#+\s*/, '')}
-                </div>
-              {:else}
-                <div class="release-note-line">
-                  <span class="release-bullet">&bull;</span>
-                  <span>{line.replace(/^[-*#]+\s*/, '')}</span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      {#if updateState.downloading}
-        <div class="update-progress-container">
-          <div class="update-progress-header">
-            <span>{updateState.installing ? i18n.t('update_installing') : i18n.t('update_downloading')}</span>
-            <span class="update-progress-pct">{updateState.downloadProgress}%</span>
-          </div>
-          <div class="update-progress-track">
-            <div
-              class="update-progress-bar"
-              style:width="{updateState.downloadProgress}%"
-            ></div>
-          </div>
-          {#if updateState.speedText || updateState.totalBytes > 0}
-            <div class="update-progress-meta">
-              <span>{formatBytes(updateState.downloadedBytes)} / {formatBytes(updateState.totalBytes)}</span>
-              {#if updateState.speedText}
-                <span>{updateState.speedText}</span>
-              {/if}
+{#snippet updateBody()}
+  {#if parsedNotes.length > 0}
+    <div class="release-notes-box">
+      <div class="release-notes-content">
+        {#each parsedNotes as item}
+          {#if item.isHeader}
+            <div class="release-note-header">
+              {item.text}
+            </div>
+          {:else}
+            <div class="release-note-line">
+              <span class="release-bullet">&bull;</span>
+              <span>{item.text}</span>
             </div>
           {/if}
-        </div>
-      {/if}
-
-      <div class="update-actions-grid">
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center px-3 whitespace-nowrap"
-          onclick={() => updateState.openReleasePage()}
-        >
-          <IconOpen class="w-4 h-4 mr-2 opacity-60 shrink-0" />
-          <span>{i18n.t('update_action_github')}</span>
-        </Button>
-
-        <Button
-          variant="accent"
-          size="md"
-          class="w-full justify-center px-3 whitespace-nowrap"
-          disabled={updateState.downloading}
-          onclick={() => updateState.startInAppUpdate()}
-        >
-          {#if updateState.downloading}
-            <IconLoading class="mr-2 shrink-0" />
-            <span>{updateState.installing ? i18n.t('update_installing') : `${updateState.downloadProgress}%`}</span>
-          {:else}
-            <IconArrowDownload class="mr-2 shrink-0" />
-            <span>{i18n.t('update_action_download')}</span>
-          {/if}
-        </Button>
+        {/each}
       </div>
     </div>
-  </Modal>
+  {/if}
+{/snippet}
+
+{#snippet updateActions()}
+  <div class="update-actions-wrapper">
+    {#if updateState.downloading}
+      <div class="update-progress-container">
+        <div class="update-progress-header">
+          <span class="update-progress-title">
+            {updateState.installing ? i18n.t('update_installing') : i18n.t('update_downloading')}
+          </span>
+          <span class="update-progress-speed font-mono">
+            {#if updateState.speedText && !updateState.installing}
+              {updateState.speedText}
+            {/if}
+          </span>
+        </div>
+        <div class="update-progress-track">
+          <div
+            class="update-progress-bar"
+            style:width="{updateState.downloadProgress}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
+
+    <div class="update-actions-grid">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 whitespace-nowrap border border-[var(--border-color)]"
+        disabled={updateState.downloading}
+        onclick={() => updateState.closeModal()}
+      >
+        <span>{i18n.t('common.cancel')}</span>
+      </Button>
+
+      <Button
+        variant="accent"
+        size="md"
+        class="w-full justify-center px-3 whitespace-nowrap"
+        disabled={updateState.downloading}
+        onclick={() => updateState.startInAppUpdate()}
+      >
+        {#if updateState.downloading}
+          <IconLoading class="mr-2 shrink-0" />
+          <span>{updateState.installing ? i18n.t('update_installing') : `${updateState.downloadProgress}%`}</span>
+        {:else}
+          <IconArrowDownload class="mr-2 shrink-0" />
+          <span>{updateState.info?.asset_size ? formatBytes(updateState.info.asset_size) : i18n.t('update_action_download')}</span>
+        {/if}
+      </Button>
+    </div>
+  </div>
+{/snippet}
+
+{#if updateState.modalOpen && updateState.info}
+  {#if layoutState.isMobile}
+    <BottomSheet
+      isOpen={updateState.modalOpen}
+      title={i18n.t('update_modal_title')}
+      closeLabel={i18n.t('common.close')}
+      onclose={() => updateState.closeModal()}
+    >
+      {#snippet children()}
+        <div class="update-modal-body">
+          {@render updateBody()}
+        </div>
+      {/snippet}
+
+      {#snippet footer()}
+        {@render updateActions()}
+      {/snippet}
+    </BottomSheet>
+  {:else}
+    <Modal
+      isOpen={updateState.modalOpen}
+      title={i18n.t('update_modal_title')}
+      size="lg"
+      onclose={() => updateState.closeModal()}
+    >
+      {#snippet children()}
+        <div class="update-modal-layout">
+          {@render updateBody()}
+        </div>
+      {/snippet}
+
+      {#snippet footer()}
+        {@render updateActions()}
+      {/snippet}
+    </Modal>
+  {/if}
 {/if}
 
 <style>
@@ -107,40 +166,31 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 0 4px 4px 4px;
+    padding: 0 4px 8px 4px;
   }
 
-  .update-version-row {
+  .update-modal-body {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 0 6px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0;
   }
 
-  .update-version-tag {
-    font-family: var(--font-mono, monospace);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
+  :global(.bottom-sheet) .update-modal-body {
+    padding: 0;
   }
 
-  .update-size-tag {
-    font-family: var(--font-mono, monospace);
-    font-size: 12px;
-    color: var(--text-muted);
+  .update-actions-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
   }
 
-  .release-notes-box {
-    max-height: 200px;
-    border-radius: var(--radius-lg);
-    background: var(--bg-card);
-    border: var(--border-width) solid var(--border-color);
-    overflow: hidden;
-  }
 
   .release-notes-content {
-    padding: 12px 14px;
+    padding: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -191,11 +241,6 @@
     color: var(--text-secondary);
   }
 
-  .update-progress-pct {
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
   .update-progress-track {
     width: 100%;
     height: 6px;
@@ -209,14 +254,6 @@
     border-radius: var(--radius-full);
     background: var(--accent-primary);
     transition: width var(--duration-fast, 150ms) ease;
-  }
-
-  .update-progress-meta {
-    display: flex;
-    justify-content: space-between;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
-    color: var(--text-muted);
   }
 
   .update-actions-grid {

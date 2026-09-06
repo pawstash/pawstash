@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ripple } from '$lib/motion';
+  import StableWeightLabel from './StableWeightLabel.svelte';
 
   interface Option<T> {
     value: T;
@@ -8,6 +9,7 @@
   }
 
   interface Props<T> {
+    size?: 'sm' | 'base' | 'md' | 'lg';
     options: Option<T>[];
     value: T;
     onchange: (val: T) => void;
@@ -20,6 +22,7 @@
     options,
     value,
     onchange,
+    size,
     class: extraClass = '',
     compact = false
   }: Props<any> = $props();
@@ -37,7 +40,7 @@
 </script>
 
 <div
-  class="segmented-control-container {extraClass}"
+  class="segmented-control-container {size ? `size-${size}` : ''} {extraClass}"
   class:compact
 >
   {#if activeIndex !== -1 && buttons[activeIndex]}
@@ -63,7 +66,7 @@
       {#if opt.icon}
         <opt.icon class="w-[18px] h-[18px] shrink-0" />
       {/if}
-      <span>{opt.label}</span>
+      <StableWeightLabel text={opt.label} />
     </button>
   {/each}
 </div>
@@ -77,7 +80,31 @@
     border: var(--border-width) solid var(--border-color);
     padding: 2px;
     border-radius: var(--radius-full);
-    height: 46px;
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
+  }
+
+  .segmented-control-container.size-sm {
+    --control-height: var(--control-height-sm, 34px);
+    --control-font-size: var(--control-font-sm, 12.5px);
+    --control-icon-size: var(--control-icon-sm, 16px);
+  }
+
+  .segmented-control-container.size-base {
+    --control-height: var(--control-height-base, 40px);
+    --control-font-size: var(--control-font-base, 13.5px);
+    --control-icon-size: var(--control-icon-base, 18px);
+  }
+
+  .segmented-control-container.size-md {
+    --control-height: var(--control-height-md, 46px);
+    --control-font-size: var(--control-font-md, 14px);
+    --control-icon-size: var(--control-icon-md, 20px);
+  }
+
+  .segmented-control-container.size-lg {
+    --control-height: var(--control-height-lg, 52px);
+    --control-font-size: var(--control-font-lg, 15px);
+    --control-icon-size: var(--control-icon-lg, 22px);
     user-select: none;
     overflow: hidden;
     max-width: 100%;
@@ -118,7 +145,7 @@
     outline: none;
     border-radius: var(--radius-full);
     background: transparent;
-    font-size: 13.5px;
+    font-size: calc(var(--control-font-size, 13.5px) * var(--ui-scale, 1));
     font-weight: var(--font-weight-normal);
     font-family: var(--font-sans);
     color: var(--text-secondary);
@@ -133,7 +160,7 @@
     flex-shrink: 0;
   }
 
-  .tab-btn span {
+  .tab-btn :global(.stable-weight-label) {
     min-width: 0;
     white-space: nowrap;
     line-height: normal;

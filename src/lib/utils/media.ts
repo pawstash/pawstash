@@ -148,13 +148,13 @@ export function creatorBannerUrl(service: string, creatorId: string, thumbhash?:
   return driver.resolveBannerUrl(config, service, creatorId);
 }
 
-export function creatorPageUrl(service: string, creatorId: string): string {
-  const { config, driver } = resolveDriver(service);
+export function creatorPageUrl(service: string, creatorId: string, explicitProviderId?: string): string {
+  const { config, driver } = resolveDriver(service, explicitProviderId);
   return driver.resolveCreatorPageUrl(config, service, creatorId);
 }
 
-export function postPageUrl(service: string, creatorId: string, postId: string): string {
-  const { config, driver } = resolveDriver(service);
+export function postPageUrl(service: string, creatorId: string, postId: string, explicitProviderId?: string): string {
+  const { config, driver } = resolveDriver(service, explicitProviderId);
   return driver.resolvePostPageUrl(config, service, creatorId, postId);
 }
 
@@ -757,7 +757,7 @@ export function getPostDownloadTargets(post: Post): DownloadTarget[] {
   return targets;
 }
 
-export function getPlatformProfileUrl(service?: string, creatorId?: string, publicId?: string | number | null): string {
+export function getPlatformProfileUrl(service?: string, creatorId?: string, publicId?: unknown): string {
   if (!service || !creatorId) return '';
   const s = service.toLowerCase();
   const id = String(publicId || creatorId).trim();
@@ -792,6 +792,55 @@ export function getPlatformProfileUrl(service?: string, creatorId?: string, publ
       return `https://www.dlsite.com/maniax/circle/profile/=/maker_id/${id}`;
     default:
       return `https://${s}.com/${id}`;
+  }
+}
+
+export function getPlatformPostUrl(
+  service?: string,
+  creatorId?: string,
+  postId?: string,
+  publicId?: unknown
+): string {
+  if (!service || !postId) return '';
+  const s = service.toLowerCase();
+  const id = String(publicId || creatorId || '').trim();
+
+  switch (s) {
+    case 'patreon':
+      return `https://www.patreon.com/posts/${postId}`;
+    case 'fanbox':
+      if (id && /^\d+$/.test(id)) {
+        return `https://www.pixiv.net/fanbox/creator/${id}/post/${postId}`;
+      }
+      if (id) {
+        return `https://${id}.fanbox.cc/posts/${postId}`;
+      }
+      return `https://www.fanbox.cc/posts/${postId}`;
+    case 'fantia':
+      return `https://fantia.jp/posts/${postId}`;
+    case 'boosty':
+      return id ? `https://boosty.to/${id}/posts/${postId}` : `https://boosty.to`;
+    case 'subscribestar':
+      return `https://subscribestar.adult/posts/${postId}`;
+    case 'gumroad':
+      return id ? `https://${id}.gumroad.com/p/${postId}` : `https://gumroad.com/l/${postId}`;
+    case 'onlyfans':
+      return id ? `https://onlyfans.com/${postId}/${id}` : `https://onlyfans.com/posts/${postId}`;
+    case 'fansly':
+      return `https://fansly.com/post/${postId}`;
+    case 'candfans':
+      return id ? `https://candfans.jp/${id}/posts/${postId}` : `https://candfans.jp/posts/${postId}`;
+    case 'discord':
+      return id ? `https://discord.com/channels/${id}/${postId}` : `https://discord.com`;
+    case 'afdian':
+      return `https://afdian.com/p/${postId}`;
+    case 'cien':
+    case 'ci-en':
+      return id ? `https://ci-en.dlsite.com/creator/${id}/article/${postId}` : `https://ci-en.dlsite.com`;
+    case 'dlsite':
+      return `https://www.dlsite.com/maniax/work/=/product_id/${postId}.html`;
+    default:
+      return id ? `https://${s}.com/${id}/posts/${postId}` : `https://${s}.com`;
   }
 }
 

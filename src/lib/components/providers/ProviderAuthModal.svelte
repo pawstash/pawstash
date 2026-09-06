@@ -8,7 +8,9 @@
     apiSyncProviderFavorites
   } from '$lib/utils/ipc';
   import type { ProviderConfig, ProviderAuthSchema } from '$lib/types/provider';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import Modal from '$lib/components/ui/Modal.svelte';
+  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import IconCheck from '~icons/fluent/checkmark-24-regular';
@@ -136,115 +138,142 @@
   }
 </script>
 
-<Modal
-  {isOpen}
-  title={step === 'login'
-    ? i18n.t('settings.auth_modal_title', { provider: providerName })
-    : i18n.t('settings.auth_sync_prompt_title')}
-  size="sm"
-  {onclose}
->
-  <div class="modal-confirm-layout">
-    {#if step === 'login'}
-      {#if errorMessage}
-        <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-          <IconDismiss class="w-4 h-4 shrink-0" />
-          <span>{errorMessage}</span>
-        </div>
-      {/if}
-
-      {#if schema?.auth_fields}
-        <div class="flex flex-col gap-3 px-2.5 mb-3">
-          {#each schema.auth_fields as field (field.key)}
-            <div class="flex flex-col gap-1.5">
-              <label for={`auth-field-${field.key}`} class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                {i18n.t(field.label_key)}
-                {#if field.required}<span class="text-rose-400 ml-0.5">*</span>{/if}
-              </label>
-              <Input
-                type={field.field_type === 'password' ? 'password' : 'text'}
-                value={formData[field.key] || ''}
-                placeholder={field.placeholder || ''}
-                oninput={(e) => {
-                  formData[field.key] = (e.target as HTMLInputElement).value;
-                }}
-              />
-              {#if field.help_text_key}
-                <p class="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-                  {i18n.t(field.help_text_key)}
-                </p>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      <div class="modal-confirm-actions">
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center px-3 border border-[var(--border-color)]"
-          onclick={onclose}
-          disabled={isSubmitting}
-        >
-          <span class="truncate">{i18n.t('common.cancel')}</span>
-        </Button>
-        <Button
-          variant="accent"
-          size="md"
-          class="w-full justify-center px-3"
-          onclick={handleSubmitLogin}
-          disabled={isSubmitting || loadingSchema}
-        >
-          {#if isSubmitting}
-            <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
-          {:else}
-            <IconCheck class="w-5 h-5 mr-1.5 shrink-0" />
-          {/if}
-          <span class="truncate">{i18n.t('settings.provider_login')}</span>
-        </Button>
-      </div>
-
-    {:else if step === 'sync_prompt'}
-      <p class="modal-confirm-desc">
-        {i18n.t('settings.auth_sync_prompt_desc', { provider: providerName })}
-      </p>
-
-      {#if errorMessage}
-        <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-          <IconDismiss class="w-4 h-4 shrink-0" />
-          <span>{errorMessage}</span>
-        </div>
-      {/if}
-
-      <div class="modal-confirm-actions">
-        <Button
-          variant="ghost"
-          size="md"
-          class="w-full justify-center px-3 border border-[var(--border-color)]"
-          onclick={handleSkipSync}
-        >
-          <span class="truncate">{i18n.t('settings.auth_sync_skip')}</span>
-        </Button>
-
-        <Button
-          variant="accent"
-          size="md"
-          class="w-full justify-center px-3"
-          onclick={() => handleExecuteSync('both')}
-        >
-          <IconArrowSync class="w-5 h-5 mr-1.5 shrink-0" />
-          <span class="truncate">{i18n.t('settings.auth_sync_both')}</span>
-        </Button>
-      </div>
-
-    {:else if step === 'syncing'}
-      <div class="flex flex-col items-center justify-center py-6 gap-3">
-        <IconLoading class="w-8 h-8 text-[var(--accent)]" />
-        <p class="modal-confirm-desc text-center !p-0">
-          {i18n.t('settings.auth_syncing')}
-        </p>
+{#snippet authContent()}
+  {#if step === 'login'}
+    {#if errorMessage}
+      <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+        <IconDismiss class="w-4 h-4 shrink-0" />
+        <span>{errorMessage}</span>
       </div>
     {/if}
-  </div>
-</Modal>
+
+    {#if schema?.auth_fields}
+      <div class="flex flex-col gap-3 mb-3">
+        {#each schema.auth_fields as field (field.key)}
+          <div class="flex flex-col gap-1.5">
+            <label for={`auth-field-${field.key}`} class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+              {i18n.t(field.label_key)}
+              {#if field.required}<span class="text-rose-400 ml-0.5">*</span>{/if}
+            </label>
+            <Input
+              type={field.field_type === 'password' ? 'password' : 'text'}
+              value={formData[field.key] || ''}
+              placeholder={field.placeholder || ''}
+              oninput={(e) => {
+                formData[field.key] = (e.target as HTMLInputElement).value;
+              }}
+            />
+            {#if field.help_text_key}
+              <p class="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                {i18n.t(field.help_text_key)}
+              </p>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {:else if step === 'sync_prompt'}
+    <p class="modal-confirm-desc">
+      {i18n.t('settings.auth_sync_prompt_desc', { provider: providerName })}
+    </p>
+
+    {#if errorMessage}
+      <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+        <IconDismiss class="w-4 h-4 shrink-0" />
+        <span>{errorMessage}</span>
+      </div>
+    {/if}
+  {:else if step === 'syncing'}
+    <div class="flex flex-col items-center justify-center py-6 gap-3">
+      <IconLoading class="w-8 h-8 text-[var(--accent)]" />
+      <p class="modal-confirm-desc text-center !p-0">
+        {i18n.t('settings.auth_syncing')}
+      </p>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet authActions()}
+  {#if step === 'login'}
+    <div class="modal-confirm-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        onclick={onclose}
+        disabled={isSubmitting}
+      >
+        <span class="truncate">{i18n.t('common.cancel')}</span>
+      </Button>
+      <Button
+        variant="accent"
+        size="md"
+        class="w-full justify-center px-3"
+        onclick={handleSubmitLogin}
+        disabled={isSubmitting || loadingSchema}
+      >
+        {#if isSubmitting}
+          <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
+        {:else}
+          <IconCheck class="w-5 h-5 mr-1.5 shrink-0" />
+        {/if}
+        <span class="truncate">{i18n.t('settings.provider_login')}</span>
+      </Button>
+    </div>
+  {:else if step === 'sync_prompt'}
+    <div class="modal-confirm-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        onclick={handleSkipSync}
+      >
+        <span class="truncate">{i18n.t('settings.auth_sync_skip')}</span>
+      </Button>
+
+      <Button
+        variant="accent"
+        size="md"
+        class="w-full justify-center px-3"
+        onclick={() => handleExecuteSync('both')}
+      >
+        <IconArrowSync class="w-5 h-5 mr-1.5 shrink-0" />
+        <span class="truncate">{i18n.t('settings.auth_sync_both')}</span>
+      </Button>
+    </div>
+  {/if}
+{/snippet}
+
+{#if layoutState.isMobile}
+  <BottomSheet
+    {isOpen}
+    title={step === 'login'
+      ? i18n.t('settings.auth_modal_title', { provider: providerName })
+      : i18n.t('settings.auth_sync_prompt_title')}
+    closeLabel={i18n.t('common.cancel')}
+    {onclose}
+  >
+    {#snippet children()}
+      {@render authContent()}
+    {/snippet}
+    {#snippet footer()}
+      {#if step !== 'syncing'}
+        {@render authActions()}
+      {/if}
+    {/snippet}
+  </BottomSheet>
+{:else}
+  <Modal
+    {isOpen}
+    title={step === 'login'
+      ? i18n.t('settings.auth_modal_title', { provider: providerName })
+      : i18n.t('settings.auth_sync_prompt_title')}
+    size="sm"
+    {onclose}
+  >
+    <div class="modal-confirm-layout">
+      {@render authContent()}
+      {@render authActions()}
+    </div>
+  </Modal>
+{/if}
