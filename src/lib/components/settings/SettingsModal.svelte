@@ -89,6 +89,8 @@
   import IconInfo from '~icons/fluent/info-24-regular';
   import IconBranchFork from '~icons/fluent/branch-fork-24-regular';
   import IconImageMultiple from '~icons/fluent/image-multiple-24-regular';
+  import pawstashLogo from '$lib/assets/pawstash.png';
+  import { logoFlightState } from '$lib/state/logoFlightState.svelte';
   import type { AccentColor } from '$lib/theme/tokens';
   import { ripple } from '$lib/motion';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -137,6 +139,19 @@
   let cacheBusy = $state<'images' | 'all' | null>(null);
   let copyingLogs = $state(false);
   let clearingLogs = $state(false);
+  let heroLogoEl = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    if (heroLogoEl) {
+      logoFlightState.registerHero(heroLogoEl);
+      requestAnimationFrame(() => {
+        logoFlightState.flyToHero();
+      });
+    }
+    return () => {
+      logoFlightState.unregisterHero();
+    };
+  });
 
   let profileName = $derived(
     syncState.status.account_id || i18n.t('profile.local')
@@ -204,43 +219,65 @@
     }))
   );
 
-  onMount(async () => {
+  onMount(() => {
     availableBackgroundTypes = supportedBackgroundTypes();
-    try {
-      const [loaded, defaults] = await Promise.all([
-        apiGetSettings(),
-        apiGetDefaultSettings()
-      ]);
-      defaultSettings = { ...defaults };
-      configState.updateSettings(loaded);
-      settings = { ...loaded };
-      await loadCacheStats();
-    } catch (err) {
-      notify.error(i18n.t('settings.load_failed') || 'Failed to load settings', err);
+
+    void apiGetDefaultSettings()
+      .then((defaults) => {
+        defaultSettings = defaults;
+      })
+      .catch((err) => {
+        logger.warn('Failed to fetch default settings:', err);
+      });
+
+    void apiGetSettings()
+      .then((loaded) => {
+        const hasDiff = Object.keys(loaded).some(
+          (k) => (loaded as any)[k] !== (settings as any)[k]
+        );
+        if (hasDiff) {
+          configState.updateSettings(loaded);
+          Object.assign(settings, loaded);
+        }
+      })
+      .catch((err) => {
+        logger.warn('Failed to refresh settings from disk:', err);
+      });
+  });
+
+  $effect(() => {
+    if (activeCategory === 'cache' && !cacheStats && !cacheBusy) {
+      void loadCacheStats();
     }
   });
 
   onMount(() => {
+    let isInitial = true;
     const observer = new IntersectionObserver((entries) => {
       const visible = entries
         .filter((entry) => entry.isIntersecting)
         .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
       if (visible?.target.id.startsWith('settings-')) {
-        activeCategory = visible.target.id.slice('settings-'.length);
-        revealCategory(activeCategory);
+        const catId = visible.target.id.slice('settings-'.length);
+        if (activeCategory !== catId) {
+          activeCategory = catId;
+          if (!isInitial) {
+            revealCategory(activeCategory, false);
+          }
+        }
+        isInitial = false;
       }
     }, {
       rootMargin: '-18% 0px -68% 0px',
       threshold: 0
     });
-    const frame = requestAnimationFrame(() => {
-      for (const category of categories) {
-        const section = document.getElementById(`settings-${category.id}`);
-        if (section) observer.observe(section);
-      }
-    });
+
+    for (const category of categories) {
+      const section = document.getElementById(`settings-${category.id}`);
+      if (section) observer.observe(section);
+    }
+
     return () => {
-      cancelAnimationFrame(frame);
       if (categoryScrollFrame !== undefined) cancelAnimationFrame(categoryScrollFrame);
       observer.disconnect();
     };
@@ -361,15 +398,26 @@
     }
   }
 
+  const presetAccents: { id: AccentColor; labelKey: string; quadrants: [string, string, string, string] }[] = [
+    { id: '#D69085', labelKey: '#D69085', quadrants: PRESET_QUADRANTS['#D69085'] },
+    { id: 'rose', labelKey: 'rose', quadrants: PRESET_QUADRANTS.rose },
+    { id: 'violet', labelKey: 'violet', quadrants: PRESET_QUADRANTS.violet },
+    { id: 'cyan', labelKey: 'cyan', quadrants: PRESET_QUADRANTS.cyan },
+    { id: 'emerald', labelKey: 'emerald', quadrants: PRESET_QUADRANTS.emerald },
+    { id: 'amber', labelKey: 'amber', quadrants: PRESET_QUADRANTS.amber },
+    { id: 'indigo', labelKey: 'indigo', quadrants: PRESET_QUADRANTS.indigo }
+  ];
+
   const isCustomActive = $derived(
-    !['system', 'violet', 'indigo', 'cyan', 'emerald', 'amber', 'rose'].includes(themeState.tokens.accent)
+    themeState.tokens.accent !== 'system' &&
+    !presetAccents.some((p) => p.id.toLowerCase() === themeState.tokens.accent.toLowerCase())
   );
 
   const customQuadrants = $derived.by<[string, string, string, string]>(() => {
     if (isCustomActive && themeState.tokens.accent.startsWith('#')) {
       return generateAccentPalette(themeState.tokens.accent).quadrants;
     }
-    return ['#f43f5e', '#f59e0b', '#10b981', '#6366f1'];
+    return ['#d69085', '#f59e0b', '#10b981', '#6366f1'];
   });
 
   async function updateAndSaveSetting(key: keyof typeof settings, val: any) {
@@ -408,6 +456,9 @@
 
   function openCategory(id: string) {
     activeCategory = id;
+    if (id === 'cache' && !cacheStats && !cacheBusy) {
+      void loadCacheStats();
+    }
     revealCategory(id);
     document.getElementById(`settings-${id}`)?.scrollIntoView({
       behavior: 'smooth',
@@ -415,12 +466,11 @@
     });
   }
 
-  function revealCategory(id: string) {
+  function revealCategory(id: string, smooth = true) {
     if (categoryScrollFrame !== undefined) cancelAnimationFrame(categoryScrollFrame);
     categoryScrollFrame = requestAnimationFrame(() => {
-      const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 'auto'
-        : 'smooth';
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const behavior: ScrollBehavior = prefersReduced || !smooth ? 'auto' : 'smooth';
 
       for (const list of document.querySelectorAll<HTMLElement>('.settings-categories')) {
         const button =
@@ -599,14 +649,7 @@
     availableBackgroundTypes.map((id) => ({ id, label: i18n.t(backgroundLabelKeys[id]) }))
   );
 
-  const presetAccents: { id: AccentColor; labelKey: string; quadrants: [string, string, string, string] }[] = [
-    { id: 'rose', labelKey: 'rose', quadrants: PRESET_QUADRANTS.rose },
-    { id: 'violet', labelKey: 'violet', quadrants: PRESET_QUADRANTS.violet },
-    { id: 'cyan', labelKey: 'cyan', quadrants: PRESET_QUADRANTS.cyan },
-    { id: 'emerald', labelKey: 'emerald', quadrants: PRESET_QUADRANTS.emerald },
-    { id: 'amber', labelKey: 'amber', quadrants: PRESET_QUADRANTS.amber },
-    { id: 'indigo', labelKey: 'indigo', quadrants: PRESET_QUADRANTS.indigo }
-  ];
+
 
   let creatorFolderTags = $derived<TemplateTag[]>([
     { tag: '{creator}', label: i18n.t('settings.tag_creator'), example: 'AuthorName' },
@@ -927,6 +970,16 @@
       {@render settingsMenu('main')}
     </div>
 
+    <div class="settings-hero-brand">
+      <img
+        bind:this={heroLogoEl}
+        src={pawstashLogo}
+        alt="Pawstash"
+        class="settings-hero-logo"
+        class:is-flying={logoFlightState.isFlying}
+      />
+    </div>
+
     {#if !layoutState.isMobile}
       {@render authorBuildBar()}
     {/if}
@@ -1087,8 +1140,8 @@
           description={i18n.t('settings.accent_color_desc')}
           icon={IconPaint}
           value={themeState.tokens.accent}
-          defaultValue={themeState.systemPalette ? 'system' : 'rose'}
-          onReset={() => themeState.setAccent(themeState.systemPalette ? 'system' : 'rose')}
+          defaultValue={themeState.systemPalette ? 'system' : '#D69085'}
+          onReset={() => themeState.setAccent(themeState.systemPalette ? 'system' : '#D69085')}
         >
           <div class="settings-accent-controls flex items-center gap-2 flex-wrap">
             {#if themeState.systemPalette}
@@ -1103,7 +1156,7 @@
             {#each presetAccents as c}
               <PaletteCircle
                 quadrants={c.quadrants}
-                active={themeState.tokens.accent === c.id}
+                active={themeState.tokens.accent.toLowerCase() === c.id.toLowerCase()}
                 label={i18n.t('settings.set_accent', { color: c.labelKey })}
                 onclick={() => themeState.setAccent(c.id)}
               />
@@ -2157,6 +2210,34 @@
     --control-radius: var(--control-radius-base);
   }
 
+  .settings-hero-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding-top: calc(8px * var(--ui-scale, 1));
+  }
+
+  .settings-hero-logo {
+    height: calc(88px * var(--ui-scale, 1));
+    width: auto;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+    filter: drop-shadow(0 8px 36px rgba(254, 184, 173, 0.28));
+    will-change: opacity, transform;
+    transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .settings-hero-logo.is-flying {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .settings-hero-logo:hover {
+    transform: scale(1.03);
+  }
+
   .settings-page :global(.btn:not(.settings-toolbar *)) {
     --control-height: var(--control-height-base);
     --control-font-size: var(--control-font-base);
@@ -2386,7 +2467,7 @@
   }
 
   .mobile-hero-dot.syncing {
-    background: var(--accent, #f43f5e);
+    background: var(--accent-primary, #d69085);
   }
 
   .mobile-hero-dot.offline {
@@ -2397,6 +2478,10 @@
     .settings-page {
       gap: calc(28px * var(--ui-scale, 1));
       padding-bottom: 24px;
+    }
+
+    .settings-hero-logo {
+      height: calc(64px * var(--ui-scale, 1));
     }
 
     .settings-toolbar,

@@ -32,8 +32,25 @@
   import { initFrontendLogging } from '$lib/utils/logger';
   import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
   import { Toaster } from 'svelte-sonner';
+  import pawstashLogo from '$lib/assets/pawstash.png';
+  import { logoFlightState } from '$lib/state/logoFlightState.svelte';
 
   navigationState.init();
+
+  let flightEl = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    logoFlightState.registerFlightElement(flightEl);
+  });
+
+  let prevRouteName = navigationState.route.name;
+  $effect(() => {
+    const current = navigationState.route.name;
+    if (prevRouteName === 'settings' && current !== 'settings') {
+      logoFlightState.flyToSidebar();
+    }
+    prevRouteName = current;
+  });
 
   let effectiveToastPosition = $derived.by(() => {
     const pos = configState.settings.toast_position;
@@ -187,6 +204,13 @@
   {/if}
 
   <UpdateModal />
+  <img
+    bind:this={flightEl}
+    src={pawstashLogo}
+    alt=""
+    aria-hidden="true"
+    class="fixed pointer-events-none z-50 hidden select-none object-contain"
+  />
 </div>
 
 <style>

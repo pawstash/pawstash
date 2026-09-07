@@ -20,6 +20,8 @@ export interface RgbColor {
 }
 
 export const PRESET_QUADRANTS: Record<string, [string, string, string, string]> = {
+  '#d69085': ['#d69085', '#e8c2bc', '#60413c', '#a16c64'],
+  '#D69085': ['#d69085', '#e8c2bc', '#60413c', '#a16c64'],
   rose: ['#f43f5e', '#fda4af', '#9f1239', '#e11d48'],
   violet: ['#8b5cf6', '#c4b5fd', '#5b21b6', '#7c3aed'],
   cyan: ['#06b6d4', '#67e8f9', '#0e7490', '#0891b2'],
@@ -38,11 +40,11 @@ export const PRESET_PRIMARY_MAP: Record<string, string> = {
 };
 
 export function parseColorToRgb(input: string): RgbColor {
-  if (!input) return { r: 244, g: 63, b: 94 };
+  if (!input) return { r: 214, g: 144, b: 133 };
 
   const trimmed = input.trim().toLowerCase();
 
-  if (PRESET_PRIMARY_MAP[trimmed]) {
+  if (PRESET_PRIMARY_MAP[trimmed] && PRESET_PRIMARY_MAP[trimmed] !== trimmed) {
     return parseColorToRgb(PRESET_PRIMARY_MAP[trimmed]);
   }
 
@@ -73,7 +75,7 @@ export function parseColorToRgb(input: string): RgbColor {
     };
   }
 
-  return { r: 244, g: 63, b: 94 };
+  return { r: 214, g: 144, b: 133 };
 }
 
 export function rgbToHex(r: number, g: number, b: number): string {

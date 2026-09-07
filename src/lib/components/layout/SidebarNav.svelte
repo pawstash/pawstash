@@ -32,6 +32,8 @@
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
+  import pawstashLogo from '$lib/assets/pawstash.png';
+  import { logoFlightState } from '$lib/state/logoFlightState.svelte';
 
   interface NavItem {
     id: 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'settings';
@@ -55,6 +57,14 @@
   let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
   let isCompact = $state(false);
   let activeRoot = $derived(navigationState.activeRoot);
+  let isTextLogo = $derived(
+    activeRoot === 'settings' || (logoFlightState.isFlying && logoFlightState.direction === 'toSidebar')
+  );
+  let sidebarLogoEl = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    logoFlightState.registerSidebar(sidebarLogoEl);
+  });
 
   function minimize() {
     appWindow.minimize();
@@ -172,7 +182,20 @@
         </g>
       </svg>
     </div>
-    <span class="sidebar-label logo-label">Pawstash</span>
+    <span class="sidebar-label logo-label">
+      <span class="logo-swap logo-swap-text" class:visible={isTextLogo}>
+        Pawstash
+      </span>
+      <span class="logo-swap logo-swap-img" class:visible={!isTextLogo}>
+        <img
+          bind:this={sidebarLogoEl}
+          src={pawstashLogo}
+          alt="Pawstash"
+          class="logo-text-img"
+          class:is-flying={logoFlightState.isFlying}
+        />
+      </span>
+    </span>
   </button>
 
   <button
@@ -315,14 +338,29 @@
 </aside>
 
 <style>
-  .logo-btn {
+  .sidebar-btn.logo-btn {
+    height: 44px;
+    padding: 0 14px 0 10px;
+    gap: 8px;
     margin-bottom: 8px;
+    width: max-content;
+    max-width: calc(100% - 6px);
+    box-sizing: border-box;
+    transition: background 200ms ease, color 200ms ease;
+  }
+
+  .sidebar-btn.logo-btn .sidebar-icon {
+    opacity: 0.95;
+  }
+
+  .sidebar-btn.logo-btn:hover .sidebar-icon {
+    opacity: 1;
   }
 
   .logo-svg {
     width: 22px;
     height: 22px;
-    opacity: 0.9;
+    opacity: 0.95;
     transition: opacity var(--duration-fast) var(--ease-expo);
   }
 
@@ -331,20 +369,73 @@
     transition: fill var(--duration-normal) var(--ease-expo);
   }
 
-  .logo-btn:hover .logo-svg path {
+  .sidebar-btn.logo-btn:hover .logo-svg path {
     fill: url(#logo-grad);
   }
 
-  .logo-btn:hover .logo-svg {
+  .sidebar-btn.logo-btn:hover .logo-svg {
     opacity: 1;
   }
 
-  .logo-label {
-    font-weight: 600 !important;
-    font-size: 15px !important;
-    letter-spacing: 0.03em !important;
-    color: #ffffff !important;
-    opacity: 0.95 !important;
+  .sidebar-btn.logo-btn .logo-label {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 82px;
+    max-width: 82px;
+    height: 100%;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.03em;
+    color: #ffffff;
+    opacity: 0.95;
+    white-space: nowrap;
+    overflow: hidden;
+    pointer-events: none;
+    transition: max-width 300ms ease-out, opacity 300ms ease-out;
+  }
+
+  .logo-swap {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px) scale(0.96);
+    transition: opacity 260ms cubic-bezier(0.16, 1, 0.3, 1), transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .logo-swap.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+
+  .sidebar-btn.logo-btn:hover .logo-label {
+    opacity: 1;
+  }
+
+  .logo-text-img {
+    height: 33px;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+    object-position: left center;
+    user-select: none;
+    -webkit-user-drag: none;
+    pointer-events: none;
+    flex-shrink: 0;
+    transition: opacity 160ms ease;
+  }
+
+  .logo-text-img.is-flying {
+    opacity: 0;
   }
 
   .profile-btn {
@@ -561,6 +652,18 @@
     max-width: 0;
     margin: 0;
     opacity: 0;
+  }
+
+  .sidebar-aside.compact .logo-label {
+    max-width: 0;
+    width: 0;
+    margin: 0;
+    opacity: 0;
+  }
+
+  .sidebar-aside.compact .sidebar-btn.logo-btn {
+    padding: 0 11px;
+    gap: 0;
   }
 
   .sidebar-badge {

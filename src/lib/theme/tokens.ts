@@ -3,7 +3,7 @@ import type { AccentPalette } from './palette';
 export type FontSizeScale = 'compact' | 'standard' | 'large';
 export type RadiusScale = 'sharp' | 'smooth' | 'rounded' | 'pill';
 export type SurfaceStyle = 'glass' | 'oled' | 'acrylic';
-export type AccentPreset = 'rose' | 'violet' | 'cyan' | 'emerald' | 'amber' | 'indigo';
+export type AccentPreset = '#D69085' | 'rose' | 'violet' | 'cyan' | 'emerald' | 'amber' | 'indigo';
 export type AccentColor = 'system' | AccentPreset | (string & {});
 export type MotionSpeed = 'instant' | 'snappy' | 'smooth';
 
@@ -36,13 +36,14 @@ export const RADIUS_SCALE_MAP: Record<RadiusScale, { sm: string; md: string; lg:
 };
 
 export const ACCENT_COLOR_MAP: Record<AccentPreset | 'system', { primary: string; hover: string; glow: string }> = {
+  '#D69085': { primary: '#d69085', hover: '#bc7f75', glow: 'rgba(214, 144, 133, 0.35)' },
   rose: { primary: '#f43f5e', hover: '#e11d48', glow: 'rgba(244, 63, 94, 0.35)' },
   violet: { primary: '#8b5cf6', hover: '#7c3aed', glow: 'rgba(139, 92, 246, 0.35)' },
   cyan: { primary: '#06b6d4', hover: '#0891b2', glow: 'rgba(6, 182, 212, 0.35)' },
   emerald: { primary: '#10b981', hover: '#059669', glow: 'rgba(16, 185, 129, 0.35)' },
   amber: { primary: '#f59e0b', hover: '#d97706', glow: 'rgba(245, 158, 11, 0.35)' },
   indigo: { primary: '#6366f1', hover: '#4f46e5', glow: 'rgba(99, 102, 241, 0.35)' },
-  system: { primary: '#f43f5e', hover: '#e11d48', glow: 'rgba(244, 63, 94, 0.35)' }
+  system: { primary: '#d69085', hover: '#bc7f75', glow: 'rgba(214, 144, 133, 0.35)' }
 };
 
 export const MOTION_SPEED_MAP: Record<MotionSpeed, { fast: string; normal: string; slow: string }> = {

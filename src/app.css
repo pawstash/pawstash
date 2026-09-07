@@ -175,19 +175,19 @@
     --text-secondary: #9ca3af;
     --text-muted: #6b7280;
 
-    --accent-primary: #f43f5e;
-    --accent-primary-hover: #e11d48;
-    --accent-on-primary: #ffffff;
-    --accent-container: rgba(244, 63, 94, 0.16);
-    --accent-on-container: #f43f5e;
-    --accent-subtle: rgba(244, 63, 94, 0.22);
-    --accent-glow: rgba(244, 63, 94, 0.35);
+    --accent-primary: #d69085;
+    --accent-primary-hover: #bc7f75;
+    --accent-on-primary: #111215;
+    --accent-container: rgba(214, 144, 133, 0.16);
+    --accent-on-container: #d69085;
+    --accent-subtle: rgba(214, 144, 133, 0.22);
+    --accent-glow: rgba(214, 144, 133, 0.35);
     --text-on-accent: var(--accent-on-primary);
 
-    --choice-active-bg: #fda4af;
-    --choice-active-text: #3b040e;
-    --choice-inactive-bg: #270912;
-    --choice-inactive-text: rgba(255, 255, 255, 0.82);
+    --choice-active-bg: #e8c2bc;
+    --choice-active-text: #150e0d;
+    --choice-inactive-bg: #271a18;
+    --choice-inactive-text: #ffffff;
 
     --color-mac-close: #ff5f57;
     --color-mac-close-border: rgba(224, 68, 62, 0.6);

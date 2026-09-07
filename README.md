@@ -1,18 +1,24 @@
-<img src="app-icon.png" alt="Pawstash" width="80" align="right" />
+<p align="center">
+  <img src="assets/pawstash.png" alt="Pawstash" width="340" />
+</p>
 
-# Pawstash
+<p align="center">
+  A beautiful cross-platform client, downloader, and stash manager for pawchive, onlyhaven & coomer, with server sync and more sources in mind.
+</p>
 
-A beautiful cross-platform client, downloader, and stash manager for pawchive, with server sync and more sources in mind.
+<p align="center">
+  <a href="https://t.me/pawstashapp"><img src="https://img.shields.io/badge/Telegram-Join%20Channel-229ED9?style=flat-square&logo=telegram&logoColor=white" alt="Telegram" /></a>
+  <a href="https://discord.gg/ahcx8ub5Ck"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://reddit.com/r/pawstash"><img src="https://img.shields.io/badge/Reddit-r%2Fpawstash-FF4500?style=flat-square&logo=reddit&logoColor=white" alt="Reddit" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%203.0-blue.svg?style=flat-square" alt="License: GPL-3.0" /></a>
+  <a href="https://tauri.app"><img src="https://img.shields.io/badge/Tauri-2.0-24C8D8?style=flat-square&logo=tauri&logoColor=white" alt="Tauri 2" /></a>
+  <a href="https://svelte.dev"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?style=flat-square&logo=svelte&logoColor=white" alt="Svelte 5" /></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1.80+-orange?style=flat-square&logo=rust&logoColor=white" alt="Rust" /></a>
+</p>
 
-[![Telegram](https://img.shields.io/badge/Telegram-Join%20Channel-229ED9?style=flat-square&logo=telegram&logoColor=white)](https://t.me/pawstashapp)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/ahcx8ub5Ck)
-[![Reddit](https://img.shields.io/badge/Reddit-r%2Fpawstash-FF4500?style=flat-square&logo=reddit&logoColor=white)](https://reddit.com/r/pawstash)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg?style=flat-square)](LICENSE)
-[![Tauri 2](https://img.shields.io/badge/Tauri-2.0-24C8D8?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
-[![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?style=flat-square&logo=svelte&logoColor=white)](https://svelte.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.80+-orange?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
-
-[Screenshots](#screenshots) • [Downloads](#downloads) • [Main Features](#main-features) • [Feedback & Issues](#feedback--issues) • [License](#license)
+<p align="center">
+  <a href="#screenshots">Screenshots</a> • <a href="#downloads">Downloads</a> • <a href="#main-features">Main Features</a> • <a href="#feedback--issues">Feedback & Issues</a> • <a href="#license">License</a>
+</p>
 
 ---
 
