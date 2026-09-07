@@ -38,7 +38,7 @@
   import { tooltip, ripple } from '$lib/motion';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import SearchBar from '$lib/components/ui/SearchBar.svelte';
+  import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
   import TagList from '$lib/components/ui/TagList.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
@@ -687,6 +687,12 @@
   let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud' | 'downloaded'>('all');
   let mediaSort = $state<'default' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'>('default');
   let mediaSearchQuery = $state('');
+  let mediaSearchOpen = $state(false);
+
+  function closeMediaSearch() {
+    mediaSearchOpen = false;
+    mediaSearchQuery = '';
+  }
   let viewerIndex = $state<number | null>(null);
   let viewerFiles = $state<Attachment[]>([]);
   let contentExpanded = $state(false);
@@ -1467,6 +1473,7 @@
       if (lastLoadedPostKey !== currentKey) {
         lastLoadedPostKey = currentKey;
         probingMediaPaths.clear();
+        closeMediaSearch();
       }
       untrack(() => {
         void contentState.loadPost(currentService, currentCreatorId, currentPostId).then(() => {
@@ -2612,52 +2619,54 @@
 
       {#if media.length > 0 || hasEmbed}
         <div class="media-section">
-          <div class="media-controls-row">
-            {#if (media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1}
-              <div class="post-tabs-scroll">
-                <ChoiceGroup
-                  options={mediaTabOptions}
-                  value={activeMediaTab}
-                  onchange={(val) => activeMediaTab = val as MediaTab}
-                  ariaLabel="Media categories"
-                  align="left"
-                  class="post-media-choice"
-                />
+          {#if ((media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1) || media.length >= 20 || mediaSearchQuery || media.length > 1}
+            <div class="media-controls-row" class:search-active={mediaSearchOpen}>
+              {#if (media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1}
+                <div class="post-tabs-scroll">
+                  <ChoiceGroup
+                    options={mediaTabOptions}
+                    value={activeMediaTab}
+                    onchange={(val) => activeMediaTab = val as MediaTab}
+                    ariaLabel="Media categories"
+                    align="left"
+                    class="post-media-choice"
+                  />
+                </div>
+              {/if}
+
+              <div class="media-controls-actions" class:search-active={mediaSearchOpen}>
+                <HeaderActions
+                  bind:searchOpen={mediaSearchOpen}
+                  bind:searchQuery={mediaSearchQuery}
+                  showSearchButton={media.length >= 20 || Boolean(mediaSearchQuery)}
+                  searchPlaceholder={i18n.t('post.search_media') || 'Search media...'}
+                  onsearchtoggle={(open) => {
+                    if (!open) closeMediaSearch();
+                  }}
+                >
+                  {#if media.length > 1}
+                    <div class="media-sort-selector">
+                      <Select
+                        options={[
+                          { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
+                          { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') || 'Name (A-Z)' },
+                          { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') || 'Name (Z-A)' },
+                          { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') || 'Size (Largest)' },
+                          { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') || 'Size (Smallest)' }
+                        ]}
+                        value={mediaSort}
+                        onchange={(val) => mediaSort = val as any}
+                        variant="ghost"
+                        icon={IconArrowSort}
+                        iconOnly={layoutState.isMobile}
+                        ariaLabel={i18n.t('favorites.sort_by') || 'Sort'}
+                      />
+                    </div>
+                  {/if}
+                </HeaderActions>
               </div>
-            {/if}
-
-            <div class="media-controls-actions">
-              {#if media.length >= 20 || mediaSearchQuery}
-                <div class="media-search-wrapper">
-                  <SearchBar
-                    bind:value={mediaSearchQuery}
-                    placeholder={i18n.t('post.search_media') || 'Search media...'}
-                    expandable={true}
-                  />
-                </div>
-              {/if}
-
-              {#if media.length > 1}
-                <div class="media-sort-selector">
-                  <Select
-                    options={[
-                      { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
-                      { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') || 'Name (A-Z)' },
-                      { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') || 'Name (Z-A)' },
-                      { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') || 'Size (Largest)' },
-                      { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') || 'Size (Smallest)' }
-                    ]}
-                    value={mediaSort}
-                    onchange={(val) => mediaSort = val as any}
-                    variant="ghost"
-                    icon={IconArrowSort}
-                    iconOnly={layoutState.isMobile}
-                    ariaLabel={i18n.t('favorites.sort_by') || 'Sort'}
-                  />
-                </div>
-              {/if}
             </div>
-          </div>
+          {/if}
 
           {#if filteredMedia.length > 0 || (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch)}
             <div class="media-gallery-wrapper" bind:this={galleryWrapperEl}>
@@ -3837,11 +3846,61 @@
     align-items: center;
     gap: 8px;
     margin-left: auto;
+    flex-shrink: 0;
   }
 
-  .media-search-wrapper {
-    display: flex;
-    align-items: center;
+  :global(.page-shell.mobile) .media-controls-row:has(:global(.search-active)) .post-tabs-scroll,
+  :global(.page-shell.is-mobile) .media-controls-row:has(:global(.search-active)) .post-tabs-scroll,
+  :global(.page-shell.mobile) .media-controls-row.search-active .post-tabs-scroll,
+  :global(.page-shell.is-mobile) .media-controls-row.search-active .post-tabs-scroll {
+    display: none !important;
+  }
+
+  @media (max-width: 768px) {
+    .media-controls-row:has(:global(.search-active)) .post-tabs-scroll,
+    .media-controls-row.search-active .post-tabs-scroll {
+      display: none !important;
+    }
+  }
+
+  :global(.page-shell.mobile) .media-controls-row:has(:global(.search-active)) .media-controls-actions,
+  :global(.page-shell.is-mobile) .media-controls-row:has(:global(.search-active)) .media-controls-actions,
+  :global(.page-shell.mobile) .media-controls-row.search-active .media-controls-actions,
+  :global(.page-shell.is-mobile) .media-controls-row.search-active .media-controls-actions {
+    width: 100% !important;
+    flex: 1 !important;
+    margin-left: 0 !important;
+  }
+
+  @media (max-width: 768px) {
+    .media-controls-row:has(:global(.search-active)) .media-controls-actions,
+    .media-controls-row.search-active .media-controls-actions {
+      width: 100% !important;
+      flex: 1 !important;
+      margin-left: 0 !important;
+    }
+  }
+
+  :global(.page-shell.mobile .media-controls-actions .header-actions-root.search-active),
+  :global(.page-shell.is-mobile .media-controls-actions .header-actions-root.search-active) {
+    width: 100% !important;
+    flex: 1 !important;
+  }
+
+  @media (max-width: 768px) {
+    .media-controls-actions :global(.header-actions-root.search-active) {
+      width: 100% !important;
+      flex: 1 !important;
+    }
+    .media-controls-actions :global(.search-bar-expanded) {
+      width: 100% !important;
+      flex: 1 !important;
+    }
+    .media-controls-actions.search-active :global(.action-buttons-cluster),
+    .media-controls-actions :global(.search-active .action-buttons-cluster),
+    .media-controls-row.search-active .media-sort-selector {
+      display: none !important;
+    }
   }
 
   .media-search-empty {
