@@ -5,7 +5,8 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy, untrack, getContext } from 'svelte';
+  import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import { contentState, postCacheKey, creatorCacheKey, normalizePostId, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
@@ -43,6 +44,8 @@
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import RichContent from './RichContent.svelte';
+
+  const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
   import PostPoll from './PostPoll.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
   import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
@@ -757,6 +760,49 @@
   let galleryHeight = $state(0);
   const MAX_GALLERY_HEIGHT = 960;
   let isGalleryOverflowing = $derived(galleryHeight > MAX_GALLERY_HEIGHT);
+
+  let galleryWrapperEl = $state<HTMLElement | null>(null);
+  let contentWrapperEl = $state<HTMLElement | null>(null);
+  let commentsWrapperEl = $state<HTMLElement | null>(null);
+
+  let galleryScrollBeforeExpand = $state<number | null>(null);
+  let contentScrollBeforeExpand = $state<number | null>(null);
+  let commentsScrollBeforeExpand = $state<number | null>(null);
+
+  function smartCollapseSection(
+    setCollapsed: () => void,
+    el: HTMLElement | null,
+    collapsedMaxHeight: number,
+    scrollBeforeExpand: number | null
+  ) {
+    const vp = scrollContext?.viewport;
+    if (!vp || !el) {
+      setCollapsed();
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const vpRect = vp.getBoundingClientRect();
+    const isAtEnd = rect.bottom <= vpRect.bottom + 80;
+
+    if (isAtEnd) {
+      const currentHeight = rect.height;
+      const collapsedHeight = Math.min(currentHeight, collapsedMaxHeight);
+      const heightDiff = currentHeight - collapsedHeight;
+
+      setCollapsed();
+      if (heightDiff > 0) {
+        vp.scrollTop = Math.max(0, vp.scrollTop - heightDiff);
+      }
+    } else {
+      setCollapsed();
+      if (typeof scrollBeforeExpand === 'number') {
+        vp.scrollTo({ top: scrollBeforeExpand, behavior: 'smooth' });
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }
 
   $effect(() => {
     if (activeMediaTab) {
@@ -2614,7 +2660,7 @@
           </div>
 
           {#if filteredMedia.length > 0 || (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch)}
-            <div class="media-gallery-wrapper">
+            <div class="media-gallery-wrapper" bind:this={galleryWrapperEl}>
               <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
                 <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
                 {#if postEmbed && !isEmbedResolvedToCloud && isEmbedVisibleInTab && embedMatchesSearch}
@@ -3073,14 +3119,25 @@
 
             {#if isGalleryOverflowing && !galleryExpanded}
               <div class="gallery-fade-overlay">
-                <Button variant="ghost" onclick={() => galleryExpanded = true} class="gallery-expand-btn">
+                <Button
+                  variant="ghost"
+                  onclick={() => {
+                    galleryScrollBeforeExpand = scrollContext?.viewport?.scrollTop ?? null;
+                    galleryExpanded = true;
+                  }}
+                  class="gallery-expand-btn"
+                >
                   <IconChevronDown class="w-[16px] h-[16px]" />
                   <span>{i18n.t('post.expand_gallery')}</span>
                 </Button>
               </div>
             {:else if isGalleryOverflowing && galleryExpanded}
               <div class="gallery-collapse-action">
-                <Button variant="ghost" onclick={() => galleryExpanded = false} class="gallery-collapse-btn">
+                <Button
+                  variant="ghost"
+                  onclick={() => smartCollapseSection(() => galleryExpanded = false, galleryWrapperEl, MAX_GALLERY_HEIGHT, galleryScrollBeforeExpand)}
+                  class="gallery-collapse-btn"
+                >
                   <IconChevronUp class="w-[16px] h-[16px]" />
                   <span>{i18n.t('post.collapse_gallery')}</span>
                 </Button>
@@ -3098,7 +3155,7 @@
       {/if}
 
       {#if richContent && !isHtmlContentEmpty(richContent)}
-        <section class="post-content">
+        <section class="post-content" bind:this={contentWrapperEl}>
           <div class="html-content-container" class:is-collapsed={isOverflowing && !contentExpanded}>
             <div class="html-content" bind:clientHeight={contentHeight}>
               <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} onopencloud={handleOpenCloudFromText} />
@@ -3107,14 +3164,25 @@
 
           {#if isOverflowing && !contentExpanded}
             <div class="content-fade-overlay">
-              <Button variant="ghost" onclick={() => contentExpanded = true} class="expand-btn">
+              <Button
+                variant="ghost"
+                onclick={() => {
+                  contentScrollBeforeExpand = scrollContext?.viewport?.scrollTop ?? null;
+                  contentExpanded = true;
+                }}
+                class="expand-btn"
+              >
                 <IconChevronDown class="w-[16px] h-[16px]" />
                 <span>{i18n.t('post.read_more')}</span>
               </Button>
             </div>
           {:else if isOverflowing && contentExpanded}
             <div class="content-collapse-action">
-              <Button variant="ghost" onclick={() => contentExpanded = false} class="collapse-btn">
+              <Button
+                variant="ghost"
+                onclick={() => smartCollapseSection(() => contentExpanded = false, contentWrapperEl, MAX_CONTENT_HEIGHT, contentScrollBeforeExpand)}
+                class="collapse-btn"
+              >
                 <IconChevronUp class="w-[16px] h-[16px]" />
                 <span>{i18n.t('post.read_less')}</span>
               </Button>
@@ -3274,7 +3342,7 @@
         {:else if comments.length === 0}
           <div class="comments-empty">{i18n.t('post.no_comments')}</div>
         {:else}
-          <div class="comments-wrapper">
+          <div class="comments-wrapper" bind:this={commentsWrapperEl}>
             <div
               class="comments-container"
               class:is-collapsed={isCommentsOverflowing && !commentsExpanded}
@@ -3289,14 +3357,24 @@
 
             {#if isCommentsOverflowing && !commentsExpanded}
               <div class="comments-expand-action">
-                <Button variant="ghost" onclick={() => commentsExpanded = true}>
+                <Button
+                  variant="ghost"
+                  onclick={() => {
+                    commentsScrollBeforeExpand = scrollContext?.viewport?.scrollTop ?? null;
+                    commentsExpanded = true;
+                  }}
+                >
                   <IconChevronDown class="w-[16px] h-[16px]" />
                   <span>{i18n.t('post.expand_comments') || 'Show All Comments'}</span>
                 </Button>
               </div>
             {:else if isCommentsOverflowing && commentsExpanded}
-              <div class="comments-expand-action">
-                <Button variant="ghost" onclick={() => commentsExpanded = false}>
+              <div class="comments-collapse-action">
+                <Button
+                  variant="ghost"
+                  onclick={() => smartCollapseSection(() => commentsExpanded = false, commentsWrapperEl, MAX_COMMENTS_HEIGHT, commentsScrollBeforeExpand)}
+                  class="comments-collapse-btn"
+                >
                   <IconChevronUp class="w-[16px] h-[16px]" />
                   <span>{i18n.t('post.collapse_comments') || 'Collapse Comments'}</span>
                 </Button>
@@ -4221,10 +4299,48 @@
     pointer-events: auto;
   }
 
-  .gallery-collapse-action {
+  .media-gallery-wrapper,
+  .post-content,
+  .comments-wrapper {
+    scroll-margin-top: 92px;
+  }
+
+  :global(.page-shell.mobile) .media-gallery-wrapper,
+  :global(.page-shell.mobile) .post-content,
+  :global(.page-shell.mobile) .comments-wrapper {
+    scroll-margin-top: calc(56px + var(--mobile-status-bar-height, 0px) + 12px);
+  }
+
+  .gallery-collapse-action,
+  .content-collapse-action,
+  .comments-collapse-action {
+    position: sticky;
+    bottom: 24px;
+    z-index: 25;
     display: flex;
     justify-content: center;
     margin-top: 14px;
+    pointer-events: none;
+  }
+
+  .gallery-collapse-action :global(.btn),
+  .content-collapse-action :global(.btn),
+  .comments-collapse-action :global(.btn) {
+    pointer-events: auto;
+  }
+
+  :global(.page-shell.mobile) .gallery-collapse-action,
+  :global(.page-shell.mobile) .content-collapse-action,
+  :global(.page-shell.mobile) .comments-collapse-action {
+    bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)));
+  }
+
+  @media (max-width: 640px) {
+    .gallery-collapse-action,
+    .content-collapse-action,
+    .comments-collapse-action {
+      bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)));
+    }
   }
 
   .post-content {
@@ -4262,11 +4378,7 @@
     pointer-events: auto;
   }
 
-  .content-collapse-action {
-    display: flex;
-    justify-content: center;
-    margin-top: 14px;
-  }
+
 
   .html-content {
     color: rgba(255, 255, 255, 0.85);
