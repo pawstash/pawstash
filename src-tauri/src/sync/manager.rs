@@ -527,8 +527,13 @@ impl SyncManager {
         }
 
         // 2. Outbox Phase: detect local changes and push dirty records in bounded batches
-        let dirty_records = self.repository.detect_and_get_dirty_records()?;
-        if !dirty_records.is_empty() {
+        for _ in 0..5 {
+            let dirty_records = self.repository.detect_and_get_dirty_records()?;
+            if dirty_records.is_empty() {
+                break;
+            }
+
+            let mut had_conflict = false;
             for chunk in dirty_records.chunks(100) {
                 let mut encrypted_records = Vec::with_capacity(chunk.len());
                 for rec in chunk {
@@ -592,45 +597,15 @@ impl SyncManager {
                             current_cursor = pull.cursor;
                             self.repository.update_cursor(current_cursor)?;
                         }
-
-                        let retry_records = self.repository.detect_and_get_dirty_records()?;
-                        if !retry_records.is_empty() {
-                            let mut retry_enc = Vec::with_capacity(retry_records.len());
-                            for r in &retry_records {
-                                let (ciphertext, nonce) = if let Some(payload) = &r.payload {
-                                    let enc = encrypt_record(&key, &r.record_id, payload)?;
-                                    (enc.ciphertext, enc.nonce)
-                                } else {
-                                    let enc = encrypt_record(&key, &r.record_id, b"{}")?;
-                                    (enc.ciphertext, enc.nonce)
-                                };
-                                retry_enc.push((r, ciphertext, nonce));
-                            }
-                            let retry_inputs: Vec<PushRecordInput<'_>> = retry_enc
-                                .iter()
-                                .map(|(r, c, n)| PushRecordInput {
-                                    record_id: &r.record_id,
-                                    kind: &r.kind,
-                                    expected_revision: r.expected_revision,
-                                    device_id: &state.device_id,
-                                    ciphertext: c,
-                                    nonce: n,
-                                    tombstone: r.tombstone,
-                                })
-                                .collect();
-                            for chunk in retry_inputs.chunks(100) {
-                                let retry_resp = client
-                                    .push(&session.token, &Uuid::new_v4().to_string(), chunk)
-                                    .await?;
-                                self.repository.mark_records_synced(&retry_resp.accepted)?;
-                                if retry_resp.cursor > 0 {
-                                    self.repository.update_cursor(retry_resp.cursor)?;
-                                }
-                            }
-                        }
+                        had_conflict = true;
+                        break;
                     }
                     Err(e) => return Err(e),
                 }
+            }
+
+            if !had_conflict {
+                break;
             }
         }
 
