@@ -819,29 +819,15 @@
         </PopoverMenu>
       {/if}
 
-      {#if isSelectionActive}
-        <Button
-          variant="accent"
-          size="sm"
-          class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
-          onclick={() => selectionState.exit()}
-          title={i18n.t('common.done') || 'Done'}
-          aria-label="Exit selection mode"
-        >
-          <IconCheckmark class="w-4 h-4" />
-          <span>{i18n.t('common.done') || 'Done'}</span>
-        </Button>
-      {:else}
-        <Button
-          variant="ghost"
-          class="btn-icon"
-          onclick={() => (mobileMoreOpen = true)}
-          title={i18n.t('common.more') || 'More'}
-          aria-label="More actions"
-        >
-          <IconMoreVertical class="w-5 h-5" />
-        </Button>
-      {/if}
+      <Button
+        variant="ghost"
+        class="btn-icon"
+        onclick={() => (mobileMoreOpen = true)}
+        title={i18n.t('common.more') || 'More'}
+        aria-label="More actions"
+      >
+        <IconMoreVertical class="w-5 h-5" />
+      </Button>
     {/if}
   </HeaderActions>
 {/snippet}
@@ -1051,12 +1037,16 @@
         use:ripple
         onclick={() => {
           mobileMoreOpen = false;
-          selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators');
+          if (isSelectionActive) {
+            selectionState.exit();
+          } else {
+            selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators');
+          }
         }}
       >
-        <IconCheckboxChecked class="text-secondary" />
+        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select mode'}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select mode')}</span>
         </div>
       </button>
 

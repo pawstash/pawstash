@@ -1314,29 +1314,15 @@
               {@render filterInnerContent()}
             </PopoverMenu>
 
-            {#if isSelectionActive}
-              <Button
-                variant="accent"
-                size="sm"
-                class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
-                onclick={() => selectionState.exit()}
-                title={i18n.t('common.done') || 'Done'}
-                aria-label="Exit selection mode"
-              >
-                <IconCheck class="w-4 h-4" />
-                <span>{i18n.t('common.done') || 'Done'}</span>
-              </Button>
-            {:else}
-              <Button
-                variant="ghost"
-                class="btn-icon action-btn"
-                onclick={() => (mobileMoreOpen = true)}
-                title={i18n.t('common.more') || 'More'}
-                aria-label="More actions"
-              >
-                <IconMoreVertical class="w-5 h-5" />
-              </Button>
-            {/if}
+            <Button
+              variant="ghost"
+              class="btn-icon action-btn"
+              onclick={() => (mobileMoreOpen = true)}
+              title={i18n.t('common.more') || 'More'}
+              aria-label="More actions"
+            >
+              <IconMoreVertical class="w-5 h-5" />
+            </Button>
           {/if}
         </HeaderActions>
       {/snippet}
@@ -1590,19 +1576,7 @@
                 {@render filterInnerContent()}
               </PopoverMenu>
 
-              {#if isSelectionActive}
-                <Button
-                  variant="accent"
-                  size="sm"
-                  class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
-                  onclick={() => selectionState.exit()}
-                  title={i18n.t('common.done') || 'Done'}
-                  aria-label="Exit selection mode"
-                >
-                  <IconCheck class="w-4 h-4" />
-                  <span>{i18n.t('common.done') || 'Done'}</span>
-                </Button>
-              {/if}
+
             {/if}
           </HeaderActions>
         {/if}

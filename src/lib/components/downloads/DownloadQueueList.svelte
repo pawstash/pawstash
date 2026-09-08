@@ -8,7 +8,7 @@
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { i18n } from '$lib/i18n';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { apiOpenDownloadsFolder, apiSaveSettings } from '$lib/utils/ipc';
+  import { apiOpenDownloadsFolder, apiSaveSettings, apiShowInFolder } from '$lib/utils/ipc';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import type { DownloadItem } from '$lib/types/download';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -45,7 +45,6 @@
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
-  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
@@ -351,6 +350,36 @@
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
   let downloadKeys = $derived(sortedDownloads.map((d) => d.id));
   let downloadsMap = $derived(new Map(sortedDownloads.map((d) => [d.id, d])));
+  let selectedDownloads = $derived(isSelectionActive ? selectionState.getItems<DownloadItem>() : []);
+
+  let hasPausable = $derived(
+    selectedDownloads.length > 0
+      ? selectedDownloads.some((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
+      : sortedDownloads.some((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
+  );
+
+  let hasResumable = $derived(
+    selectedDownloads.length > 0
+      ? selectedDownloads.some((d) => d.status === 'paused')
+      : sortedDownloads.some((d) => d.status === 'paused')
+  );
+
+  let hasRetryable = $derived(
+    selectedDownloads.length > 0
+      ? selectedDownloads.some((d) => ['failed', 'cancelled', 'missing'].includes(d.status))
+      : sortedDownloads.some((d) => ['failed', 'cancelled', 'missing'].includes(d.status))
+  );
+
+  let hasCompleted = $derived(
+    selectedDownloads.length > 0
+      ? selectedDownloads.some((d) => d.status === 'completed' && Boolean(d.final_path))
+      : sortedDownloads.some((d) => d.status === 'completed' && Boolean(d.final_path))
+  );
+
+  let allActiveSelected = $derived(
+    selectedDownloads.length > 0 &&
+      selectedDownloads.every((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
+  );
 
   $effect(() => {
     selectionState.setContext('downloads', downloadKeys, downloadsMap);
@@ -361,17 +390,16 @@
   }
 
   async function batchPause() {
-    const items = selectionState.getItems<DownloadItem>();
-    if (items.length === 0) return;
+    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
+    const pausable = items.filter((item) => ['queued', 'resolving', 'downloading', 'verifying'].includes(item.status));
+    if (pausable.length === 0) return;
     try {
-      for (const item of items) {
-        if (['queued', 'resolving', 'downloading'].includes(item.status)) {
-          await downloadState.pause(item.id);
-        }
+      for (const item of pausable) {
+        await downloadState.pause(item.id);
       }
       notify.success(
         i18n.t('downloads.pause') || 'Paused',
-        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+        `${pausable.length} ${pausable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
@@ -380,17 +408,16 @@
   }
 
   async function batchResume() {
-    const items = selectionState.getItems<DownloadItem>();
-    if (items.length === 0) return;
+    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
+    const resumable = items.filter((item) => item.status === 'paused');
+    if (resumable.length === 0) return;
     try {
-      for (const item of items) {
-        if (item.status === 'paused') {
-          await downloadState.resume(item.id);
-        }
+      for (const item of resumable) {
+        await downloadState.resume(item.id);
       }
       notify.success(
         i18n.t('downloads.resume') || 'Resumed',
-        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+        `${resumable.length} ${resumable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
@@ -399,17 +426,16 @@
   }
 
   async function batchRetry() {
-    const items = selectionState.getItems<DownloadItem>();
-    if (items.length === 0) return;
+    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
+    const retryable = items.filter((item) => ['failed', 'cancelled', 'missing'].includes(item.status));
+    if (retryable.length === 0) return;
     try {
-      for (const item of items) {
-        if (['failed', 'cancelled', 'missing'].includes(item.status)) {
-          await downloadState.retry(item.id);
-        }
+      for (const item of retryable) {
+        await downloadState.retry(item.id);
       }
       notify.success(
         i18n.t('downloads.retry') || 'Retrying',
-        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+        `${retryable.length} ${retryable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
@@ -417,15 +443,30 @@
     }
   }
 
+  async function batchShowInFolder() {
+    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
+    const completed = items.filter((d) => d.status === 'completed' && Boolean(d.final_path));
+    if (completed.length === 0) return;
+    try {
+      const paths = Array.from(new Set(completed.map((d) => d.final_path)));
+      for (const p of paths.slice(0, 3)) {
+        await apiShowInFolder(p);
+      }
+      selectionState.exit();
+    } catch (err) {
+      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', err);
+    }
+  }
+
   async function batchRemove() {
-    const items = selectionState.getItems<DownloadItem>();
+    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
     if (items.length === 0) return;
     try {
       for (const item of items) {
         await downloadState.remove(item.id);
       }
       notify.success(
-        i18n.t('downloads.remove') || 'Removed',
+        allActiveSelected ? (i18n.t('downloads.cancel') || 'Cancelled') : (i18n.t('downloads.remove') || 'Removed'),
         `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
@@ -562,29 +603,15 @@
     {:else}
       {@render filterControl(source)}
 
-      {#if isSelectionActive}
-        <Button
-          variant="accent"
-          size="sm"
-          class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
-          onclick={() => selectionState.exit()}
-          title={i18n.t('common.done') || 'Done'}
-          aria-label="Exit selection mode"
-        >
-          <IconCheckmark class="w-4 h-4" />
-          <span>{i18n.t('common.done') || 'Done'}</span>
-        </Button>
-      {:else}
-        <Button
-          variant="ghost"
-          class="btn-icon"
-          onclick={() => (mobileMoreOpen = true)}
-          title={i18n.t('common.more') || 'More'}
-          aria-label="More actions"
-        >
-          <IconMoreVertical class="w-5 h-5" />
-        </Button>
-      {/if}
+      <Button
+        variant="ghost"
+        class="btn-icon"
+        onclick={() => (mobileMoreOpen = true)}
+        title={i18n.t('common.more') || 'More'}
+        aria-label="More actions"
+      >
+        <IconMoreVertical class="w-5 h-5" />
+      </Button>
     {/if}
   </HeaderActions>
 {/snippet}
@@ -656,48 +683,72 @@
   totalCount={sortedDownloads.length}
   onSelectAll={handleSelectAll}
 >
-  <Button
-    variant="ghost"
-    size="sm"
-    class="selection-btn"
-    onclick={batchPause}
-    title={i18n.t('downloads.pause')}
-  >
-    <IconPause class="w-[16px] h-[16px]" />
-    <span>{i18n.t('downloads.pause')}</span>
-  </Button>
+  {#if hasPausable}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="selection-btn"
+      onclick={batchPause}
+      title={i18n.t('downloads.pause')}
+    >
+      <IconPause class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.pause')}</span>
+    </Button>
+  {/if}
 
-  <Button
-    variant="ghost"
-    size="sm"
-    class="selection-btn"
-    onclick={batchResume}
-    title={i18n.t('downloads.resume')}
-  >
-    <IconPlay class="w-[16px] h-[16px]" />
-    <span>{i18n.t('downloads.resume')}</span>
-  </Button>
+  {#if hasResumable}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="selection-btn"
+      onclick={batchResume}
+      title={i18n.t('downloads.resume')}
+    >
+      <IconPlay class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.resume')}</span>
+    </Button>
+  {/if}
 
-  <Button
-    variant="ghost"
-    size="sm"
-    class="selection-btn"
-    onclick={batchRetry}
-    title={i18n.t('downloads.retry')}
-  >
-    <IconRetry class="w-[16px] h-[16px]" />
-    <span>{i18n.t('downloads.retry')}</span>
-  </Button>
+  {#if hasRetryable}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="selection-btn"
+      onclick={batchRetry}
+      title={i18n.t('downloads.retry')}
+    >
+      <IconRetry class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.retry')}</span>
+    </Button>
+  {/if}
+
+  {#if hasCompleted}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="selection-btn"
+      onclick={batchShowInFolder}
+      title={i18n.t('downloads.show_in_folder') || 'Show in folder'}
+    >
+      <IconFolderOpen class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.show_in_folder') || 'Show in folder'}</span>
+    </Button>
+  {/if}
 
   <Button
     variant="danger"
     size="sm"
     class="selection-btn"
     onclick={batchRemove}
-    title={i18n.t('downloads.remove')}
+    title={allActiveSelected ? (i18n.t('downloads.cancel') || 'Cancel') : (i18n.t('downloads.remove') || 'Remove')}
   >
-    <IconDelete class="w-[16px] h-[16px]" />
-    <span>{i18n.t('downloads.remove')}</span>
+    {#if allActiveSelected}
+      <IconDismiss class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.cancel') || 'Cancel'}</span>
+    {:else}
+      <IconDelete class="w-[16px] h-[16px]" />
+      <span>{i18n.t('downloads.remove') || 'Remove'}</span>
+    {/if}
   </Button>
 </SelectionActionBar>
 
@@ -739,12 +790,16 @@
         use:ripple
         onclick={() => {
           mobileMoreOpen = false;
-          selectionState.enter('downloads');
+          if (isSelectionActive) {
+            selectionState.exit();
+          } else {
+            selectionState.enter('downloads');
+          }
         }}
       >
-        <IconCheckboxChecked class="text-secondary" />
+        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select mode'}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select mode')}</span>
         </div>
       </button>
 

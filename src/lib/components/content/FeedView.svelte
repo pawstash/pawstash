@@ -33,7 +33,6 @@
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconCalendar from '~icons/fluent/calendar-ltr-24-regular';
-  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
@@ -678,29 +677,15 @@
     {:else}
       {@render feedFilter(sticky)}
 
-      {#if isSelectionActive}
-        <Button
-          variant="accent"
-          size="sm"
-          class="px-2.5 h-[38px] text-xs font-semibold gap-1 rounded-full"
-          onclick={() => selectionState.exit()}
-          title={i18n.t('common.done') || 'Done'}
-          aria-label="Exit selection mode"
-        >
-          <IconCheckmark class="w-4 h-4" />
-          <span>{i18n.t('common.done') || 'Done'}</span>
-        </Button>
-      {:else}
-        <Button
-          variant="ghost"
-          class="btn-icon"
-          onclick={() => (mobileMoreOpen = true)}
-          title={i18n.t('common.more') || 'More'}
-          aria-label="More actions"
-        >
-          <IconMoreVertical class="w-5 h-5" />
-        </Button>
-      {/if}
+      <Button
+        variant="ghost"
+        class="btn-icon"
+        onclick={() => (mobileMoreOpen = true)}
+        title={i18n.t('common.more') || 'More'}
+        aria-label="More actions"
+      >
+        <IconMoreVertical class="w-5 h-5" />
+      </Button>
     {/if}
   </HeaderActions>
 {/snippet}
@@ -837,12 +822,16 @@
         use:ripple
         onclick={() => {
           mobileMoreOpen = false;
-          selectionState.enter('posts');
+          if (isSelectionActive) {
+            selectionState.exit();
+          } else {
+            selectionState.enter('posts');
+          }
         }}
       >
-        <IconCheckboxChecked class="text-secondary" />
+        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('selection.select_mode') || 'Select posts'}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select posts')}</span>
         </div>
       </button>
 

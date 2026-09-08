@@ -1,6 +1,7 @@
 <script lang="ts">
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
+  import { selectionState } from '$lib/state/selectionState.svelte';
   import { i18n } from '$lib/i18n';
   import IconFeed from '~icons/fluent/grid-24-regular';
   import IconFeedFilled from '~icons/fluent/grid-24-filled';
@@ -36,7 +37,12 @@
   let activeRoot = $derived(navigationState.activeRoot);
 </script>
 
-<nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+<nav
+  class="mobile-bottom-dock"
+  class:hidden-dock={selectionState.active}
+  aria-label="Mobile Navigation"
+  aria-hidden={selectionState.active}
+>
   <div class="mobile-dock-capsule">
     {#each navItems as item}
       {@const isActive = activeRoot === item.id}
@@ -75,6 +81,14 @@
     z-index: 999;
     width: min(calc(100vw - 28px), 440px);
     pointer-events: auto;
+    transition: transform var(--duration-normal, 0.24s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+                opacity var(--duration-fast, 0.18s) ease;
+  }
+
+  .mobile-bottom-dock.hidden-dock {
+    transform: translate(-50%, calc(100% + 32px)) scale(0.95);
+    opacity: 0;
+    pointer-events: none;
   }
 
   .mobile-dock-capsule {
