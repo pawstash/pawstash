@@ -69,6 +69,8 @@
     class="sticky-header-bar {extraClass}"
     class:visible={isVisible}
     class:is-mobile={layoutState.isMobile}
+    inert={!isVisible}
+    aria-hidden={!isVisible}
   >
     <div class="sticky-header-content">
       {#if children}

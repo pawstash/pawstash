@@ -19,6 +19,7 @@
     scrollKey?: string;
     onrefresh?: () => Promise<void> | void;
     onscroll?: (top: number) => void;
+    viewport?: HTMLElement | null;
   }
 
   let {
@@ -29,7 +30,8 @@
     class: extraClass = '',
     scrollKey,
     onrefresh,
-    onscroll
+    onscroll,
+    viewport = $bindable(null)
   }: Props = $props();
 
   const scrollContext = $state<ScrollableContext>({ viewport: null });
@@ -38,11 +40,11 @@
   let isScrolledTop = $state(false);
   let isScrolledBottom = $state(false);
 
-  function updateScrollState(viewport: HTMLElement | null) {
-    if (!viewport) return;
-    const top = viewport.scrollTop;
-    const scrollHeight = viewport.scrollHeight;
-    const clientHeight = viewport.clientHeight;
+  function updateScrollState(vp: HTMLElement | null) {
+    if (!vp) return;
+    const top = vp.scrollTop;
+    const scrollHeight = vp.scrollHeight;
+    const clientHeight = vp.clientHeight;
     isScrolledTop = top > 60;
     isScrolledBottom = (scrollHeight - top - clientHeight) > 16;
   }
@@ -77,9 +79,10 @@
           updateScrollState(scrollContext.viewport);
           onscroll?.(top);
         },
-        onReady: (viewport) => {
-          scrollContext.viewport = viewport;
-          updateScrollState(viewport);
+        onReady: (vp) => {
+          scrollContext.viewport = vp;
+          viewport = vp;
+          updateScrollState(vp);
         }
       }}
     >

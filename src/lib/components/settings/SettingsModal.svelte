@@ -2,7 +2,8 @@
   import { configState } from '$lib/state/configState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import SettingsNav from './SettingsNav.svelte';
   import {
     backgroundState,
     defaultBackgroundType,
@@ -133,7 +134,10 @@
   let settingsMenuOpen = $state(false);
   let stickySettingsMenuOpen = $state(false);
   let activeCategory = $state('appearance');
-  let categoryScrollFrame: number | undefined;
+  let viewportEl = $state<HTMLElement | null>(null);
+  let isProgrammaticScroll = false;
+  let programmaticScrollTimeout: ReturnType<typeof setTimeout> | undefined;
+  let scrollSpyRaf: number | undefined;
   let availableBackgroundTypes = $state<BackgroundType[]>(supportedBackgroundTypes());
   let cacheStats = $state<CacheStats | null>(null);
   let cacheBusy = $state<'images' | 'all' | null>(null);
@@ -212,13 +216,6 @@
     { id: 'updates', label: i18n.t('settings.updates_section') }
   ]);
 
-  const categoryOptions = $derived(
-    categories.map((c) => ({
-      value: c.id,
-      label: c.label
-    }))
-  );
-
   onMount(() => {
     availableBackgroundTypes = supportedBackgroundTypes();
 
@@ -251,36 +248,44 @@
     }
   });
 
-  onMount(() => {
-    let isInitial = true;
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (visible?.target.id.startsWith('settings-')) {
-        const catId = visible.target.id.slice('settings-'.length);
-        if (activeCategory !== catId) {
-          activeCategory = catId;
-          if (!isInitial) {
-            revealCategory(activeCategory, false);
-          }
+  function handleScrollSpy() {
+    if (isProgrammaticScroll || !viewportEl) return;
+
+    if (scrollSpyRaf !== undefined) cancelAnimationFrame(scrollSpyRaf);
+    scrollSpyRaf = requestAnimationFrame(() => {
+      scrollSpyRaf = undefined;
+      if (isProgrammaticScroll || !viewportEl) return;
+
+      const scrollTop = viewportEl.scrollTop;
+      const scrollHeight = viewportEl.scrollHeight;
+      const clientHeight = viewportEl.clientHeight;
+
+      if (scrollTop + clientHeight >= scrollHeight - 36) {
+        const lastCat = categories[categories.length - 1];
+        if (lastCat && activeCategory !== lastCat.id) {
+          activeCategory = lastCat.id;
         }
-        isInitial = false;
+        return;
       }
-    }, {
-      rootMargin: '-18% 0px -68% 0px',
-      threshold: 0
+
+      const probeOffset = scrollTop + (layoutState.isMobile ? 80 : 110);
+      let currentId = categories[0]?.id || 'appearance';
+      for (const cat of categories) {
+        const section = document.getElementById(`settings-${cat.id}`);
+        if (section && section.offsetTop <= probeOffset) {
+          currentId = cat.id;
+        }
+      }
+
+      if (activeCategory !== currentId) {
+        activeCategory = currentId;
+      }
     });
+  }
 
-    for (const category of categories) {
-      const section = document.getElementById(`settings-${category.id}`);
-      if (section) observer.observe(section);
-    }
-
-    return () => {
-      if (categoryScrollFrame !== undefined) cancelAnimationFrame(categoryScrollFrame);
-      observer.disconnect();
-    };
+  onDestroy(() => {
+    if (scrollSpyRaf !== undefined) cancelAnimationFrame(scrollSpyRaf);
+    if (programmaticScrollTimeout) clearTimeout(programmaticScrollTimeout);
   });
 
   let bgImageInput = $state<HTMLInputElement | null>(null);
@@ -459,36 +464,33 @@
     if (id === 'cache' && !cacheStats && !cacheBusy) {
       void loadCacheStats();
     }
-    revealCategory(id);
-    document.getElementById(`settings-${id}`)?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
+
+    const targetEl = document.getElementById(`settings-${id}`);
+    if (!targetEl || !viewportEl) {
+      targetEl?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+      return;
+    }
+
+    isProgrammaticScroll = true;
+    if (programmaticScrollTimeout) clearTimeout(programmaticScrollTimeout);
+
+    const isMobile = layoutState.isMobile;
+    const headerOffset = isMobile ? 64 : 88;
+    const targetTop = Math.max(0, targetEl.offsetTop - headerOffset);
+    const maxScrollTop = viewportEl.scrollHeight - viewportEl.clientHeight;
+    const finalTop = Math.min(targetTop, maxScrollTop);
+
+    viewportEl.scrollTo({
+      top: finalTop,
+      behavior: 'smooth'
     });
-  }
 
-  function revealCategory(id: string, smooth = true) {
-    if (categoryScrollFrame !== undefined) cancelAnimationFrame(categoryScrollFrame);
-    categoryScrollFrame = requestAnimationFrame(() => {
-      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const behavior: ScrollBehavior = prefersReduced || !smooth ? 'auto' : 'smooth';
-
-      for (const list of document.querySelectorAll<HTMLElement>('.settings-categories')) {
-        const button =
-          list.querySelector<HTMLElement>(`[data-choice-value="${id}"]`) ||
-          list.querySelector<HTMLElement>(`[data-settings-category="${id}"]`);
-        if (!button) continue;
-
-        const listRect = list.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
-        const left =
-          list.scrollLeft +
-          buttonRect.left -
-          listRect.left -
-          (list.clientWidth - buttonRect.width) / 2;
-        list.scrollTo({ left: Math.max(0, left), behavior });
-      }
-      categoryScrollFrame = undefined;
-    });
+    programmaticScrollTimeout = setTimeout(() => {
+      isProgrammaticScroll = false;
+    }, 600);
   }
 
   let showResetConfirm = $state(false);
@@ -814,15 +816,11 @@
 </script>
 
 {#snippet categoryTabs()}
-  <nav class="settings-categories" aria-label={i18n.t('settings.categories')}>
-    <ChoiceGroup
-      options={categoryOptions}
-      value={activeCategory}
-      onchange={(val) => openCategory(String(val))}
-      align="left"
-      class="settings-category-choice"
-    />
-  </nav>
+  <SettingsNav
+    {categories}
+    {activeCategory}
+    onselect={openCategory}
+  />
 {/snippet}
 
 {#snippet settingsMenu(source: 'main' | 'sticky')}
@@ -954,7 +952,12 @@
   </div>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
+<PageShell
+  scrollable={true}
+  scrollKey={navigationState.entryKey}
+  bind:viewport={viewportEl}
+  onscroll={handleScrollSpy}
+>
   {#snippet overlay()}
     <StickyHeader threshold={120}>
       <div class="sticky-settings-toolbar">
@@ -2271,42 +2274,6 @@
 
   .settings-toolbar {
     margin-bottom: 0;
-  }
-
-  .settings-categories {
-    display: flex;
-    align-items: center;
-    flex: 1 1 auto;
-    gap: 8px;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    padding-right: 20px;
-  }
-
-  :global(.page-shell.mobile) .settings-categories {
-    margin-left: -12px;
-    padding-left: 12px;
-  }
-
-  @media (max-width: 768px) {
-    .settings-categories {
-      margin-left: -12px;
-      padding-left: 12px;
-    }
-  }
-
-  .settings-categories::-webkit-scrollbar {
-    display: none;
-  }
-
-  :global(.settings-category-choice) {
-    flex-wrap: nowrap !important;
-    max-width: none !important;
-    flex-shrink: 0 !important;
   }
 
   .background-color-input {
