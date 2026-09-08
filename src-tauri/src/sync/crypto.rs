@@ -4,8 +4,12 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
     KeyInit, XChaCha20Poly1305, XNonce,
 };
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
 
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
@@ -86,14 +90,60 @@ pub fn unwrap_vault(
     serde_json::from_slice(&plaintext).map_err(|_| "Invalid key bundle".to_string())
 }
 
+const PAYLOAD_MARKER_RAW: u8 = 0x00;
+const PAYLOAD_MARKER_ZLIB: u8 = 0x01;
+
+pub fn compress_payload(plaintext: &[u8]) -> Vec<u8> {
+    if plaintext.is_empty() {
+        return vec![PAYLOAD_MARKER_RAW];
+    }
+    let mut encoder = ZlibEncoder::new(Vec::with_capacity(plaintext.len()), Compression::default());
+    if encoder.write_all(plaintext).is_ok() {
+        if let Ok(compressed) = encoder.finish() {
+            if compressed.len() + 1 < plaintext.len() {
+                let mut out = Vec::with_capacity(compressed.len() + 1);
+                out.push(PAYLOAD_MARKER_ZLIB);
+                out.extend_from_slice(&compressed);
+                return out;
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(plaintext.len() + 1);
+    out.push(PAYLOAD_MARKER_RAW);
+    out.extend_from_slice(plaintext);
+    out
+}
+
+pub fn decompress_payload(decrypted: &[u8]) -> Result<Vec<u8>, String> {
+    if decrypted.is_empty() {
+        return Ok(Vec::new());
+    }
+    match decrypted[0] {
+        PAYLOAD_MARKER_ZLIB => {
+            let mut decoder = ZlibDecoder::new(&decrypted[1..]);
+            let mut decompressed = Vec::new();
+            decoder
+                .read_to_end(&mut decompressed)
+                .map_err(|e| format!("Failed to decompress zlib sync payload: {e}"))?;
+            Ok(decompressed)
+        }
+        PAYLOAD_MARKER_RAW => Ok(decrypted[1..].to_vec()),
+        _ => {
+            // Legacy uncompressed record (starts with '{' 0x7B or other un-prefixed byte)
+            Ok(decrypted.to_vec())
+        }
+    }
+}
+
 pub fn encrypt_record(
     key: &[u8; KEY_BYTES],
     record_id: &str,
     plaintext: &[u8],
 ) -> Result<Ciphertext, String> {
+    let payload = compress_payload(plaintext);
     encrypt(
         key,
-        plaintext,
+        &payload,
         format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes(),
     )
 }
@@ -104,13 +154,14 @@ pub fn decrypt_record(
     ciphertext: &str,
     nonce: &str,
 ) -> Result<Vec<u8>, String> {
-    decrypt(
+    let decrypted = decrypt(
         key,
         ciphertext,
         nonce,
         format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes(),
     )
-    .map_err(|_| "Encrypted sync record failed authentication".to_string())
+    .map_err(|_| "Encrypted sync record failed authentication".to_string())?;
+    decompress_payload(&decrypted)
 }
 
 fn derive_key(password: &str, envelope: &KdfEnvelope) -> Result<[u8; KEY_BYTES], String> {
@@ -242,5 +293,21 @@ mod tests {
         };
         let secrets = VaultSecrets::generate();
         assert!(wrap_vault("correct horse battery", &bad_kdf, &secrets).is_err());
+    }
+
+    #[test]
+    fn compressed_payload_roundtrip_and_legacy_compatibility() {
+        let key = [42u8; KEY_BYTES];
+        let record_id = "test:post:123";
+
+        let sample_json = r#"{"id":"123","service":"kemono","title":"Test Post With Long Text","content":"repeated content text ".repeat(100)}"#.as_bytes();
+        let enc = encrypt_record(&key, record_id, sample_json).unwrap();
+        let dec = decrypt_record(&key, record_id, &enc.ciphertext, &enc.nonce).unwrap();
+        assert_eq!(dec, sample_json);
+
+        let legacy_json = b"{\"legacy\":true,\"name\":\"uncompressed\"}";
+        let legacy_enc = encrypt(&key, legacy_json, format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes()).unwrap();
+        let legacy_dec = decrypt_record(&key, record_id, &legacy_enc.ciphertext, &legacy_enc.nonce).unwrap();
+        assert_eq!(legacy_dec, legacy_json);
     }
 }

@@ -148,6 +148,16 @@ pub fn favorite_creator_record_id(service: &str, creator_id: &str) -> String {
     format!("fav:creator:{service}:{creator_id}")
 }
 
+pub fn slim_post_snapshot(raw_json: &str) -> String {
+    if let Ok(post) = crate::api::models::Post::from_json_str(raw_json) {
+        let slim = post.to_slim();
+        if let Ok(serialized) = serde_json::to_string(&slim) {
+            return serialized;
+        }
+    }
+    raw_json.to_string()
+}
+
 pub struct SyncRepository {
     connection: Mutex<Connection>,
 }
@@ -335,13 +345,14 @@ impl SyncRepository {
              FROM posts p
              JOIN collection_posts cp USING(service,creator_id,post_id)",
             |r| {
+                let raw_snapshot: String = r.get(5)?;
                 Ok(PostRecord {
                     service: r.get(0)?,
                     creator_id: r.get(1)?,
                     post_id: r.get(2)?,
                     title: r.get(3)?,
                     published_at: r.get(4)?,
-                    snapshot_json: r.get(5)?,
+                    snapshot_json: slim_post_snapshot(&raw_snapshot),
                     cached_at: r.get(6)?,
                 })
             },
@@ -694,11 +705,12 @@ impl SyncRepository {
              JOIN posts p USING(service, creator_id, post_id)
              WHERE pin.entity_kind = 'post' AND pin.reason = 'favorite'",
             |r| {
+                let raw_snapshot: String = r.get(3)?;
                 Ok(FavoritePostRecord {
                     service: r.get(0)?,
                     creator_id: r.get(1)?,
                     post_id: r.get(2)?,
-                    snapshot_json: r.get(3)?,
+                    snapshot_json: slim_post_snapshot(&raw_snapshot),
                     created_at: r.get(4)?,
                 })
             },
@@ -1003,8 +1015,14 @@ impl SyncRepository {
                     "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
                      VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
                      ON CONFLICT(service,creator_id,post_id) DO UPDATE SET
-                       title=excluded.title, content=excluded.content,
-                       published_at=excluded.published_at, snapshot_json=excluded.snapshot_json",
+                       title=excluded.title,
+                       content=coalesce(posts.content, excluded.content),
+                       published_at=excluded.published_at,
+                       snapshot_json=CASE
+                           WHEN json_extract(posts.snapshot_json, '$.detail_fetched') = 1 AND (json_extract(excluded.snapshot_json, '$.detail_fetched') IS NULL OR json_extract(excluded.snapshot_json, '$.detail_fetched') = 0)
+                           THEN posts.snapshot_json
+                           ELSE excluded.snapshot_json
+                       END",
                     params![
                         rec.service,
                         rec.creator_id,
@@ -1410,5 +1428,38 @@ mod tests {
         // Device B has no local dirty records
         let dirty_b = repo_b.detect_and_get_dirty_records().unwrap();
         assert!(dirty_b.is_empty());
+    }
+
+    #[test]
+    fn test_slim_post_snapshot_trims_content_and_preserves_card_preview() {
+        let heavy_json = r#"{
+            "id": "123",
+            "user": "creator_a",
+            "service": "fanbox",
+            "title": "A Great Post",
+            "content": "<p>Massive HTML body content with inline images</p>",
+            "published": "2026-09-08T12:00:00Z",
+            "file": {"name": "thumb.jpg", "path": "/files/thumb.jpg"},
+            "attachments": [{"name": "image1.png", "path": "/files/image1.png"}],
+            "poll": {"title": "huge poll object"},
+            "embed": {"html": "iframe content"},
+            "extra": {"huge_dump": true}
+        }"#;
+
+        let slim_str = slim_post_snapshot(heavy_json);
+        assert!(!slim_str.contains("Massive HTML body"));
+        assert!(!slim_str.contains("huge poll object"));
+        assert!(!slim_str.contains("iframe content"));
+        assert!(!slim_str.contains("huge_dump"));
+
+        let parsed: crate::api::models::Post = serde_json::from_str(&slim_str).unwrap();
+        assert_eq!(parsed.id, "123");
+        assert_eq!(parsed.title, "A Great Post");
+        assert_eq!(parsed.user, "creator_a");
+        assert_eq!(parsed.service, "fanbox");
+        assert_eq!(parsed.content, None);
+        assert_eq!(parsed.poll, None);
+        assert_eq!(parsed.detail_fetched, Some(false));
+        assert_eq!(parsed.file.unwrap().name, Some("thumb.jpg".into()));
     }
 }

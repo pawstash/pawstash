@@ -97,6 +97,52 @@ impl Post {
         }
     }
 
+    pub fn to_slim(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            user: self.user.clone(),
+            service: self.service.clone(),
+            title: self.title.clone(),
+            content: None,
+            substring: None,
+            published: self.published.clone(),
+            added: self.added.clone(),
+            edited: None,
+            embed: None,
+            shared_file: self.shared_file,
+            attachments: self.attachments.as_ref().map(|atts| {
+                atts.iter()
+                    .map(|a| Attachment {
+                        name: a.name.clone(),
+                        path: a.path.clone(),
+                        server: a.server.clone(),
+                        size: a.size,
+                        extra: HashMap::new(),
+                    })
+                    .collect()
+            }),
+            file: self.file.as_ref().map(|f| Attachment {
+                name: f.name.clone(),
+                path: f.path.clone(),
+                server: f.server.clone(),
+                size: f.size,
+                extra: HashMap::new(),
+            }),
+            poll: None,
+            captions: None,
+            tags: None,
+            origin: self.origin.clone(),
+            preview_state: self.preview_state.clone(),
+            has_full: Some(false),
+            detail_fetched: Some(false),
+            next: None,
+            prev: None,
+            favorite_count: self.favorite_count,
+            attachment_count: self.attachment_count,
+            extra: HashMap::new(),
+        }
+    }
+
     pub fn from_json_str(json_str: &str) -> Result<Self, String> {
         match serde_json::from_str::<Post>(json_str) {
             Ok(mut post) => {
