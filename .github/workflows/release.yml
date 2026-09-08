@@ -74,7 +74,6 @@ jobs:
           if [ "${{ matrix.platform }}" = "windows-x64" ]; then
             find src-tauri/target -name "pawstash.exe" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-portable.exe || true
             find src-tauri/target -name "*.exe" | grep -i "setup" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-Setup.exe || true
-            find src-tauri/target -name "*.msi" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.msi || true
           elif [ "${{ matrix.platform }}" = "linux-x64" ]; then
             RAW_APPIMAGE=$(find src-tauri/target -name "*.AppImage" | head -n 1)
             if [ -n "$RAW_APPIMAGE" ]; then
@@ -103,7 +102,6 @@ jobs:
             find src-tauri/target/release -maxdepth 1 -name "pawstash" -type f | head -n 1 | xargs -I {} tar -czf dist-binaries/Pawstash-linux-x64.tar.gz -C src-tauri/target/release pawstash || true
           elif [ "${{ matrix.platform }}" = "macos-universal" ]; then
             find src-tauri/target -name "*.dmg" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.dmg || true
-            find src-tauri/target -name "*.app.tar.gz" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.app.tar.gz || true
           fi
 
       - name: Upload Desktop Artifacts
@@ -207,20 +205,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-binaries
-          find src-tauri/gen/android/app/build/outputs/apk -name "*arm64*.apk" -o -name "*v8a*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-arm64-v8a.apk || true
-          find src-tauri/gen/android/app/build/outputs/apk -name "*armeabi*.apk" -o -name "*v7a*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-armeabi-v7a.apk || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*arm64*.apk" -o -name "*v8a*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-arm64.apk || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*armeabi*.apk" -o -name "*v7a*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-v7a.apk || true
           find src-tauri/gen/android/app/build/outputs/apk -name "*x86_64*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-x86_64.apk || true
-          find src-tauri/gen/android/app/build/outputs/apk -name "*universal*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash-universal.apk || true
-          # find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.aab || true
+          find src-tauri/gen/android/app/build/outputs/apk -name "*universal*.apk" | head -n 1 | xargs -I {} cp {} dist-binaries/Pawstash.apk || true
 
-          if [ -f "dist-binaries/Pawstash-universal.apk" ]; then
-            cp dist-binaries/Pawstash-universal.apk dist-binaries/Pawstash.apk
-          elif [ -f "dist-binaries/Pawstash-arm64-v8a.apk" ]; then
-            cp dist-binaries/Pawstash-arm64-v8a.apk dist-binaries/Pawstash.apk
-          fi
-
-          if [ -f "dist-binaries/Pawstash-arm64-v8a.apk" ]; then
-            cp dist-binaries/Pawstash-arm64-v8a.apk dist-binaries/Pawstash-arm64.apk
+          if [ ! -f "dist-binaries/Pawstash.apk" ] && [ -f "dist-binaries/Pawstash-arm64.apk" ]; then
+            cp dist-binaries/Pawstash-arm64.apk dist-binaries/Pawstash.apk
           fi
 
       - name: Upload Android Artifacts
@@ -264,6 +255,11 @@ jobs:
         with:
           path: release-dist
           merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd release-dist
+          sha256sum * > SHA256SUMS.txt
 
       - name: Display binaries to release
         run: ls -la release-dist

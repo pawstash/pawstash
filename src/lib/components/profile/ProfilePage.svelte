@@ -202,7 +202,7 @@
               <Button
                 variant="accent"
                 class="w-full"
-                disabled={syncState.busy || !syncState.status.unlocked || !syncState.status.enabled}
+                disabled={syncState.busy || !syncState.status.unlocked}
                 onclick={() => void runSyncAction(() => syncState.sync(), i18n.t('sync.completed'))}
               >
                 {#if syncState.busy}

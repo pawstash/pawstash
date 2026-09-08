@@ -532,6 +532,33 @@ fn find_platform_asset_ref(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
 
     #[cfg(target_os = "android")]
     {
+        let preferred_pattern = if cfg!(target_arch = "aarch64") {
+            Some("arm64")
+        } else if cfg!(target_arch = "arm") {
+            Some("v7a")
+        } else if cfg!(target_arch = "x86_64") {
+            Some("x86_64")
+        } else {
+            None
+        };
+
+        if let Some(pattern) = preferred_pattern {
+            if let Some(asset) = assets.iter().find(|a| {
+                let name = a.name.to_lowercase();
+                name.ends_with(".apk")
+                    && (name.contains(pattern) || (pattern == "v7a" && name.contains("armeabi")))
+            }) {
+                return Some(asset);
+            }
+        }
+
+        if let Some(asset) = assets.iter().find(|a| {
+            let name = a.name.to_lowercase();
+            name == "pawstash.apk" || name == "pawstash-universal.apk"
+        }) {
+            return Some(asset);
+        }
+
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".apk"))

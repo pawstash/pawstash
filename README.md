@@ -53,11 +53,12 @@
 | :--- | :--- | :--- | :--- |
 | **Windows** | Standalone Portable | x64 | [![Download .exe](https://img.shields.io/badge/Download-Pawstash--portable.exe-2ea44f?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-portable.exe) |
 | **Windows** | Setup Installer (`.exe`) | x64 | [![Download Setup](https://img.shields.io/badge/Download-Pawstash--Setup.exe-0078d4?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-Setup.exe) |
-| **Windows** | MSI Package (`.msi`) | x64 | [![Download MSI](https://img.shields.io/badge/Download-Pawstash.msi-0078d4?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash.msi) |
-| **Android** | Signed APK (Recommended) | ARM64 (`arm64-v8a`) | [![Download APK](https://img.shields.io/badge/Download-Pawstash--arm64.apk-3ddc84?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-arm64-v8a.apk) |
+| **Android** | Signed APK (Recommended) | ARM64 (`arm64-v8a`) | [![Download APK](https://img.shields.io/badge/Download-Pawstash--arm64.apk-3ddc84?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-arm64.apk) |
+| **Android** | Signed APK (Legacy) | ARMv7 (`armeabi-v7a`) | [![Download APK](https://img.shields.io/badge/Download-Pawstash--v7a.apk-3ddc84?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-v7a.apk) |
 | **Android** | Universal APK | All Architectures | [![Download APK](https://img.shields.io/badge/Download-Pawstash.apk-3ddc84?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash.apk) |
 | **Linux** | AppImage (`.AppImage`) | x64 | [![Download AppImage](https://img.shields.io/badge/Download-Pawstash.AppImage-fcc624?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash.AppImage) |
 | **Linux** | Debian (`.deb`) | x64 | [![Download DEB](https://img.shields.io/badge/Download-Pawstash.deb-e11d48?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash.deb) |
+| **Linux** | Standalone Archive (`.tar.gz`) | x64 | [![Download tar.gz](https://img.shields.io/badge/Download-Pawstash--linux--x64.tar.gz-e5a93c?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash-linux-x64.tar.gz) |
 | **macOS** | Universal DMG (`.dmg`) | Apple Silicon / Intel | [![Download DMG](https://img.shields.io/badge/Download-Pawstash.dmg-555555?style=flat-square)](https://github.com/pawstash/pawstash/releases/latest/download/Pawstash.dmg) |
 
 ---

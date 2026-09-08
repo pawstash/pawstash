@@ -332,6 +332,7 @@ pub async fn save_settings(
     }
     state.content.set_cache_limit_mb(settings.cache_max_mb)?;
     state.download_manager.notify_scheduler();
+    let _ = state.sync_manager.set_enabled(settings.sync_enabled);
     Ok(())
 }
 

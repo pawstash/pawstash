@@ -65,11 +65,10 @@ impl SyncManager {
 
                     if settings.sync_enabled && settings.sync_auto {
                         if let Ok(Some(st)) = manager.repository.state() {
-                            if st.enabled
-                                && SecretStore::load_vault(&st.account_id)
-                                    .ok()
-                                    .flatten()
-                                    .is_some()
+                            if SecretStore::load_vault(&st.account_id)
+                                .ok()
+                                .flatten()
+                                .is_some()
                                 && manager.repository.conflict().ok().flatten().is_none()
                             {
                                 let _ = manager.sync(app.clone()).await;
@@ -91,10 +90,11 @@ impl SyncManager {
     pub fn status(&self) -> Result<SyncStatus, String> {
         let state = self.repository.state()?;
         let syncing = *self.syncing.lock().map_err(|e| e.to_string())?;
+        let settings = self.config.load().unwrap_or_default();
         match state {
             Some(v) => Ok(SyncStatus {
                 configured: true,
-                enabled: v.enabled,
+                enabled: settings.sync_enabled,
                 unlocked: SecretStore::load_vault(&v.account_id)?.is_some(),
                 syncing,
                 account_id: Some(v.account_id),
@@ -123,6 +123,12 @@ impl SyncManager {
         }
     }
     pub fn set_enabled(&self, enabled: bool) -> Result<SyncStatus, String> {
+        if let Ok(mut settings) = self.config.load() {
+            if settings.sync_enabled != enabled {
+                settings.sync_enabled = enabled;
+                let _ = self.config.save(&settings);
+            }
+        }
         let state = self.repository.state()?;
         if let Some(mut st) = state {
             st.enabled = enabled;
@@ -134,11 +140,10 @@ impl SyncManager {
         if let Ok(settings) = self.config.load() {
             if settings.sync_enabled && settings.sync_on_change {
                 if let Ok(Some(st)) = self.repository.state() {
-                    if st.enabled
-                        && SecretStore::load_vault(&st.account_id)
-                            .ok()
-                            .flatten()
-                            .is_some()
+                    if SecretStore::load_vault(&st.account_id)
+                        .ok()
+                        .flatten()
+                        .is_some()
                         && self.repository.conflict().ok().flatten().is_none()
                     {
                         self.on_change_notify.notify_one();
@@ -613,12 +618,14 @@ impl SyncManager {
                                     tombstone: r.tombstone,
                                 })
                                 .collect();
-                            let retry_resp = client
-                                .push(&session.token, &Uuid::new_v4().to_string(), &retry_inputs)
-                                .await?;
-                            self.repository.mark_records_synced(&retry_resp.accepted)?;
-                            if retry_resp.cursor > 0 {
-                                self.repository.update_cursor(retry_resp.cursor)?;
+                            for chunk in retry_inputs.chunks(100) {
+                                let retry_resp = client
+                                    .push(&session.token, &Uuid::new_v4().to_string(), chunk)
+                                    .await?;
+                                self.repository.mark_records_synced(&retry_resp.accepted)?;
+                                if retry_resp.cursor > 0 {
+                                    self.repository.update_cursor(retry_resp.cursor)?;
+                                }
                             }
                         }
                     }
