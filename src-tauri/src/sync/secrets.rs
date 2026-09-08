@@ -88,6 +88,13 @@ impl SecretStore {
             return Ok(None);
         }
         let raw = std::fs::read(&path).map_err(|e| e.to_string())?;
+        if !raw.starts_with(android_vault::MAGIC_HEADER) {
+            // Auto-migrate legacy unencrypted secret entry to encrypted PWSEC2 envelope
+            if let Ok(encrypted) = android_vault::encrypt(&raw) {
+                let _ = std::fs::write(&path, encrypted);
+            }
+            return Ok(Some(raw));
+        }
         let decrypted = android_vault::decrypt(&raw)?;
         Ok(Some(decrypted))
     }
@@ -165,6 +172,11 @@ mod android_vault {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
         std::fs::write(&key_path, key).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        }
         Ok(key)
     }
 

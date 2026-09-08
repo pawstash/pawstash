@@ -4,7 +4,7 @@ import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
 import type { CreatorSubscription, SubscriptionInput } from '$lib/types/subscription';
 import type { SyncDevice, SyncStatus } from '$lib/types/sync';
-import type { ProviderAuthSchema, FavoritesSyncResult } from '$lib/types/provider';
+import type { ProviderAuthSchema, FavoritesSyncResult, ProviderCapabilities } from '$lib/types/provider';
 import type {
   LibraryCollection,
   LibraryPostIdentity,
@@ -28,7 +28,11 @@ import type {
 } from '$lib/types/content';
 
 export const apiGetSystemAccentColor = () => invoke<string | null>('get_system_accent_color');
-export const apiGetAxumPort = () => invoke<number>('get_axum_port');
+export interface MediaServerInfo {
+  port: number;
+  token: string;
+}
+export const apiGetAxumPort = () => invoke<MediaServerInfo>('get_axum_port');
 export const apiCheckAria2c = () => invoke<boolean>('check_aria2c_installed');
 export const apiGetSettings = () => invoke<AppSettings>('get_settings');
 export const apiGetDefaultSettings = () => invoke<AppSettings>('get_default_settings');
@@ -74,7 +78,7 @@ export const apiFetchRecentPosts = (query?: string, offset = 0) =>
   invoke<Post[]>('fetch_recent_posts', { query, offset });
 
 export const apiFetchPopularPosts = (
-  period: 'day' | 'week' | 'month' = 'day',
+  period: string = 'day',
   date?: string,
   offset = 0
 ) => invoke<Post[]>('fetch_popular_posts', { period, date, offset });
@@ -293,6 +297,12 @@ export const apiResolveCloudLink = (url: string) =>
 
 export const apiGetProviderAuthSchema = (providerId: string) =>
   invoke<ProviderAuthSchema>('get_provider_auth_schema', { providerId });
+
+export const apiGetProviderCapabilities = () =>
+  invoke<Record<string, ProviderCapabilities>>('get_provider_capabilities');
+
+export const apiGetActiveCapabilities = () =>
+  invoke<ProviderCapabilities>('get_active_capabilities');
 
 export const apiSaveProviderSession = (providerId: string, cookie: string, username?: string) =>
   invoke<AccountSession>('save_provider_session', { providerId, cookie, username });

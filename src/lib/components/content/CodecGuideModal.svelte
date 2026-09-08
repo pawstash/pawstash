@@ -142,12 +142,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--floating-item-gap, 10px);
-    padding: var(--floating-padding, 6px) var(--floating-card-px, 10px) var(--floating-card-px, 10px);
-    box-sizing: border-box;
-  }
-
-  :global(.bottom-sheet) .codec-modal-body {
     padding: 0;
+    box-sizing: border-box;
   }
 
   .codec-intro {

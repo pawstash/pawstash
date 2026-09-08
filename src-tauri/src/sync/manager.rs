@@ -38,6 +38,7 @@ pub struct SyncManager {
     repository: Arc<SyncRepository>,
     config: Arc<ConfigManager>,
     syncing: Mutex<bool>,
+    on_change_notify: Arc<tokio::sync::Notify>,
 }
 impl SyncManager {
     pub fn new(repository: Arc<SyncRepository>, config: Arc<ConfigManager>) -> Self {
@@ -45,6 +46,7 @@ impl SyncManager {
             repository,
             config,
             syncing: Mutex::new(false),
+            on_change_notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
     pub fn start(self: &Arc<Self>, app: tauri::AppHandle) {
@@ -75,7 +77,14 @@ impl SyncManager {
                         }
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(interval_secs)) => {},
+                    _ = manager.on_change_notify.notified() => {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let _ = manager.sync(app.clone()).await;
+                    }
+                }
             }
         });
     }
@@ -121,7 +130,7 @@ impl SyncManager {
         }
         self.status()
     }
-    pub fn trigger_sync_on_change(self: &Arc<Self>, app: tauri::AppHandle) {
+    pub fn trigger_sync_on_change(self: &Arc<Self>, _app: tauri::AppHandle) {
         if let Ok(settings) = self.config.load() {
             if settings.sync_enabled && settings.sync_on_change {
                 if let Ok(Some(st)) = self.repository.state() {
@@ -132,11 +141,7 @@ impl SyncManager {
                             .is_some()
                         && self.repository.conflict().ok().flatten().is_none()
                     {
-                        let mgr = self.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            let _ = mgr.sync(app).await;
-                        });
+                        self.on_change_notify.notify_one();
                     }
                 }
             }
@@ -440,15 +445,25 @@ impl SyncManager {
         client.list_devices(&session.token).await
     }
     pub async fn sync(self: &Arc<Self>, app: tauri::AppHandle) -> Result<SyncStatus, String> {
-        {
+        struct SyncingGuard<'a>(&'a Mutex<bool>);
+        impl<'a> Drop for SyncingGuard<'a> {
+            fn drop(&mut self) {
+                if let Ok(mut lock) = self.0.lock() {
+                    *lock = false;
+                }
+            }
+        }
+
+        let _guard = {
             let mut syncing = self.syncing.lock().map_err(|e| e.to_string())?;
             if *syncing {
                 return Err("Sync is already running".to_string());
             }
-            *syncing = true
-        }
+            *syncing = true;
+            SyncingGuard(&self.syncing)
+        };
+
         let result = self.sync_inner().await;
-        *self.syncing.lock().map_err(|e| e.to_string())? = false;
         if let Err(error) = &result {
             let _ = self.repository.set_error(Some(error));
         }

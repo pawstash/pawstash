@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -12,12 +12,13 @@ use cipher::StreamCipher;
 use ctr::cipher::KeyIvInit;
 use serde::Deserialize;
 use serde_json::json;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio_util::io::ReaderStream;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
 pub struct MediaServer {
@@ -28,28 +29,41 @@ pub struct MediaServer {
 pub struct MediaServerState {
     pub allowed_roots: Vec<PathBuf>,
     pub config_manager: Arc<crate::config::ConfigManager>,
+    pub token: String,
 }
 
 impl MediaServer {
     pub async fn start(
         allowed_roots: Vec<PathBuf>,
         config_manager: Arc<crate::config::ConfigManager>,
+        token: String,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+            .allow_origin([
+                HeaderValue::from_static("tauri://localhost"),
+                HeaderValue::from_static("http://tauri.localhost"),
+                HeaderValue::from_static("https://tauri.localhost"),
+                HeaderValue::from_static("http://localhost:1420"),
+                HeaderValue::from_static("http://127.0.0.1:1420"),
+            ])
+            .allow_methods([Method::GET, Method::HEAD])
+            .allow_headers([header::RANGE, header::CONTENT_TYPE, header::ACCEPT])
+            .expose_headers([
+                header::CONTENT_LENGTH,
+                header::CONTENT_RANGE,
+                header::ACCEPT_RANGES,
+            ]);
 
         let state = Arc::new(MediaServerState {
             allowed_roots,
             config_manager,
+            token,
         });
 
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
             .route("/cloud_stream/mega", get(serve_mega_stream_handler))
             .route("/cloud_stream/proxy", get(serve_cloud_proxy_stream_handler))
-            .route("/health", get(|| async { "OK" }))
             .with_state(state)
             .layer(cors);
 
@@ -71,10 +85,12 @@ impl MediaServer {
 }
 
 async fn serve_media_handler(
-    State(_state): State<Arc<MediaServerState>>,
+    State(state): State<Arc<MediaServerState>>,
     Path(file_path): Path<String>,
+    Query(auth): Query<AuthQuery>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
+    require_token(&state, &auth.token)?;
     let decoded_path = urlencoding::decode(&file_path)
         .map(|s| s.into_owned())
         .unwrap_or(file_path);
@@ -96,33 +112,30 @@ async fn serve_media_handler(
     };
 
     let path = PathBuf::from(&path_str);
-    let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
-
-    if !path.is_file() && !canonical.is_file() {
+    let target = dunce::canonicalize(&path).map_err(|_| {
         tracing::warn!("Local media file not found: {:?}", path);
+        (StatusCode::NOT_FOUND, "File not found".to_string())
+    })?;
+    if !target.is_file() {
         return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
     }
 
-    let target = if canonical.is_file() { canonical } else { path };
-
-    #[cfg(target_os = "android")]
-    let allowed = true;
-
-    #[cfg(not(target_os = "android"))]
-    let allowed = {
-        let mut allowed_roots = _state.allowed_roots.clone();
-        if let Ok(settings) = _state.config_manager.load() {
-            let user_dir = PathBuf::from(&settings.download_dir);
-            if !allowed_roots.contains(&user_dir) {
-                allowed_roots.push(user_dir);
-            }
+    let mut allowed_roots = state.allowed_roots.clone();
+    let settings = state
+        .config_manager
+        .load()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let user_dir = PathBuf::from(&settings.download_dir);
+    if !allowed_roots.contains(&user_dir) {
+        allowed_roots.push(user_dir);
+    }
+    let allowed = allowed_roots.iter().any(|root| {
+        if let Ok(clean_root) = dunce::canonicalize(root) {
+            target.starts_with(clean_root)
+        } else {
+            false
         }
-        allowed_roots.is_empty()
-            || allowed_roots.iter().any(|root| {
-                let clean_root = dunce::canonicalize(root).unwrap_or_else(|_| root.clone());
-                target.starts_with(&clean_root) || target.starts_with(root)
-            })
-    };
+    });
 
     if !allowed {
         tracing::warn!("Local media access denied for target: {:?}", target);
@@ -170,19 +183,6 @@ async fn serve_media_handler(
                     res_headers.insert(header::CONTENT_RANGE, val);
                 }
                 res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
-                res_headers.insert(
-                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                    HeaderValue::from_static("*"),
-                );
-                res_headers.insert(
-                    header::ACCESS_CONTROL_ALLOW_METHODS,
-                    HeaderValue::from_static("GET, HEAD, OPTIONS"),
-                );
-                res_headers.insert(
-                    header::ACCESS_CONTROL_ALLOW_HEADERS,
-                    HeaderValue::from_static("*"),
-                );
-
                 return Ok(response);
             }
         }
@@ -202,24 +202,25 @@ async fn serve_media_handler(
     }
     res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(file_size));
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, HEAD, OPTIONS"),
-    );
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("*"),
-    );
-
     Ok(response)
 }
 
 #[derive(Debug, Deserialize)]
+struct AuthQuery {
+    token: String,
+}
+
+fn require_token(state: &MediaServerState, provided: &str) -> Result<(), (StatusCode, String)> {
+    if provided.as_bytes() == state.token.as_bytes() {
+        Ok(())
+    } else {
+        Err((StatusCode::NOT_FOUND, "Not found".to_string()))
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct MegaStreamQuery {
+    token: String,
     folder_id: Option<String>,
     file_id: Option<String>,
     node_id: Option<String>,
@@ -239,9 +240,11 @@ fn mega_decode_key_param(raw: &str) -> Result<Vec<u8>, String> {
 }
 
 async fn serve_mega_stream_handler(
+    State(state): State<Arc<MediaServerState>>,
     Query(params): Query<MegaStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
+    require_token(&state, &params.token)?;
     let key_bytes = mega_decode_key_param(&params.key).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     let (cipher_key, nonce) = if key_bytes.len() >= 32 {
@@ -408,22 +411,6 @@ async fn serve_mega_stream_handler(
         res_headers.insert(header::CONTENT_TYPE, val);
     }
     res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, HEAD, OPTIONS"),
-    );
-    res_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("*"),
-    );
-    res_headers.insert(
-        header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("*"),
-    );
     if chunk_size > 0 {
         res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
     }
@@ -458,6 +445,7 @@ fn parse_range(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
 
 #[derive(Deserialize)]
 struct CloudProxyParams {
+    token: String,
     url: String,
     name: Option<String>,
 }
@@ -467,80 +455,101 @@ async fn serve_cloud_proxy_stream_handler(
     Query(params): Query<CloudProxyParams>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
-    let settings = state.config_manager.load().unwrap_or_default();
+    require_token(&state, &params.token)?;
+    let settings = state
+        .config_manager
+        .load()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let mut builder = reqwest::Client::builder()
         .no_gzip()
         .no_brotli()
         .no_deflate()
         .timeout(std::time::Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
-
-    let is_local = params.url.starts_with("http://127.0.0.1")
-        || params.url.starts_with("http://localhost")
-        || params.url.starts_with("https://127.0.0.1")
-        || params.url.starts_with("https://localhost");
 
     match settings.proxy_mode {
         crate::config::ProxyMode::None => builder = builder.no_proxy(),
         crate::config::ProxyMode::System => {}
-        crate::config::ProxyMode::Custom if !(settings.proxy_bypass_local && is_local) => {
+        crate::config::ProxyMode::Custom => {
             if !settings.proxy_url.trim().is_empty() {
-                if let Ok(mut proxy) = reqwest::Proxy::all(settings.proxy_url.trim()) {
-                    if !settings.proxy_username.is_empty() {
-                        proxy =
-                            proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
-                    }
-                    builder = builder.proxy(proxy);
+                let mut proxy = reqwest::Proxy::all(settings.proxy_url.trim())
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                if !settings.proxy_username.is_empty() {
+                    proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
                 }
+                builder = builder.proxy(proxy);
             }
         }
-        _ => {}
     }
 
     let client = builder
         .build()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let target_url = crate::downloader::normalize_download_url(&params.url);
-
-    let mut req = client.get(&target_url);
-    req = req.headers(crate::downloader::derive_download_headers(&target_url));
-
-    if let Some(referer_url) = crate::downloader::derive_download_referer(&target_url) {
-        if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
-            req = req.header(header::REFERER, ref_val);
+    let normalized_url = crate::downloader::normalize_download_url(&params.url);
+    let mut target_url = validate_proxy_target(&normalized_url).await?;
+    let mut redirect_count = 0;
+    let upstream = loop {
+        let target_text = target_url.as_str();
+        let mut req = client
+            .get(target_url.clone())
+            .headers(crate::downloader::derive_download_headers(target_text));
+        if let Some(referer_url) = crate::downloader::derive_download_referer(target_text) {
+            if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
+                req = req.header(header::REFERER, ref_val);
+            }
         }
-    }
-
-    let resolved_cookie = settings
-        .resolve_cookie_for_url(&target_url)
-        .unwrap_or_default();
-    if let Some(cookie_val) =
-        crate::downloader::derive_download_cookie(&target_url, &resolved_cookie)
-    {
-        if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
-            req = req.header(header::COOKIE, val);
+        let resolved_cookie = settings
+            .resolve_cookie_for_url(target_text)
+            .unwrap_or_default();
+        if let Some(cookie_val) =
+            crate::downloader::derive_download_cookie(target_text, &resolved_cookie)
+        {
+            if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
+                req = req.header(header::COOKIE, val);
+            }
         }
-    }
-
-    if let Some(range) = headers.get(header::RANGE) {
-        if let Ok(range_val) = range.to_str() {
-            req = req.header(header::RANGE, range_val);
+        if let Some(range) = headers.get(header::RANGE) {
+            if let Ok(range_val) = range.to_str() {
+                req = req.header(header::RANGE, range_val);
+            }
         }
-    }
-
-    let upstream = req.send().await.map_err(|e| {
-        tracing::error!(
-            "Cloud proxy stream request failed for target '{}': {}",
-            target_url,
-            e
-        );
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Cloud upstream request failed: {e}"),
-        )
-    })?;
+        let response = req.send().await.map_err(|e| {
+            tracing::error!("Cloud proxy stream request failed: {e}");
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Cloud upstream request failed: {e}"),
+            )
+        })?;
+        if !response.status().is_redirection() {
+            break response;
+        }
+        if redirect_count >= 5 {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                "Cloud upstream exceeded the redirect limit".to_string(),
+            ));
+        }
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "Cloud upstream returned an invalid redirect".to_string(),
+                )
+            })?;
+        let redirected = target_url.join(location).map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Cloud upstream returned an invalid redirect URL: {e}"),
+            )
+        })?;
+        target_url = validate_proxy_target(redirected.as_str()).await?;
+        redirect_count += 1;
+    };
 
     let status = upstream.status();
     if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
@@ -599,10 +608,8 @@ async fn serve_cloud_proxy_stream_handler(
         let extracted_path =
             if let Some(name) = params.name.as_deref().filter(|s| !s.trim().is_empty()) {
                 Some(name.to_string())
-            } else if let Ok(u) = reqwest::Url::parse(&target_url) {
-                Some(u.path().to_string())
             } else {
-                None
+                Some(target_url.path().to_string())
             };
 
         if let Some(path_str) = extracted_path {
@@ -620,18 +627,87 @@ async fn serve_cloud_proxy_stream_handler(
         }
     }
 
-    resp_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        header::HeaderValue::from_static("*"),
-    );
-    resp_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        header::HeaderValue::from_static("GET, HEAD, OPTIONS"),
-    );
-    resp_headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        header::HeaderValue::from_static("Range, Origin, Content-Type, Accept"),
-    );
-
     Ok(response)
+}
+
+async fn validate_proxy_target(raw: &str) -> Result<reqwest::Url, (StatusCode, String)> {
+    let url = reqwest::Url::parse(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cloud URL: {e}")))?;
+    if url.scheme() != "https"
+        || url.username() != ""
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cloud proxy only accepts credential-free HTTPS URLs on port 443".to_string(),
+        ));
+    }
+    let host = url.host_str().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Cloud proxy URL has no host".to_string(),
+        )
+    })?;
+    let addresses = tokio::net::lookup_host((host, 443)).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Cloud host lookup failed: {e}"),
+        )
+    })?;
+    let mut found = false;
+    for address in addresses {
+        found = true;
+        if !is_public_ip(address.ip()) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Cloud proxy cannot access local or private network addresses".to_string(),
+            ));
+        }
+    }
+    if !found {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "Cloud host did not resolve to an address".to_string(),
+        ));
+    }
+    Ok(url)
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_public_ipv4(mapped);
+            }
+            !ip.is_loopback()
+                && !ip.is_unspecified()
+                && !ip.is_multicast()
+                && !ip.is_unique_local()
+                && !ip.is_unicast_link_local()
+                && !is_ipv6_documentation(ip)
+        }
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    !ip.is_private()
+        && !ip.is_loopback()
+        && !ip.is_link_local()
+        && !ip.is_broadcast()
+        && !ip.is_documentation()
+        && !ip.is_unspecified()
+        && !ip.is_multicast()
+        && octets[0] != 0
+        && !(octets[0] == 100 && (64..=127).contains(&octets[1]))
+        && !(octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+        && !(octets[0] == 198 && (18..=19).contains(&octets[1]))
+        && octets[0] < 240
+}
+
+fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    segments[0] == 0x2001 && segments[1] == 0x0db8
 }

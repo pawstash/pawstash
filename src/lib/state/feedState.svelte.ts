@@ -11,7 +11,7 @@ import { providerState } from './providerState.svelte';
 
 const PAGE_SIZE = 50;
 export type FeedMode = 'recent' | 'popular';
-export type PopularPeriod = 'day' | 'week' | 'month';
+export type PopularPeriod = string;
 
 interface FeedBucket {
   posts: Post[];
@@ -87,7 +87,7 @@ export class FeedState {
   filteredPosts = $derived(
     this.posts.filter((post) => {
       if (Object.keys(this.providerFilters).length > 0) {
-        const postProvider = (post.extra as any)?.provider_id || providerState.getProviderIdForService(post.service);
+        const postProvider = (post as any).provider_id || (post.extra as any)?.provider_id || providerState.getProviderIdForService(post.service);
         const matchesProvider = matchesTriStateFilter([postProvider], this.providerFilters);
         if (!matchesProvider) return false;
       }
@@ -183,7 +183,6 @@ export class FeedState {
     bucket.error = null;
 
     try {
-      // 1. Direct Hash Search Detection (SHA256/SHA1/MD5)
       const isCryptoHash = /^[a-fA-F0-9]{32,64}$/.test(query);
       if (isCryptoHash && reset) {
         try {
@@ -221,7 +220,6 @@ export class FeedState {
         } catch {}
       }
 
-      // 2. Keyword Search with optional AI filter directive
       let effectiveQuery = query;
       if (this.aiFilter === 'exclude') {
         effectiveQuery = `${query} hide=ai`;
@@ -234,7 +232,7 @@ export class FeedState {
       const nextPosts = reset ? posts : [...bucket.posts, ...posts];
       bucket.posts = [...new Map(nextPosts.map((post) => [`${post.service}:${post.user}:${post.id}`, post])).values()];
       bucket.offset = offset + PAGE_SIZE;
-      bucket.hasMore = posts.length === PAGE_SIZE;
+      bucket.hasMore = posts.length >= PAGE_SIZE;
       bucket.loaded = true;
     } catch (error) {
       if (requestId === bucket.requestId) {
@@ -288,7 +286,7 @@ export class FeedState {
       const nextPosts = reset ? posts : [...bucket.posts, ...posts];
       bucket.posts = [...new Map(nextPosts.map((post) => [`${post.service}:${post.user}:${post.id}`, post])).values()];
       bucket.offset = offset + PAGE_SIZE;
-      bucket.hasMore = posts.length === PAGE_SIZE;
+      bucket.hasMore = posts.length >= PAGE_SIZE;
       bucket.loaded = true;
       logger.info(`[Feed] Fetched ${posts.length} posts (mode: ${mode}, offset: ${offset})`);
     } catch (error) {

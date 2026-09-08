@@ -525,7 +525,6 @@
   let wheelNavThrottle = 0;
 
   function handleWheel(event: WheelEvent) {
-    // 1. Pinch or Ctrl+Wheel or when zoomed in -> Zoom image
     if (current?.kind === 'image' && (event.ctrlKey || scale > MIN_SCALE)) {
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.002);
@@ -534,7 +533,6 @@
       return;
     }
 
-    // 2. Trackpad horizontal swipe, Shift+Wheel or mouse horizontal tilt -> Navigate media
     if (scale <= MIN_SCALE + 0.05 && items.length > 1) {
       const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : (event.shiftKey ? event.deltaY : 0);
       if (Math.abs(delta) > 25) {
@@ -549,7 +547,6 @@
       }
     }
 
-    // 3. Normal vertical wheel on image -> Zoom
     if (current?.kind === 'image') {
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.0015);

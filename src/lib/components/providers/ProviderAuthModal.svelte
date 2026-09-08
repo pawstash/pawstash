@@ -141,7 +141,7 @@
 {#snippet authContent()}
   {#if step === 'login'}
     {#if errorMessage}
-      <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+      <div class="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
         <IconDismiss class="w-4 h-4 shrink-0" />
         <span>{errorMessage}</span>
       </div>
@@ -178,7 +178,7 @@
     </p>
 
     {#if errorMessage}
-      <div class="mx-2.5 mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+      <div class="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
         <IconDismiss class="w-4 h-4 shrink-0" />
         <span>{errorMessage}</span>
       </div>

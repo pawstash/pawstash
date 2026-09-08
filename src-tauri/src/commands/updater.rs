@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::Emitter;
 use tokio::io::AsyncWriteExt;
 
 const GITHUB_REPO: &str = "pawstash/pawstash";
+const MAX_UPDATE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const USER_AGENT: &str = concat!(
     "Pawstash/",
     env!("CARGO_PKG_VERSION"),
@@ -15,6 +17,8 @@ pub struct ReleaseAsset {
     pub browser_download_url: String,
     pub size: u64,
     pub content_type: Option<String>,
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,28 +76,12 @@ fn strip_redundant_release_heading(body: &str) -> String {
 #[tauri::command]
 pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases");
-
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
-    let response = client
-        .get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch releases from GitHub: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("GitHub API returned status: {}", response.status()));
-    }
-
-    let releases: Vec<GitHubRelease> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse GitHub releases response: {e}"))?;
+    let releases = fetch_releases(&client).await?;
 
     let is_current_prerelease = current_version.contains('-');
     let allow_prereleases = include_prereleases || is_current_prerelease;
@@ -214,9 +202,7 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
                 }
             }
             let pkg = crate::db::storage::android_package_name();
-            Ok(std::path::PathBuf::from(format!(
-                "/data/data/{pkg}/cache",
-            )))
+            Ok(std::path::PathBuf::from(format!("/data/data/{pkg}/cache",)))
         }) {
             return Ok(path);
         }
@@ -242,8 +228,8 @@ pub async fn download_and_install_update(
 ) -> Result<(), String> {
     let parsed_url =
         reqwest::Url::parse(&download_url).map_err(|e| format!("Invalid download URL: {e}"))?;
-    if parsed_url.scheme() != "https" {
-        return Err("Only HTTPS download URLs are permitted".to_string());
+    if !is_official_asset_url(&parsed_url) {
+        return Err("Update URL is not an official Pawstash release asset".to_string());
     }
 
     let temp_dir = get_update_temp_dir()?;
@@ -259,11 +245,39 @@ pub async fn download_and_install_update(
 
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .no_gzip()
         .build()
         .map_err(|e| format!("HTTP Client error: {e}"))?;
 
+    let releases = fetch_releases(&client).await?;
+    let current_version = env!("CARGO_PKG_VERSION");
+    let verified_asset = releases
+        .iter()
+        .filter(|release| is_version_newer(&release.tag_name, current_version))
+        .find_map(|release| {
+            let platform_asset = find_platform_asset_ref(&release.assets)?;
+            (platform_asset.name == safe_name
+                && platform_asset.browser_download_url == download_url)
+                .then_some(platform_asset)
+        })
+        .ok_or_else(|| {
+            "Update asset is not the current platform asset from a newer Pawstash release"
+                .to_string()
+        })?;
+
+    if verified_asset.size == 0 || verified_asset.size > MAX_UPDATE_BYTES {
+        return Err("Update asset has an invalid declared size".to_string());
+    }
+    let expected_digest = verified_asset
+        .digest
+        .as_deref()
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or_else(|| "GitHub did not provide a valid SHA-256 digest for this asset".to_string())?
+        .to_lowercase();
+
     let response = client
-        .get(parsed_url)
+        .get(parsed_url.clone())
         .send()
         .await
         .map_err(|e| format!("Download request failed: {e}"))?;
@@ -275,7 +289,14 @@ pub async fn download_and_install_update(
         ));
     }
 
-    let total_bytes = response.content_length().unwrap_or(0);
+    let total_bytes = verified_asset.size;
+    if let Some(response_size) = response.content_length() {
+        if response_size != total_bytes {
+            return Err(format!(
+                "Update size differs from GitHub release metadata: expected {total_bytes}, got {response_size}"
+            ));
+        }
+    }
     let mut file = tokio::fs::File::create(&target_path)
         .await
         .map_err(|e| format!("Failed to create temp update file: {e}"))?;
@@ -284,6 +305,7 @@ pub async fn download_and_install_update(
     let mut downloaded_bytes: u64 = 0;
     let mut last_emit = std::time::Instant::now();
     let mut last_bytes: u64 = 0;
+    let mut hasher = Sha256::new();
 
     while let Some(chunk_res) = futures_util::StreamExt::next(&mut stream).await {
         let chunk = chunk_res.map_err(|e| format!("Error during stream chunk read: {e}"))?;
@@ -292,6 +314,10 @@ pub async fn download_and_install_update(
             .map_err(|e| format!("Failed to write chunk: {e}"))?;
 
         downloaded_bytes += chunk.len() as u64;
+        if downloaded_bytes > total_bytes {
+            return Err("Downloaded update exceeds its declared size".to_string());
+        }
+        hasher.update(&chunk);
 
         if last_emit.elapsed().as_millis() >= 100
             || (total_bytes > 0 && downloaded_bytes >= total_bytes)
@@ -309,7 +335,7 @@ pub async fn download_and_install_update(
                 0.0
             };
 
-            let _ = app_handle.emit(
+            if let Err(error) = app_handle.emit(
                 "update-download-progress",
                 UpdateProgressPayload {
                     downloaded: downloaded_bytes,
@@ -317,7 +343,9 @@ pub async fn download_and_install_update(
                     percentage,
                     speed_bytes_per_sec: speed,
                 },
-            );
+            ) {
+                tracing::warn!("Failed to emit update progress: {error}");
+            }
 
             last_emit = std::time::Instant::now();
             last_bytes = downloaded_bytes;
@@ -332,8 +360,18 @@ pub async fn download_and_install_update(
     let meta = tokio::fs::metadata(&target_path)
         .await
         .map_err(|e| format!("Downloaded file missing: {e}"))?;
-    if meta.len() == 0 {
-        return Err("Downloaded update file is empty (0 bytes)".to_string());
+    if meta.len() != total_bytes {
+        return Err(format!(
+            "Downloaded update size mismatch: expected {total_bytes}, got {}",
+            meta.len()
+        ));
+    }
+    let actual_digest = format!("{:x}", hasher.finalize());
+    if actual_digest != expected_digest {
+        tokio::fs::remove_file(&target_path)
+            .await
+            .map_err(|e| format!("Update checksum failed and cleanup also failed: {e}"))?;
+        return Err("Downloaded update failed SHA-256 verification".to_string());
     }
 
     #[cfg(target_os = "android")]
@@ -454,6 +492,17 @@ fn install_package_android(apk_path: &std::path::Path) -> Result<(), String> {
 }
 
 fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<String>, Option<u64>) {
+    if let Some(asset) = find_platform_asset_ref(assets) {
+        return (
+            Some(asset.browser_download_url.clone()),
+            Some(asset.name.clone()),
+            Some(asset.size),
+        );
+    }
+    (None, None, None)
+}
+
+fn find_platform_asset_ref(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     #[cfg(target_os = "windows")]
     {
         // Priority 1: Setup installer
@@ -463,33 +512,21 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
                 || name.ends_with("_setup.exe")
                 || name == "pawstash-setup.exe"
         }) {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
         // Priority 2: MSI installer
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".msi"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
         // Priority 3: Portable / standalone executable
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".exe"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
     }
 
@@ -499,11 +536,7 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".apk"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
     }
 
@@ -513,21 +546,13 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".dmg"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
         if let Some(asset) = assets.iter().find(|a| {
             a.name.to_lowercase().ends_with(".app.tar.gz")
                 || a.name.to_lowercase().ends_with(".tar.gz")
         }) {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
     }
 
@@ -537,25 +562,46 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
             .iter()
             .find(|a| a.name.ends_with(".AppImage") || a.name.to_lowercase().ends_with(".appimage"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".deb"))
         {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                Some(asset.size),
-            );
+            return Some(asset);
         }
     }
 
-    (None, None, None)
+    None
+}
+
+async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<GitHubRelease>, String> {
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases");
+    let response = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch releases from GitHub: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub API returned status: {}", response.status()));
+    }
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GitHub releases response: {e}"))
+}
+
+fn is_official_asset_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url
+            .path()
+            .starts_with(&format!("/{GITHUB_REPO}/releases/download/"))
 }
 
 fn parse_semver(tag: &str) -> (Vec<u64>, Option<String>) {
@@ -621,8 +667,9 @@ fn is_version_newer(latest: &str, current: &str) -> bool {
 
     match (latest_pre, current_pre) {
         (None, Some(_)) => true,
+        (Some(_), None) => false,
         (Some(l), Some(c)) => compare_prerelease_tokens(&l, &c) == std::cmp::Ordering::Greater,
-        _ => false,
+        (None, None) => false,
     }
 }
 
@@ -664,24 +711,28 @@ mod tests {
                 browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/Pawstash_26.8.1_x64-setup.exe".to_string(),
                 size: 15_000_000,
                 content_type: None,
+                digest: None,
             },
             ReleaseAsset {
                 name: "pawstash_26.8.1_universal.apk".to_string(),
                 browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_universal.apk".to_string(),
                 size: 20_000_000,
                 content_type: None,
+                digest: None,
             },
             ReleaseAsset {
                 name: "Pawstash_26.8.1_universal.dmg".to_string(),
                 browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/Pawstash_26.8.1_universal.dmg".to_string(),
                 size: 18_000_000,
                 content_type: None,
+                digest: None,
             },
             ReleaseAsset {
                 name: "pawstash_26.8.1_amd64.AppImage".to_string(),
                 browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_amd64.AppImage".to_string(),
                 size: 22_000_000,
                 content_type: None,
+                digest: None,
             },
         ];
 

@@ -146,9 +146,11 @@ pub fn run() {
             }
 
             let axum_port = Arc::new(AtomicU16::new(0));
+            let axum_token = uuid::Uuid::new_v4().simple().to_string();
             let server_port = axum_port.clone();
             let media_download_dir = settings.download_dir.clone();
             let server_config_manager = config_manager.clone();
+            let server_token = axum_token.clone();
             tauri::async_runtime::spawn(async move {
                 let mut roots = vec![
                     std::path::PathBuf::from(&media_download_dir),
@@ -177,7 +179,9 @@ pub fn run() {
                     )));
                     roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
                 }
-                if let Ok(server) = MediaServer::start(roots, server_config_manager).await {
+                if let Ok(server) =
+                    MediaServer::start(roots, server_config_manager, server_token).await
+                {
                     server_port.store(server.port, Ordering::Release);
                 }
             });
@@ -204,6 +208,7 @@ pub fn run() {
 
             app.manage(AppState {
                 axum_port,
+                axum_token,
                 provider_manager: provider_manager.clone(),
                 pawchive_client: pawchive_client.clone(),
                 content: content.clone(),
@@ -242,6 +247,8 @@ pub fn run() {
             save_providers,
             test_provider_connection,
             get_provider_auth_schema,
+            get_provider_capabilities,
+            get_active_capabilities,
             save_provider_session,
             login_provider,
             logout_provider_session,

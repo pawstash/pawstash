@@ -2,6 +2,7 @@ import { apiGetAxumPort } from '$lib/utils/ipc';
 
 export class ServerPortState {
   port = $state<number>(0);
+  token = $state<string>('');
   private isInitializing = false;
 
   async init(): Promise<number> {
@@ -11,10 +12,11 @@ export class ServerPortState {
 
     try {
       for (let attempt = 0; attempt < 25; attempt++) {
-        const p = await apiGetAxumPort().catch(() => 0);
-        if (p > 0) {
-          this.port = p;
-          return p;
+        const info = await apiGetAxumPort().catch(() => ({ port: 0, token: '' }));
+        if (info.port > 0 && info.token) {
+          this.port = info.port;
+          this.token = info.token;
+          return info.port;
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
@@ -27,6 +29,13 @@ export class ServerPortState {
   async ensurePort(): Promise<number> {
     if (this.port > 0) return this.port;
     return this.init();
+  }
+
+  mediaUrl(path: string): string {
+    if (this.port <= 0 || !this.token) return '';
+    const url = new URL(path, `http://127.0.0.1:${this.port}`);
+    url.searchParams.set('token', this.token);
+    return url.toString();
   }
 }
 

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ProviderConfig, ProviderHealth, PostRevisionData } from '$lib/types/provider';
+import type { ProviderConfig, ProviderHealth, PostRevisionData, ProviderCapabilities } from '$lib/types/provider';
+import { apiGetProviderCapabilities, apiGetActiveCapabilities } from '$lib/utils/ipc';
 import { getProviderDriver, type ProviderDriver } from '$lib/providers/drivers';
 import { logger } from '$lib/utils/logger';
 
@@ -9,13 +10,29 @@ class ProviderState {
   postRevisions = $state<Record<string, PostRevisionData[]>>({});
   selectedProvider = $state<Record<string, string>>({}); // postKey -> providerId or 'auto'
   selectedRevision = $state<Record<string, number>>({}); // postKey -> revision_id
+  capabilities = $state<Record<string, ProviderCapabilities>>({});
+  activeCapabilities = $state<ProviderCapabilities | null>(null);
   loading = $state(false);
+
+  async loadCapabilities(): Promise<void> {
+    try {
+      const [allCaps, active] = await Promise.all([
+        apiGetProviderCapabilities(),
+        apiGetActiveCapabilities()
+      ]);
+      this.capabilities = allCaps;
+      this.activeCapabilities = active;
+    } catch (e) {
+      logger.error('Failed to load provider capabilities', e);
+    }
+  }
 
   async loadProviders(): Promise<ProviderConfig[]> {
     this.loading = true;
     try {
       const list = await invoke<ProviderConfig[]>('list_providers');
       this.providers = list;
+      await this.loadCapabilities();
       return list;
     } catch (e) {
       logger.error('Failed to load providers', e);
@@ -30,6 +47,7 @@ class ProviderState {
     try {
       await invoke('save_providers', { providers: list });
       this.providers = list;
+      await this.loadCapabilities();
     } catch (e) {
       logger.error('Failed to save providers', e);
       throw e;

@@ -1,9 +1,10 @@
 use super::coomer::CoomerProvider;
 use super::onlyhaven::OnlyHavenProvider;
 use super::pawchive::PawchiveProvider;
+use super::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use super::traits::{
-    default_coomer_services, default_onlyhaven_services, default_pawchive_services,
-    FavoritesSyncResult, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+    FavoritesSyncResult, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema,
+    ProviderCapabilities, ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
@@ -11,6 +12,17 @@ use futures_util::future::join_all;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+fn provider_errors(operation: &str, errors: Vec<String>) -> String {
+    if errors.is_empty() {
+        format!("No provider is configured for {operation}")
+    } else {
+        format!(
+            "All providers failed to fetch {operation}: {}",
+            errors.join("; ")
+        )
+    }
+}
 
 fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, String> {
     let id_lower = config.id.to_lowercase();
@@ -27,6 +39,7 @@ fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, St
 
 pub struct ProviderManager {
     providers: Arc<RwLock<Vec<Arc<dyn SourceProvider>>>>,
+    default_queue: Arc<ProviderRequestQueue>,
 }
 
 impl ProviderManager {
@@ -49,60 +62,26 @@ impl ProviderManager {
 
         Self {
             providers: Arc::new(RwLock::new(list)),
+            default_queue: Arc::new(ProviderRequestQueue::new(
+                "default",
+                ProviderQueueConfig::default(),
+            )),
         }
     }
 
     pub fn default_configs() -> Vec<ProviderConfig> {
         vec![
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://file.pawchive.pw".into()),
-                image_url: Some("https://img.pawchive.pw".into()),
-                file_prefix: Some("file".into()),
-                image_prefix: Some("img".into()),
-                session_cookie: String::new(),
-                username: String::new(),
-                services: default_pawchive_services(),
-                is_custom: false,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: false,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://c1.coomer.st".into()),
-                image_url: Some("https://img.coomer.st".into()),
-                file_prefix: Some("c1".into()),
-                image_prefix: Some("img".into()),
-                session_cookie: String::new(),
-                username: String::new(),
-                services: default_coomer_services(),
-                is_custom: false,
-                priority: 2,
-            },
-            ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: false,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://e1.cum.st".into()),
-                image_url: Some("https://img.cum.st".into()),
-                file_prefix: Some("e1".into()),
-                image_prefix: Some("img".into()),
-                session_cookie: String::new(),
-                username: String::new(),
-                services: default_onlyhaven_services(),
-                is_custom: false,
-                priority: 3,
-            },
+            PawchiveProvider::default_config(),
+            CoomerProvider::default_config(),
+            OnlyHavenProvider::default_config(),
         ]
+    }
+
+    pub fn validate_configs(configs: &[ProviderConfig]) -> Result<(), String> {
+        for config in configs {
+            create_provider(config.clone())?;
+        }
+        Ok(())
     }
 
     pub async fn get_provider_configs(&self) -> Vec<ProviderConfig> {
@@ -151,6 +130,47 @@ impl ProviderManager {
         providers.iter().find(|p| p.config().id == id).cloned()
     }
 
+    pub async fn get_queue_for_url(&self, url: &str) -> Arc<ProviderRequestQueue> {
+        if let Ok(parsed) = reqwest::Url::parse(url) {
+            if let Some(target_host) = parsed.host_str() {
+                let target_host_clean = target_host.trim_start_matches("www.").to_ascii_lowercase();
+                let providers = self.providers.read().await;
+                for p in providers.iter() {
+                    let conf = p.config();
+                    let mut candidate_urls = vec![conf.api_url.clone()];
+                    if let Some(fu) = &conf.file_url {
+                        candidate_urls.push(fu.clone());
+                    }
+                    if let Some(iu) = &conf.image_url {
+                        candidate_urls.push(iu.clone());
+                    }
+                    candidate_urls.extend(conf.fallback_urls.clone());
+
+                    for cand in candidate_urls {
+                        if let Ok(cand_parsed) = reqwest::Url::parse(&cand) {
+                            if let Some(cand_host) = cand_parsed.host_str() {
+                                let cand_host_clean = cand_host
+                                    .trim_start_matches("www.")
+                                    .trim_start_matches("api.")
+                                    .to_ascii_lowercase();
+
+                                if target_host_clean == cand_host_clean
+                                    || target_host_clean.ends_with(&format!(".{cand_host_clean}"))
+                                    || cand_host_clean.ends_with(&format!(".{target_host_clean}"))
+                                {
+                                    if let Some(q) = p.request_queue() {
+                                        return q;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.default_queue.clone()
+    }
+
     pub async fn test_provider_health(&self, id: &str) -> Result<ProviderHealth, String> {
         let provider = self
             .get_provider_by_id(id)
@@ -169,7 +189,7 @@ impl ProviderManager {
             .iter()
             .map(|p| {
                 let p = p.clone();
-                async move { p.fetch_creators().await }
+                async move { (p.id().to_string(), p.fetch_creators().await) }
             })
             .collect();
 
@@ -178,17 +198,54 @@ impl ProviderManager {
         let mut any_success = false;
         let mut last_error = String::new();
 
-        for res in results {
+        for (prov_id, res) in results {
             match res {
                 Ok(creators) => {
                     any_success = true;
-                    for c in creators {
+                    for mut c in creators {
                         let key = format!("{}:{}", c.service.to_lowercase(), c.id.to_lowercase());
+                        c.extra
+                            .entry("provider_id".to_string())
+                            .or_insert_with(|| serde_json::Value::String(prov_id.clone()));
+
                         if let Some(existing) = creators_map.get_mut(&key) {
+                            let max_fav = match (existing.favorited, c.favorited) {
+                                (Some(a), Some(b)) => Some(a.max(b)),
+                                (Some(a), None) => Some(a),
+                                (None, Some(b)) => Some(b),
+                                (None, None) => None,
+                            };
+                            let mut provider_ids: Vec<String> = match existing.extra.get("provider_ids") {
+                                Some(serde_json::Value::Array(arr)) => {
+                                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                                }
+                                _ => {
+                                    let mut pids = Vec::new();
+                                    if let Some(pid) = existing.extra.get("provider_id").and_then(|v| v.as_str()) {
+                                        pids.push(pid.to_string());
+                                    }
+                                    pids
+                                }
+                            };
+                            if !provider_ids.contains(&prov_id) {
+                                provider_ids.push(prov_id.clone());
+                            }
+
                             if c.updated.unwrap_or(0) > existing.updated.unwrap_or(0) {
                                 *existing = c;
                             }
+                            existing.favorited = max_fav;
+                            existing.extra.insert(
+                                "provider_ids".to_string(),
+                                serde_json::Value::Array(
+                                    provider_ids.into_iter().map(serde_json::Value::String).collect(),
+                                ),
+                            );
                         } else {
+                            c.extra.insert(
+                                "provider_ids".to_string(),
+                                serde_json::Value::Array(vec![serde_json::Value::String(prov_id.clone())]),
+                            );
                             creators_map.insert(key, c);
                         }
                     }
@@ -233,14 +290,24 @@ impl ProviderManager {
         creator_id: &str,
     ) -> Result<Vec<CreatorProfile>, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut had_success = false;
+        let mut errors = Vec::new();
         for provider in candidates {
-            if let Ok(links) = provider.fetch_creator_links(service, creator_id).await {
-                if !links.is_empty() {
-                    return Ok(links);
+            match provider.fetch_creator_links(service, creator_id).await {
+                Ok(links) => {
+                    had_success = true;
+                    if !links.is_empty() {
+                        return Ok(links);
+                    }
                 }
+                Err(error) => errors.push(error),
             }
         }
-        Ok(Vec::new())
+        if had_success {
+            Ok(Vec::new())
+        } else {
+            Err(provider_errors("creator links", errors))
+        }
     }
 
     pub async fn fetch_similar_creators(
@@ -249,14 +316,24 @@ impl ProviderManager {
         creator_id: &str,
     ) -> Result<Vec<CreatorProfile>, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut had_success = false;
+        let mut errors = Vec::new();
         for provider in candidates {
-            if let Ok(similar) = provider.fetch_similar_creators(service, creator_id).await {
-                if !similar.is_empty() {
-                    return Ok(similar);
+            match provider.fetch_similar_creators(service, creator_id).await {
+                Ok(similar) => {
+                    had_success = true;
+                    if !similar.is_empty() {
+                        return Ok(similar);
+                    }
                 }
+                Err(error) => errors.push(error),
             }
         }
-        Ok(Vec::new())
+        if had_success {
+            Ok(Vec::new())
+        } else {
+            Err(provider_errors("similar creators", errors))
+        }
     }
 
     pub async fn fetch_creator_tags(
@@ -265,14 +342,24 @@ impl ProviderManager {
         creator_id: &str,
     ) -> Result<Vec<String>, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut had_success = false;
+        let mut errors = Vec::new();
         for provider in candidates {
-            if let Ok(tags) = provider.fetch_creator_tags(service, creator_id).await {
-                if !tags.is_empty() {
-                    return Ok(tags);
+            match provider.fetch_creator_tags(service, creator_id).await {
+                Ok(tags) => {
+                    had_success = true;
+                    if !tags.is_empty() {
+                        return Ok(tags);
+                    }
                 }
+                Err(error) => errors.push(error),
             }
         }
-        Ok(Vec::new())
+        if had_success {
+            Ok(Vec::new())
+        } else {
+            Err(provider_errors("creator tags", errors))
+        }
     }
 
     pub async fn fetch_announcements(
@@ -281,14 +368,24 @@ impl ProviderManager {
         creator_id: &str,
     ) -> Result<Vec<Announcement>, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut had_success = false;
+        let mut errors = Vec::new();
         for provider in candidates {
-            if let Ok(items) = provider.fetch_announcements(service, creator_id).await {
-                if !items.is_empty() {
-                    return Ok(items);
+            match provider.fetch_announcements(service, creator_id).await {
+                Ok(items) => {
+                    had_success = true;
+                    if !items.is_empty() {
+                        return Ok(items);
+                    }
                 }
+                Err(error) => errors.push(error),
             }
         }
-        Ok(Vec::new())
+        if had_success {
+            Ok(Vec::new())
+        } else {
+            Err(provider_errors("announcements", errors))
+        }
     }
 
     pub async fn fetch_posts(
@@ -361,17 +458,27 @@ impl ProviderManager {
         post_id: &str,
     ) -> Result<Vec<PostRevision>, String> {
         let candidates = self.get_providers_for_service(service).await;
+        let mut all_revs = Vec::new();
+        let mut seen_keys = std::collections::HashSet::new();
         for provider in candidates {
+            let pid = provider.config().id.clone();
             if let Ok(revs) = provider
                 .fetch_post_revisions(service, creator_id, post_id)
                 .await
             {
-                if !revs.is_empty() {
-                    return Ok(revs);
+                for mut r in revs {
+                    r.post
+                        .extra
+                        .entry("provider_id".to_string())
+                        .or_insert_with(|| serde_json::Value::String(pid.clone()));
+                    let key = (pid.clone(), r.revision_id);
+                    if seen_keys.insert(key) {
+                        all_revs.push(r);
+                    }
                 }
             }
         }
-        Ok(Vec::new())
+        Ok(all_revs)
     }
 
     pub async fn fetch_recent_posts(
@@ -616,6 +723,135 @@ impl ProviderManager {
         }
     }
 
+    pub async fn get_provider_capabilities(&self) -> HashMap<String, ProviderCapabilities> {
+        let providers = self.providers.read().await;
+        let mut map = HashMap::new();
+        for p in providers.iter() {
+            map.insert(p.id().to_string(), p.capabilities());
+        }
+        map
+    }
+
+    pub async fn get_active_capabilities(&self) -> ProviderCapabilities {
+        let enabled = self.get_all_enabled_providers().await;
+        if enabled.is_empty() {
+            return ProviderCapabilities {
+                provider_id: "none".to_string(),
+                popular: PopularCapabilities {
+                    supported: false,
+                    periods: Vec::new(),
+                    default_period: None,
+                    supports_date: false,
+                },
+                creator_sorts: Vec::new(),
+                post_sorts: Vec::new(),
+                supports_query_search: false,
+                supports_date_filter: false,
+                supports_hash_search: false,
+                supports_announcements: false,
+                supports_fancards: false,
+                supports_similar_creators: false,
+                supports_creator_tags: false,
+            };
+        }
+
+        if enabled.len() == 1 {
+            return enabled[0].capabilities();
+        }
+
+        let caps: Vec<ProviderCapabilities> = enabled.iter().map(|p| p.capabilities()).collect();
+
+        let popular_supported = caps.iter().any(|c| c.popular.supported);
+        let mut common_periods: Vec<PopularPeriodOption> = Vec::new();
+        let mut default_period = None;
+        let mut supports_date = false;
+
+        if popular_supported {
+            let pop_caps: Vec<&PopularCapabilities> = caps
+                .iter()
+                .filter(|c| c.popular.supported)
+                .map(|c| &c.popular)
+                .collect();
+
+            if let Some(first) = pop_caps.first() {
+                for period in &first.periods {
+                    if pop_caps
+                        .iter()
+                        .all(|c| c.periods.iter().any(|p| p.id == period.id))
+                    {
+                        common_periods.push(period.clone());
+                    }
+                }
+                default_period = common_periods.first().map(|p| p.id.clone());
+            }
+
+            supports_date = pop_caps.iter().all(|c| c.supports_date);
+        }
+
+        let mut common_creator_sorts: Vec<SortOption> = Vec::new();
+        if let Some(first) = caps.first() {
+            for sort in &first.creator_sorts {
+                if caps
+                    .iter()
+                    .all(|c| c.creator_sorts.iter().any(|s| s.id == sort.id))
+                {
+                    let is_server_side = caps.iter().all(|c| {
+                        c.creator_sorts
+                            .iter()
+                            .find(|s| s.id == sort.id)
+                            .is_some_and(|s| s.is_server_side)
+                    });
+                    common_creator_sorts.push(SortOption {
+                        id: sort.id.clone(),
+                        label_key: sort.label_key.clone(),
+                        is_server_side,
+                    });
+                }
+            }
+        }
+
+        let mut common_post_sorts: Vec<SortOption> = Vec::new();
+        if let Some(first) = caps.first() {
+            for sort in &first.post_sorts {
+                if caps
+                    .iter()
+                    .all(|c| c.post_sorts.iter().any(|s| s.id == sort.id))
+                {
+                    let is_server_side = caps.iter().all(|c| {
+                        c.post_sorts
+                            .iter()
+                            .find(|s| s.id == sort.id)
+                            .is_some_and(|s| s.is_server_side)
+                    });
+                    common_post_sorts.push(SortOption {
+                        id: sort.id.clone(),
+                        label_key: sort.label_key.clone(),
+                        is_server_side,
+                    });
+                }
+            }
+        }
+
+        ProviderCapabilities {
+            provider_id: "aggregated".to_string(),
+            popular: PopularCapabilities {
+                supported: popular_supported,
+                periods: common_periods,
+                default_period,
+                supports_date,
+            },
+            creator_sorts: common_creator_sorts,
+            post_sorts: common_post_sorts,
+            supports_query_search: caps.iter().all(|c| c.supports_query_search),
+            supports_date_filter: caps.iter().all(|c| c.supports_date_filter),
+            supports_hash_search: caps.iter().any(|c| c.supports_hash_search),
+            supports_announcements: caps.iter().any(|c| c.supports_announcements),
+            supports_fancards: caps.iter().any(|c| c.supports_fancards),
+            supports_similar_creators: caps.iter().any(|c| c.supports_similar_creators),
+            supports_creator_tags: caps.iter().any(|c| c.supports_creator_tags),
+        }
+    }
+
     pub async fn save_provider_session(
         &self,
         provider_id: &str,
@@ -729,7 +965,6 @@ impl ProviderManager {
             conf.id.clone()
         };
 
-        // 1. Pull from remote to local
         if direction == "pull" || direction == "both" {
             match provider.fetch_account_favorites(None).await {
                 Ok(remote_favs) => {
@@ -788,7 +1023,6 @@ impl ProviderManager {
             }
         }
 
-        // 2. Push from local to remote (with 100ms throttle to prevent HTTP 429)
         if direction == "push" || direction == "both" {
             let local_creators = content_repo
                 .list_favorites("artist", &account_id)
@@ -867,6 +1101,9 @@ impl ProviderManager {
         server: Option<&str>,
         provider_id: Option<&str>,
     ) -> String {
+        if file_path.starts_with("http://") || file_path.starts_with("https://") {
+            return file_path.to_string();
+        }
         if let Some(id) = provider_id {
             if let Some(p) = self.get_provider_by_id(id).await {
                 return p.resolve_media_url(file_path, server);
@@ -882,16 +1119,25 @@ impl ProviderManager {
             } else if let Some(first) = self.providers.read().await.first() {
                 first.resolve_media_url(file_path, server)
             } else {
-                let clean = file_path
-                    .trim_start_matches('/')
-                    .trim_start_matches("data/")
-                    .trim_start_matches('/');
-                format!("https://file.pawchive.pw/data/{clean}")
+                let confs = Self::default_configs();
+                let config = confs
+                    .into_iter()
+                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
+                    .or_else(|| Self::default_configs().into_iter().next());
+                if let Some(cfg) = config {
+                    if let Ok(prov) = create_provider(cfg) {
+                        return prov.resolve_media_url(file_path, server);
+                    }
+                }
+                String::new()
             }
         }
     }
 
     pub async fn resolve_thumbnail_url(&self, service: &str, thumb_path: &str) -> String {
+        if thumb_path.starts_with("http://") || thumb_path.starts_with("https://") {
+            return thumb_path.to_string();
+        }
         let candidates = self.get_providers_for_service(service).await;
         if let Some(first) = candidates.first() {
             first.resolve_thumbnail_url(thumb_path)
@@ -902,11 +1148,90 @@ impl ProviderManager {
             } else if let Some(first) = self.providers.read().await.first() {
                 first.resolve_thumbnail_url(thumb_path)
             } else {
-                let clean = thumb_path
-                    .trim_start_matches('/')
-                    .trim_start_matches("data/")
-                    .trim_start_matches('/');
-                format!("https://img.pawchive.pw/thumbnail/data/{clean}")
+                let confs = Self::default_configs();
+                let config = confs
+                    .into_iter()
+                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
+                    .or_else(|| Self::default_configs().into_iter().next());
+                if let Some(cfg) = config {
+                    if let Ok(prov) = create_provider(cfg) {
+                        return prov.resolve_thumbnail_url(thumb_path);
+                    }
+                }
+                String::new()
+            }
+        }
+    }
+
+    pub async fn resolve_post_url(
+        &self,
+        service: &str,
+        creator_id: &str,
+        post_id: &str,
+        provider_id: Option<&str>,
+    ) -> String {
+        if let Some(id) = provider_id {
+            if let Some(p) = self.get_provider_by_id(id).await {
+                return p.resolve_post_url(service, creator_id, post_id);
+            }
+        }
+        let candidates = self.get_providers_for_service(service).await;
+        if let Some(first) = candidates.first() {
+            first.resolve_post_url(service, creator_id, post_id)
+        } else {
+            let enabled = self.get_all_enabled_providers().await;
+            if let Some(first) = enabled.first() {
+                first.resolve_post_url(service, creator_id, post_id)
+            } else if let Some(first) = self.providers.read().await.first() {
+                first.resolve_post_url(service, creator_id, post_id)
+            } else {
+                let confs = Self::default_configs();
+                let config = confs
+                    .into_iter()
+                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
+                    .or_else(|| Self::default_configs().into_iter().next());
+                if let Some(cfg) = config {
+                    if let Ok(prov) = create_provider(cfg) {
+                        return prov.resolve_post_url(service, creator_id, post_id);
+                    }
+                }
+                String::new()
+            }
+        }
+    }
+
+    pub async fn resolve_creator_url(
+        &self,
+        service: &str,
+        creator_id: &str,
+        provider_id: Option<&str>,
+    ) -> String {
+        if let Some(id) = provider_id {
+            if let Some(p) = self.get_provider_by_id(id).await {
+                return p.resolve_creator_url(service, creator_id);
+            }
+        }
+        let candidates = self.get_providers_for_service(service).await;
+        if let Some(first) = candidates.first() {
+            first.resolve_creator_url(service, creator_id)
+        } else {
+            let enabled = self.get_all_enabled_providers().await;
+            if let Some(first) = enabled.first() {
+                first.resolve_creator_url(service, creator_id)
+            } else if let Some(first) = self.providers.read().await.first() {
+                first.resolve_creator_url(service, creator_id)
+            } else {
+                let confs = Self::default_configs();
+                let config = confs
+                    .into_iter()
+                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
+                    .or_else(|| Self::default_configs().into_iter().next());
+                if let Some(cfg) = config {
+                    if let Ok(prov) = create_provider(cfg) {
+                        return prov.resolve_creator_url(service, creator_id);
+                    }
+                }
+                String::new()
             }
         }
     }
@@ -1100,5 +1425,506 @@ mod tests {
         let fansly_providers = manager.get_providers_for_service("fansly").await;
         assert_eq!(fansly_providers.len(), 1);
         assert_eq!(fansly_providers[0].id(), "coomer");
+    }
+
+    #[test]
+    fn test_create_provider_distinct_types() {
+        let coomer_cfg = ProviderConfig {
+            id: "coomer".into(),
+            name: "Coomer".into(),
+            enabled: true,
+            api_url: "https://coomer.st".into(),
+            fallback_urls: vec![],
+            file_url: None,
+            image_url: None,
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["onlyfans".into()],
+            is_custom: false,
+            priority: 1,
+        };
+        let coomer_prov = create_provider(coomer_cfg).unwrap();
+        assert_eq!(coomer_prov.id(), "coomer");
+        assert_eq!(coomer_prov.name(), "Coomer");
+        assert!(!coomer_prov.auth_schema().supports_remote_favorites);
+
+        let oh_cfg = ProviderConfig {
+            id: "onlyhaven".into(),
+            name: "OnlyHaven".into(),
+            enabled: true,
+            api_url: "https://cum.st".into(),
+            fallback_urls: vec![],
+            file_url: None,
+            image_url: None,
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["fansly".into()],
+            is_custom: false,
+            priority: 2,
+        };
+        let oh_prov = create_provider(oh_cfg).unwrap();
+        assert_eq!(oh_prov.id(), "onlyhaven");
+        assert_eq!(oh_prov.name(), "OnlyHaven");
+
+        let paw_cfg = ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: None,
+            image_url: None,
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["patreon".into()],
+            is_custom: false,
+            priority: 3,
+        };
+        let paw_prov = create_provider(paw_cfg).unwrap();
+        assert_eq!(paw_prov.id(), "pawchive");
+        assert_eq!(paw_prov.name(), "Pawchive");
+        assert!(paw_prov.auth_schema().supports_remote_favorites);
+    }
+
+    #[tokio::test]
+    async fn test_manager_multi_provider_priority_and_filtering() {
+        let configs = vec![
+            ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: true,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 1,
+            },
+            ProviderConfig {
+                id: "onlyhaven".into(),
+                name: "OnlyHaven".into(),
+                enabled: true,
+                api_url: "https://cum.st".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 2,
+            },
+            ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: true,
+                api_url: "https://pawchive.pw".into(),
+                fallback_urls: vec![],
+                file_url: None,
+                image_url: None,
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into(), "fanbox".into()],
+                is_custom: false,
+                priority: 3,
+            },
+        ];
+        let manager = ProviderManager::new(configs);
+
+        let of_providers = manager.get_providers_for_service("onlyfans").await;
+        assert_eq!(of_providers.len(), 2);
+        assert_eq!(of_providers[0].id(), "coomer");
+        assert_eq!(of_providers[1].id(), "onlyhaven");
+
+        let patreon_providers = manager.get_providers_for_service("patreon").await;
+        assert_eq!(patreon_providers.len(), 1);
+        assert_eq!(patreon_providers[0].id(), "pawchive");
+
+        let unknown = manager.get_providers_for_service("gumroad").await;
+        assert!(unknown.is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_manager_multi_provider_contracts() {
+        let configs = vec![
+            ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: true,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://c1.coomer.st".into()),
+                image_url: Some("https://img.coomer.st".into()),
+                file_prefix: Some("c1".into()),
+                image_prefix: Some("img".into()),
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 1,
+            },
+            ProviderConfig {
+                id: "onlyhaven".into(),
+                name: "OnlyHaven".into(),
+                enabled: true,
+                api_url: "https://cum.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://e1.cum.st".into()),
+                image_url: Some("https://img.cum.st".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 2,
+            },
+            ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: true,
+                api_url: "https://pawchive.pw".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://file.pawchive.pw".into()),
+                image_url: Some("https://img.pawchive.pw".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into(), "fanbox".into()],
+                is_custom: false,
+                priority: 3,
+            },
+        ];
+        let manager = ProviderManager::new(configs);
+
+        let coomer_health = manager.test_provider_health("coomer").await.unwrap();
+        assert!(
+            coomer_health.is_healthy,
+            "Coomer health failed: {:?}",
+            coomer_health.error
+        );
+
+        let onlyhaven_health = manager.test_provider_health("onlyhaven").await.unwrap();
+        assert!(
+            onlyhaven_health.is_healthy,
+            "OnlyHaven health failed: {:?}",
+            onlyhaven_health.error
+        );
+
+        let pawchive_health = manager.test_provider_health("pawchive").await.unwrap();
+        assert!(
+            pawchive_health.is_healthy,
+            "Pawchive health failed: {:?}",
+            pawchive_health.error
+        );
+
+        let of_profile = manager
+            .fetch_creator_profile("onlyfans", "prettykitttt")
+            .await
+            .unwrap();
+        assert_eq!(of_profile.id, "prettykitttt");
+
+        let patreon_profile = manager
+            .fetch_creator_profile("patreon", "3340149")
+            .await
+            .unwrap();
+        assert_eq!(patreon_profile.id, "3340149");
+
+        let recent = manager.fetch_recent_posts(None, 0).await.unwrap();
+        assert!(!recent.is_empty(), "Manager recent feed returned 0 posts");
+
+        let recent_paged = manager.fetch_recent_posts(None, 50).await.unwrap();
+        assert!(
+            !recent_paged.is_empty(),
+            "Manager recent paged returned 0 posts"
+        );
+
+        let recent_queried = manager.fetch_recent_posts(Some("cat"), 0).await.unwrap();
+        assert!(
+            !recent_queried.is_empty(),
+            "Manager recent query returned 0 posts"
+        );
+
+        let popular = manager.fetch_popular_posts("day", None, 0).await.unwrap();
+        assert!(!popular.is_empty(), "Manager popular feed returned 0 posts");
+        for window in popular.windows(2) {
+            let fav_a = window[0].favorite_count.unwrap_or(0);
+            let fav_b = window[1].favorite_count.unwrap_or(0);
+            assert!(
+                fav_a >= fav_b,
+                "Popular feed not sorted by favorites descending: {fav_a} < {fav_b}"
+            );
+        }
+
+        let of_post = manager
+            .fetch_post("onlyfans", "prettykitttt", "366178580")
+            .await
+            .unwrap();
+        assert!(
+            of_post.is_some(),
+            "Manager failed to fetch Coomer post 366178580"
+        );
+        assert_eq!(of_post.unwrap().post.id, "366178580");
+
+        let patreon_post = manager
+            .fetch_post("patreon", "3340149", "142680139")
+            .await
+            .unwrap();
+        assert!(
+            patreon_post.is_some(),
+            "Manager failed to fetch Pawchive post 142680139"
+        );
+        assert_eq!(patreon_post.unwrap().post.id, "142680139");
+
+        let non_existent = manager
+            .fetch_post("patreon", "3340149", "999999999999999")
+            .await
+            .unwrap();
+        assert!(
+            non_existent.is_none(),
+            "Manager non-existent post returned Some"
+        );
+
+        let comments = manager
+            .fetch_post_comments("fanbox", "6570768", "1836570")
+            .await
+            .unwrap();
+        assert!(!comments.is_empty(), "Manager comments returned 0 items");
+
+        let revisions = manager
+            .fetch_post_revisions("patreon", "3340149", "142680139")
+            .await
+            .unwrap();
+        let _ = revisions;
+
+        let coomer_media = manager
+            .resolve_media_url("onlyfans", "/data/aa/bb/c.mp4", None, Some("coomer"))
+            .await;
+        assert!(coomer_media.starts_with("https://c1.coomer.st/data/"));
+
+        let pawchive_media = manager
+            .resolve_media_url("patreon", "/data/aa/bb/c.mp4", None, Some("pawchive"))
+            .await;
+        assert!(pawchive_media.starts_with("https://file.pawchive.pw/data/"));
+
+        let onlyhaven_media = manager
+            .resolve_media_url(
+                "fansly",
+                "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2",
+                None,
+                Some("onlyhaven"),
+            )
+            .await;
+        assert!(onlyhaven_media.starts_with("https://e1.cum.st/media/"));
+    }
+
+    #[tokio::test]
+    async fn live_capabilities_and_coomer_popular_periods() {
+        let configs = vec![
+            ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: true,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://c1.coomer.st".into()),
+                image_url: Some("https://img.coomer.st".into()),
+                file_prefix: Some("c1".into()),
+                image_prefix: Some("img".into()),
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 1,
+            },
+            ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: true,
+                api_url: "https://pawchive.pw".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://file.pawchive.pw".into()),
+                image_url: Some("https://img.pawchive.pw".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into(), "fanbox".into()],
+                is_custom: false,
+                priority: 2,
+            },
+            ProviderConfig {
+                id: "onlyhaven".into(),
+                name: "OnlyHaven".into(),
+                enabled: true,
+                api_url: "https://cum.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://e1.cum.st".into()),
+                image_url: Some("https://img.cum.st".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into(), "fansly".into()],
+                is_custom: false,
+                priority: 3,
+            },
+        ];
+        let manager = ProviderManager::new(configs);
+
+        let all_caps = manager.get_provider_capabilities().await;
+        let coomer_cap = all_caps.get("coomer").unwrap();
+        assert!(coomer_cap.popular.supported);
+        assert_eq!(coomer_cap.popular.periods.len(), 4);
+        assert!(coomer_cap.popular.periods.iter().any(|p| p.id == "recent"));
+        assert!(coomer_cap.popular.supports_date);
+
+        let pawchive_cap = all_caps.get("pawchive").unwrap();
+        assert!(pawchive_cap.popular.supported);
+        assert_eq!(pawchive_cap.popular.periods.len(), 5);
+        assert!(pawchive_cap.popular.periods.iter().any(|p| p.id == "all"));
+        assert!(pawchive_cap.popular.supports_date);
+
+        let onlyhaven_cap = all_caps.get("onlyhaven").unwrap();
+        assert!(onlyhaven_cap.popular.supported);
+        assert_eq!(onlyhaven_cap.popular.periods.len(), 3);
+        assert!(onlyhaven_cap.popular.supports_date);
+
+        let active_cap = manager.get_active_capabilities().await;
+        assert!(active_cap.popular.supported);
+        assert_eq!(active_cap.popular.periods.len(), 3);
+        let period_ids: Vec<&str> = active_cap
+            .popular
+            .periods
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(period_ids, vec!["day", "week", "month"]);
+        assert!(active_cap.popular.supports_date);
+
+        let coomer_provider = manager.get_provider_by_id("coomer").await.unwrap();
+
+        let popular_week = coomer_provider
+            .fetch_popular_posts("week", None, 0)
+            .await
+            .unwrap();
+        assert!(
+            !popular_week.is_empty(),
+            "Coomer popular week returned 0 posts"
+        );
+
+        let popular_recent = coomer_provider
+            .fetch_popular_posts("recent", None, 0)
+            .await
+            .unwrap();
+        assert!(
+            !popular_recent.is_empty(),
+            "Coomer popular recent returned 0 posts"
+        );
+
+        let popular_date = coomer_provider
+            .fetch_popular_posts("day", Some("2025-01-01"), 0)
+            .await
+            .unwrap();
+        assert!(
+            !popular_date.is_empty(),
+            "Coomer popular with date returned 0 posts"
+        );
+
+        let onlyhaven_provider = manager.get_provider_by_id("onlyhaven").await.unwrap();
+        let oh_popular_week = onlyhaven_provider
+            .fetch_popular_posts("week", None, 0)
+            .await
+            .unwrap();
+        assert!(
+            !oh_popular_week.is_empty(),
+            "OnlyHaven popular week returned 0 posts"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_queue_for_url_dynamic_routing() {
+        let configs = vec![
+            ProviderConfig {
+                id: "pawchive".into(),
+                name: "Pawchive".into(),
+                enabled: true,
+                api_url: "https://my-custom-pawchive.org".into(),
+                fallback_urls: vec!["https://mirror-pawchive.net".into()],
+                file_url: Some("https://file.custom-pawchive.org".into()),
+                image_url: Some("https://img.custom-pawchive.org".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["patreon".into()],
+                is_custom: true,
+                priority: 1,
+            },
+            ProviderConfig {
+                id: "coomer".into(),
+                name: "Coomer".into(),
+                enabled: true,
+                api_url: "https://coomer.st".into(),
+                fallback_urls: vec![],
+                file_url: Some("https://c1.coomer.st".into()),
+                image_url: Some("https://img.coomer.st".into()),
+                file_prefix: None,
+                image_prefix: None,
+                session_cookie: "".into(),
+                username: "".into(),
+                services: vec!["onlyfans".into()],
+                is_custom: false,
+                priority: 2,
+            },
+        ];
+        let manager = ProviderManager::new(configs);
+
+        let q1 = manager
+            .get_queue_for_url("https://file.custom-pawchive.org/data/aa/bb/image.jpg")
+            .await;
+        let pawchive_prov = manager.get_provider_by_id("pawchive").await.unwrap();
+        assert_eq!(
+            q1.provider_id(),
+            pawchive_prov.request_queue().unwrap().provider_id()
+        );
+
+        let q2 = manager
+            .get_queue_for_url("https://mirror-pawchive.net/api/v1/posts")
+            .await;
+        assert_eq!(
+            q2.provider_id(),
+            pawchive_prov.request_queue().unwrap().provider_id()
+        );
+
+        let q3 = manager
+            .get_queue_for_url("https://c1.coomer.st/data/11/22/video.mp4")
+            .await;
+        let coomer_prov = manager.get_provider_by_id("coomer").await.unwrap();
+        assert_eq!(
+            q3.provider_id(),
+            coomer_prov.request_queue().unwrap().provider_id()
+        );
+
+        let q4 = manager
+            .get_queue_for_url("https://unknown-third-party.com/file.zip")
+            .await;
+        assert_eq!(q4.provider_id(), "default");
     }
 }

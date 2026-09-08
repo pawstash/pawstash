@@ -15,14 +15,14 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiGetAxumPort, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
   import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, getPlatformPostUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, getPlatformPostUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
@@ -146,9 +146,23 @@
       : providerState.getSelectedProvider(service, creatorId, postId)
   );
 
+  let filteredRevisions = $derived.by(() => {
+    if (!activeProviderId || activeProviderId === 'auto') {
+      return postRevisions;
+    }
+    return postRevisions.filter((rev) => {
+      const revPost = (rev as any).post || rev;
+      const revProvId = (rev as any).provider_id || revPost?.extra?.provider_id || (rev as any)?.extra?.provider_id;
+      if (!revProvId) {
+        return candidateProviders.length <= 1;
+      }
+      return revProvId.toLowerCase() === activeProviderId.toLowerCase();
+    });
+  });
+
   let post = $derived.by(() => {
     if (selectedRevId !== null) {
-      const found = postRevisions.find((r) => r.revision_id === selectedRevId);
+      const found = filteredRevisions.find((r) => r.revision_id === selectedRevId);
       if (found) return ((found as any).post || found) as Post;
     }
     return rawPost;
@@ -280,13 +294,15 @@
   let revisionSelectOptions = $derived.by(() => {
     return [
       { value: 'latest', label: `${i18n.t('post.revision_current') || 'Latest'} [current]` },
-      ...postRevisions.map((rev, idx) => {
+      ...filteredRevisions.map((rev, idx) => {
         const revPost = (rev as any).post || rev;
         const revDate = revPost.edited || revPost.added || revPost.published;
-        const providerName = (rev as any).provider_id ? ` • ${(rev as any).provider_id}` : '';
+        const revProvId = (rev as any).provider_id || revPost?.extra?.provider_id || (rev as any)?.extra?.provider_id;
+        const showProviderTag = (!activeProviderId || activeProviderId === 'auto') && revProvId;
+        const providerName = showProviderTag ? ` • ${formatProviderName(revProvId)}` : '';
         return {
           value: String(rev.revision_id),
-          label: `v${rev.revision_id || postRevisions.length - idx}${providerName} (${formatDate(revDate)})`
+          label: `v${rev.revision_id || filteredRevisions.length - idx}${providerName} (${formatDate(revDate)})`
         };
       })
     ];
@@ -298,13 +314,43 @@
     } else {
       const revId = Number(val);
       providerState.setSelectedRevision(service, creatorId, postId, revId);
-      const found = postRevisions.find((r) => r.revision_id === revId);
-      const provId = (found as any)?.provider_id;
-      if (provId && candidateProviders.some((p) => p.id === provId)) {
-        providerState.setSelectedProvider(service, creatorId, postId, provId);
+      const found = filteredRevisions.find((r) => r.revision_id === revId);
+      if (found) {
+        const revPost = (found as any).post || found;
+        const provId = (found as any)?.provider_id || revPost?.extra?.provider_id || (found as any)?.extra?.provider_id;
+        if (provId && candidateProviders.some((p) => p.id === provId)) {
+          providerState.setSelectedProvider(service, creatorId, postId, provId);
+        }
       }
     }
   }
+
+  function onProviderChange(val: string) {
+    providerState.setSelectedProvider(service, creatorId, postId, val);
+    if (selectedRevId !== null) {
+      if (val !== 'auto') {
+        const found = postRevisions.find((r) => r.revision_id === selectedRevId);
+        const revPost = (found as any)?.post || found;
+        const revProvId = (found as any)?.provider_id || revPost?.extra?.provider_id || (found as any)?.extra?.provider_id;
+        if (!found || (revProvId && revProvId.toLowerCase() !== val.toLowerCase())) {
+          providerState.setSelectedRevision(service, creatorId, postId, null);
+        }
+      }
+    }
+  }
+
+  $effect(() => {
+    if (selectedRevId !== null) {
+      if (filteredRevisions.length === 0) {
+        providerState.setSelectedRevision(service, creatorId, postId, null);
+      } else {
+        const exists = filteredRevisions.some((r) => r.revision_id === selectedRevId);
+        if (!exists) {
+          providerState.setSelectedRevision(service, creatorId, postId, null);
+        }
+      }
+    }
+  });
 
   let mobileMoreOpen = $state(false);
 
@@ -320,12 +366,13 @@
 
   let creatorProfile = $derived(contentState.creators[creatorCacheKey(service, creatorId)]?.profile);
 
-  function openInProvider() {
+  function openInProvider(targetProvId?: string) {
+    const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
     const url = postPageUrl(
       service,
       creatorId,
       postId,
-      activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined
+      effectiveProvId
     );
     if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open post URL in provider', err));
   }
@@ -341,12 +388,13 @@
 
   let copiedPostLink = $state(false);
   let copyLinkTimeout: ReturnType<typeof setTimeout> | null = null;
-  function copyPostLink() {
+  function copyPostLink(targetProvId?: string) {
+    const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
     const url = postPageUrl(
       service,
       creatorId,
       postId,
-      activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined
+      effectiveProvId
     );
     if (!url) return;
     void navigator.clipboard.writeText(url);
@@ -433,7 +481,7 @@
       const port = serverPortState.port || 0;
       const raw = node.download_url || node.stream_url || '';
       const streamUrl = raw.startsWith('/cloud_stream/') && port > 0
-        ? `http://127.0.0.1:${port}${raw}`
+        ? serverPortState.mediaUrl(raw)
         : raw;
       if (!streamUrl) continue;
       try {
@@ -568,7 +616,9 @@
     if ((file as any)?.is_cloud === true) return false;
     const isDeferred = (file as any)?.deferred === true;
     const hasNoPath = !file.path || file.path.trim() === '' || file.path === 'null';
-    return isDeferred || hasNoPath;
+    if (isDeferred || hasNoPath) return true;
+    if (post?.has_full === false) return true;
+    return false;
   }
 
   function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
@@ -656,7 +706,7 @@
     for (const d of postDownloads) {
       const port = serverPortState.port || 0;
       const encoded = d.final_path!.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : convertFileSrc(d.final_path!);
+      const streamUrl = port > 0 ? serverPortState.mediaUrl(`/media/${encoded}`) : convertFileSrc(d.final_path!);
       const isCloudNode = Boolean(d.media_id && (d.media_id.includes('cloud_') || d.media_id.startsWith('mega:') || d.media_id.startsWith('http')));
       const downloadAtt = {
         name: d.filename,
@@ -1196,14 +1246,12 @@
       cloud_node_id: raw
     } as any;
 
-    // 1. Direct search in media using isSameAttachment
     for (const f of media) {
       if (isSameAttachment(f, probeAtt)) {
         return f;
       }
     }
 
-    // 2. Check completed downloaded files in downloadState FIRST (instant, 100% offline, zero network latency)
     const downloadedMatch = downloadState.downloads.find((d) => {
       if (d.service !== service || d.creator_id !== creatorId || d.post_id !== postId) return false;
       const dAtt: Attachment = {
@@ -1217,7 +1265,7 @@
     if (downloadedMatch && downloadedMatch.status === 'completed' && downloadedMatch.final_path) {
       const port = serverPortState.port || 0;
       const encoded = downloadedMatch.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      const streamUrl = port > 0 ? `http://127.0.0.1:${port}/media/${encoded}` : convertFileSrc(downloadedMatch.final_path);
+      const streamUrl = port > 0 ? serverPortState.mediaUrl(`/media/${encoded}`) : convertFileSrc(downloadedMatch.final_path);
       return {
         name: downloadedMatch.filename,
         path: streamUrl,
@@ -1230,7 +1278,6 @@
       } as any;
     }
 
-    // 3. Search across all resolved cloud folder results
     for (const [_, res] of cloudFolderResults) {
       const matchingNode = res.nodes.find((n) => {
         if (n.is_folder) return false;
@@ -1577,7 +1624,7 @@
       let effectiveUrl = url;
       const port = serverPortState.port || 0;
       if (port > 0 && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
-        effectiveUrl = `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(url)}`;
+        effectiveUrl = serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(url)}`);
       }
       img.crossOrigin = 'Anonymous';
       img.onload = () => {
@@ -1661,13 +1708,12 @@
   }
 
   function remoteFileUrl(file: Attachment) {
-    return attachmentMediaUrl(file, service);
+    return attachmentMediaUrl(file, service, post);
   }
 
   function fileUrl(file: { path?: string; server?: string; name?: string; cloud_node_id?: string }) {
     const port = serverPortState.port || 0;
 
-    // 1. Check if the file is already downloaded to local disk
     const localJob = attachmentDownload(file);
     const localPath = (localJob && localJob.status === 'completed' && localJob.final_path)
       ? localJob.final_path
@@ -1676,20 +1722,18 @@
     if (localPath) {
       if (port > 0) {
         const encoded = localPath.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${port}/media/${encoded}`;
+        return serverPortState.mediaUrl(`/media/${encoded}`);
       }
       return convertFileSrc(localPath);
     }
 
-    // 2. Cloud streaming via local Axum proxy
     if (file.path?.startsWith('/cloud_stream/')) {
       if (port > 0) {
-        return `http://127.0.0.1:${port}${file.path}`;
+        return serverPortState.mediaUrl(file.path);
       }
       return '';
     }
 
-    // 3. Absolute http / https URL - proxy cloud URLs through Axum so Android WebView plays without TLS/CORS issues
     if (file.path?.startsWith('http://') || file.path?.startsWith('https://')) {
       let targetPath = file.path;
       if (targetPath.includes('dropbox.com')) {
@@ -1709,12 +1753,11 @@
           targetPath.includes('drive.google.com') ||
           targetPath.includes('dropboxusercontent.com'))
       ) {
-        return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`;
+        return serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`);
       }
       return targetPath;
     }
 
-    // 4. Remote Pawchive / OnlyHaven attachment URL
     const remoteUrl = remoteFileUrl(file as Attachment);
     if (!remoteUrl) return '';
 
@@ -1762,10 +1805,8 @@
       const urls = probeTargets.map((t) => t.url);
       const sizes = await apiProbeDownloadSizes(urls);
       const updates: Record<string, number> = {};
-      const pendingTargets: typeof probeTargets = [];
-
       for (const target of probeTargets) {
-        const size = sizes && typeof sizes === 'object' ? sizes[target.url] : undefined;
+        const size = sizes && typeof sizes === 'object' ? (sizes[target.url] || sizes[target.key]) : undefined;
         if (typeof size === 'number' && size > 0) {
           globalProbedSizes.set(target.key, size);
           globalProbedSizes.set(target.url, size);
@@ -1774,54 +1815,8 @@
           updates[target.key] = size;
           updates[target.url] = size;
           if (clean) updates[clean] = size;
-          probingMediaPaths.delete(target.key);
-        } else {
-          pendingTargets.push(target);
         }
-      }
-
-      if (pendingTargets.length > 0) {
-        await Promise.allSettled(
-          pendingTargets.map(async (target) => {
-            try {
-              const res = await fetch(target.url, { method: 'HEAD' });
-              let size: number | undefined;
-              if (res.ok) {
-                const len = res.headers.get('content-length');
-                if (len && Number(len) > 0) size = Number(len);
-              }
-              if (!size) {
-                const rangeRes = await fetch(target.url, {
-                  headers: { Range: 'bytes=0-0' }
-                });
-                if (rangeRes.ok || rangeRes.status === 206) {
-                  const cr = rangeRes.headers.get('content-range');
-                  if (cr) {
-                    const total = cr.split('/').pop()?.trim();
-                    if (total && Number(total) > 0) size = Number(total);
-                  }
-                  if (!size) {
-                    const len = rangeRes.headers.get('content-length');
-                    if (len && Number(len) > 0) size = Number(len);
-                  }
-                }
-              }
-              if (typeof size === 'number' && size > 0) {
-                globalProbedSizes.set(target.key, size);
-                globalProbedSizes.set(target.url, size);
-                const clean = cleanMediaPath(target.key);
-                if (clean) globalProbedSizes.set(clean, size);
-                updates[target.key] = size;
-                updates[target.url] = size;
-                if (clean) updates[clean] = size;
-              }
-            } catch {
-              // ignore
-            } finally {
-              probingMediaPaths.delete(target.key);
-            }
-          })
-        );
+        probingMediaPaths.delete(target.key);
       }
 
       if (Object.keys(updates).length > 0) {
@@ -1872,7 +1867,7 @@
       const matchingNode = file.cloud_folder_result.nodes?.find((n: any) => n.id === file.cloud_node_id || n.name === file.name);
       if (matchingNode) {
         if (matchingNode.stream_url?.startsWith('/cloud_stream/') && port > 0) {
-          return `http://127.0.0.1:${port}${matchingNode.stream_url}`;
+          return serverPortState.mediaUrl(matchingNode.stream_url);
         }
         if (matchingNode.download_url) {
           targetUrl = matchingNode.download_url;
@@ -1883,7 +1878,7 @@
     }
 
     if (targetUrl.startsWith('/cloud_stream/') && port > 0) {
-      return `http://127.0.0.1:${port}${targetUrl}`;
+      return serverPortState.mediaUrl(targetUrl);
     }
 
     if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
@@ -2269,20 +2264,22 @@
 
       {#snippet trailing()}
         {#if post}
-          {#if !layoutState.isMobile}
-            <Button
-              variant="ghost"
-              onclick={() => navigationState.openCreator(service, creatorId)}
-              class="sticky-creator-btn action-btn"
-            >
-              {#if creatorAvatar && !creatorAvatarFailed}
-                <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
-              {:else}
-                <ServiceIcon {service} />
-              {/if}
-              <span class="sticky-creator-name">{creatorName}</span>
-            </Button>
+          <Button
+            variant="ghost"
+            onclick={() => navigationState.openCreator(service, creatorId)}
+            class="sticky-creator-btn action-btn"
+            title={`${i18n.t('feed.open_creator') || 'Creator'}: ${creatorName}`}
+            aria-label="Creator"
+          >
+            {#if creatorAvatar && !creatorAvatarFailed}
+              <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
+            {:else}
+              <ServiceIcon {service} />
+            {/if}
+            <span class="sticky-creator-name">{creatorName}</span>
+          </Button>
 
+          {#if !layoutState.isMobile}
             <Button
               variant={isFavorited ? 'accent' : 'ghost'}
               disabled={favoritingPending}
@@ -2386,7 +2383,7 @@
               {:else}
                 <ServiceIcon {service} />
               {/if}
-              <span>{creatorName}</span>
+              <span class="creator-name-text">{creatorName}</span>
             </Button>
 
             <Button
@@ -2443,7 +2440,7 @@
             <Button
               variant="ghost"
               onclick={() => navigationState.openCreator(service, creatorId)}
-              class="action-btn btn-icon"
+              class="action-btn creator-btn"
               title={`${i18n.t('feed.open_creator') || 'Creator'}: ${creatorName}`}
               aria-label="Creator"
             >
@@ -2452,6 +2449,7 @@
               {:else}
                 <ServiceIcon {service} />
               {/if}
+              <span class="creator-name-text">{creatorName}</span>
             </Button>
 
             <Button
@@ -2471,7 +2469,7 @@
           {/if}
         </div>
 
-        <div class="right-actions flex items-center gap-2 ml-auto">
+        <div class="right-actions flex items-center gap-2 ml-auto shrink-0">
           {#if post}
             <div class="stash-select-container mobile-stash-select">
               <Select
@@ -2544,16 +2542,31 @@
               <span class="capitalize">{service}</span>
             </Button>
 
-            <span class="text-[var(--fg-subtle)]">·</span>
-            <Button
-              variant="ghost"
-              onclick={openInProvider}
-              tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
-              aria-label={`Open in ${currentProviderName}`}
-            >
-              <IconOpen class="w-4 h-4" />
-              <span>{currentProviderName}</span>
-            </Button>
+            {#if activeProviderId === 'auto' && candidateProviders.length > 1}
+              {#each candidateProviders as prov}
+                <span class="text-[var(--fg-subtle)]">·</span>
+                <Button
+                  variant="ghost"
+                  onclick={() => openInProvider(prov.id)}
+                  tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
+                  aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
+                >
+                  <IconOpen class="w-4 h-4" />
+                  <span>{formatProviderName(prov.name || prov.id)}</span>
+                </Button>
+              {/each}
+            {:else}
+              <span class="text-[var(--fg-subtle)]">·</span>
+              <Button
+                variant="ghost"
+                onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
+                tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+                aria-label={`Open in ${currentProviderName}`}
+              >
+                <IconOpen class="w-4 h-4" />
+                <span>{currentProviderName}</span>
+              </Button>
+            {/if}
 
             <span class="text-[var(--fg-subtle)]">·</span>
             <Button
@@ -2571,18 +2584,17 @@
 
             {#if candidateProviders.length > 1}
               <span class="text-[var(--fg-subtle)]">·</span>
-              <div class="inline-flex items-center gap-1 shrink-0">
-                <span class="text-xs text-[var(--fg-subtle)]">{i18n.t('post.source') || 'Source'}:</span>
+              <div class="inline-flex items-center shrink-0">
                 <Select
                   variant="ghost"
                   options={providerSelectOptions}
                   value={activeProviderId}
-                  onchange={(val) => providerState.setSelectedProvider(service, creatorId, postId, val)}
+                  onchange={onProviderChange}
                 />
               </div>
             {/if}
 
-            {#if postRevisions.length > 0}
+            {#if filteredRevisions.length > 0}
               <span class="text-[var(--fg-subtle)]">·</span>
               <div class="inline-flex items-center shrink-0">
                 <Select
@@ -2730,7 +2742,7 @@
                       {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                         <!-- svelte-ignore a11y_media_has_caption -->
                         <video
-                          src={embedAttachment ? fileUrl(embedAttachment) : (serverPortState.port > 0 ? `http://127.0.0.1:${serverPortState.port}/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}` : postEmbed.url)}
+                          src={embedAttachment ? fileUrl(embedAttachment) : (serverPortState.port > 0 ? serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}`) : postEmbed.url)}
                           controls
                           playsinline
                           preload="none"
@@ -3201,64 +3213,46 @@
       {/if}
 
       {#if post}
-        <div class="post-footer-actions-row">
-          {#if allMediaDownloaded}
-            <Button
-              variant="ghost"
-              onclick={() => void openPostFolder()}
-              class="post-footer-action"
-            >
-              <IconFolder class="w-[18px] h-[18px]" />
-              <span>{i18n.t('downloads.open_post_folder')}</span>
-            </Button>
-          {:else if media.length > 0}
-            <Button
-              variant="ghost"
-              disabled={downloadingAll || media.every((file) => {
-                const job = attachmentDownload(file);
-                return Boolean(job && !['failed', 'cancelled', 'missing'].includes(job.status));
-              })}
-              onclick={() => void downloadAllMedia()}
-              class="post-footer-action"
-            >
-              {#if downloadingAll}
-                <IconLoading class="w-[18px] h-[18px]" />
-              {:else}
-                <IconDownload class="w-[18px] h-[18px]" />
-              {/if}
-              <span>
-                {i18n.t(downloadingAll ? 'post.downloading_all' : 'post.download_all')}{totalMediaBytes > 0 ? ` · ${formatBytes(totalMediaBytes)}` : ''}
-              </span>
-            </Button>
-          {/if}
+        {#if allMediaDownloaded || media.length > 0 || post.file}
+          <div class="post-footer-actions-row">
+            {#if allMediaDownloaded}
+              <Button
+                variant="ghost"
+                onclick={() => void openPostFolder()}
+                class="post-footer-action"
+              >
+                <IconFolder class="w-[18px] h-[18px]" />
+                <span>{i18n.t('downloads.open_post_folder')}</span>
+              </Button>
+            {:else if media.length > 0}
+              <Button
+                variant="ghost"
+                disabled={downloadingAll || media.every((file) => {
+                  const job = attachmentDownload(file);
+                  return Boolean(job && !['failed', 'cancelled', 'missing'].includes(job.status));
+                })}
+                onclick={() => void downloadAllMedia()}
+                class="post-footer-action"
+              >
+                {#if downloadingAll}
+                  <IconLoading class="w-[18px] h-[18px]" />
+                {:else}
+                  <IconDownload class="w-[18px] h-[18px]" />
+                {/if}
+                <span>
+                  {i18n.t(downloadingAll ? 'post.downloading_all' : 'post.download_all')}{totalMediaBytes > 0 ? ` · ${formatBytes(totalMediaBytes)}` : ''}
+                </span>
+              </Button>
+            {/if}
 
-          {#if post.file || media.length > 0}
-            <Button variant="ghost" onclick={openPreviewViewer} class="post-footer-action">
-              <IconEye class="w-[18px] h-[18px]" />
-              <span>{i18n.t('post.view_preview')}</span>
-            </Button>
-          {/if}
-
-          <Button
-            variant="ghost"
-            onclick={openOriginalPost}
-            class="post-footer-action"
-            title={`${i18n.t('post.open_original_post') || 'Open original post'}: ${service}`}
-          >
-            <ServiceIcon {service} class="w-[18px] h-[18px]" />
-            <span>{i18n.t('post.open_original_post') || 'Open original post'}</span>
-          </Button>
-
-          <Button
-            variant="ghost"
-            onclick={openInProvider}
-            class="post-footer-action"
-            title={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
-          >
-            <IconOpen class="w-[18px] h-[18px]" />
-            <span>{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
-          </Button>
-        </div>
+            {#if post.file || media.length > 0}
+              <Button variant="ghost" onclick={openPreviewViewer} class="post-footer-action">
+                <IconEye class="w-[18px] h-[18px]" />
+                <span>{i18n.t('post.view_preview')}</span>
+              </Button>
+            {/if}
+          </div>
+        {/if}
 
         <div class="post-footer-toolbar">
           <div class="footer-nav-left">
@@ -3446,21 +3440,41 @@
         </div>
       </button>
 
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          openInProvider();
-        }}
-      >
-        <IconOpen class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
-          <span class="text-xs text-muted">{currentProviderName}</span>
-        </div>
-      </button>
+      {#if activeProviderId === 'auto' && candidateProviders.length > 1}
+        {#each candidateProviders as prov}
+          <button
+            type="button"
+            class="sheet-action-item"
+            use:ripple
+            onclick={() => {
+              mobileMoreOpen = false;
+              openInProvider(prov.id);
+            }}
+          >
+            <IconOpen class="text-secondary" />
+            <div class="flex flex-col min-w-0">
+              <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
+              <span class="text-xs text-muted">{formatProviderName(prov.name || prov.id)}</span>
+            </div>
+          </button>
+        {/each}
+      {:else}
+        <button
+          type="button"
+          class="sheet-action-item"
+          use:ripple
+          onclick={() => {
+            mobileMoreOpen = false;
+            openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
+          }}
+        >
+          <IconOpen class="text-secondary" />
+          <div class="flex flex-col min-w-0">
+            <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
+            <span class="text-xs text-muted">{currentProviderName}</span>
+          </div>
+        </button>
+      {/if}
 
       <button
         type="button"
@@ -3504,11 +3518,11 @@
           navigationState.openCreator(service, creatorId);
         }}
       >
-        <div class="w-5 h-5 rounded-full overflow-hidden flex items-center justify-center bg-white/10 shrink-0">
+        <div class="sheet-action-avatar">
           {#if creatorAvatar && !creatorAvatarFailed}
-            <img src={creatorAvatar} alt="" class="w-full h-full object-cover" />
+            <img src={creatorAvatar} alt="" />
           {:else}
-            <ServiceIcon {service} class="w-4 h-4" />
+            <ServiceIcon {service} />
           {/if}
         </div>
         <div class="flex flex-col min-w-0">
@@ -3691,6 +3705,37 @@
     height: 100%;
     display: block;
     object-fit: cover;
+  }
+
+  .post-actions-bar :global(.creator-btn) {
+    padding-left: 8px !important;
+    padding-right: 14px !important;
+    gap: 8px !important;
+    min-width: 0 !important;
+    max-width: min(220px, 45vw) !important;
+    flex-shrink: 1 !important;
+  }
+
+  .creator-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
+    font-weight: 500;
+  }
+
+  @media (max-width: 640px) {
+    .post-actions-bar :global(.creator-btn) {
+      padding-left: 6px !important;
+      padding-right: 12px !important;
+      max-width: min(150px, 35vw) !important;
+    }
+
+    .creator-name-text {
+      font-size: 13px;
+      max-width: clamp(55px, 20vw, 100px);
+    }
   }
 
   .stash-select-container {
@@ -4732,6 +4777,45 @@
   :global(.sticky-header-bar:not(.is-mobile)) .sticky-post-title {
     font-size: 17px !important;
     font-weight: 600 !important;
+  }
+
+  :global(.sticky-header-bar) :global(.sticky-creator-btn) {
+    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
+    padding: 0 14px 0 8px !important;
+    border-radius: var(--radius-full) !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-shrink: 1 !important;
+    min-width: 0 !important;
+  }
+
+  .sticky-creator-name {
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    font-weight: 500;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  :global(.sticky-header-bar.is-mobile) :global(.sticky-creator-btn) {
+    height: 38px !important;
+    padding: 0 10px 0 6px !important;
+    gap: 6px !important;
+    max-width: min(130px, 32vw) !important;
+  }
+
+  :global(.sticky-header-bar.is-mobile) :global(.sticky-creator-btn) .post-creator-avatar {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  :global(.sticky-header-bar.is-mobile) .sticky-creator-name {
+    font-size: 12.5px;
+    max-width: clamp(50px, 18vw, 85px);
   }
 
   :global(.sticky-header-bar) :global(.sticky-fav-btn) {

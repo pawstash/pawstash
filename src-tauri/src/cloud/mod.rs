@@ -85,7 +85,6 @@ pub fn normalize_cloud_direct_url(url: &str) -> String {
         let host = u.host_str().unwrap_or("").to_lowercase();
         let path = u.path().to_string();
 
-        // 1. Dropbox direct download parameter
         if host.contains("dropbox.com") {
             let query: Vec<(String, String)> = u
                 .query_pairs()
@@ -99,7 +98,6 @@ pub fn normalize_cloud_direct_url(url: &str) -> String {
             target_url = u.to_string();
         }
 
-        // 2. Pixeldrain file link conversion
         if host.contains("pixeldrain.com") && path.starts_with("/u/") {
             let file_id = path.trim_start_matches("/u/");
             u.set_path(&format!("/api/file/{file_id}"));

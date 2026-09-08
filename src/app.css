@@ -126,7 +126,12 @@
     --floating-divider-color: rgba(255, 255, 255, 0.035);
 
     --modal-radius: 20px;
-    --modal-padding: 6px;
+    --modal-padding: 0px;
+    --modal-padding-x: 18px;
+    --modal-padding-top: 18px;
+    --modal-padding-bottom: 18px;
+    --modal-title-content-gap: 12px;
+    --modal-content-footer-gap: 16px;
 
     --bottom-sheet-width: 640px;
     --bottom-sheet-max-height: 78dvh;
@@ -949,6 +954,15 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   color: #67e8f9;
 }
 
+.grid-tile-unarchived-item {
+  color: #fbbf24;
+}
+
+.grid-tile-unarchived-item svg {
+  color: #fbbf24;
+  filter: drop-shadow(0 1px 4px rgba(245, 158, 11, 0.45)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9));
+}
+
 .grid-tile-top-actions {
   position: absolute;
   z-index: 5;
@@ -1248,6 +1262,36 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   flex-shrink: 0;
 }
 
+.sheet-action-item .sheet-action-avatar {
+  width: calc(24px * var(--ui-scale, 1));
+  height: calc(24px * var(--ui-scale, 1));
+  min-width: calc(24px * var(--ui-scale, 1));
+  min-height: calc(24px * var(--ui-scale, 1));
+  margin: 0 calc(-2px * var(--ui-scale, 1));
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.sheet-action-item .sheet-action-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+
+.sheet-action-item .sheet-action-avatar svg {
+  width: calc(16px * var(--ui-scale, 1)) !important;
+  height: calc(16px * var(--ui-scale, 1)) !important;
+  min-width: calc(16px * var(--ui-scale, 1)) !important;
+  min-height: calc(16px * var(--ui-scale, 1)) !important;
+}
+
 .download-play-menu-item svg {
   width: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
   height: calc(var(--floating-item-icon-size, 20px) * var(--ui-scale, 1)) !important;
@@ -1467,7 +1511,7 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 
 .modal-confirm-desc {
   margin: 0;
-  padding: 0 10px 14px 10px;
+  padding: 0 0 14px 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);

@@ -233,16 +233,16 @@
     if (localJob?.status === 'completed' && localJob.final_path) {
       if (port > 0) {
         const encoded = localJob.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${port}/media/${encoded}`;
+        return serverPortState.mediaUrl(`/media/${encoded}`);
       }
       return convertFileSrc(localJob.final_path);
     }
 
     if (node.stream_url?.startsWith('/cloud_stream/') && port > 0) {
-      return `http://127.0.0.1:${port}${node.stream_url}`;
+      return serverPortState.mediaUrl(node.stream_url);
     }
     if (node.download_url?.startsWith('/cloud_stream/') && port > 0) {
-      return `http://127.0.0.1:${port}${node.download_url}`;
+      return serverPortState.mediaUrl(node.download_url);
     }
     const rawUrl = node.stream_url || node.download_url || '';
     if (
@@ -253,7 +253,7 @@
         rawUrl.includes('drive.google.com') ||
         rawUrl.includes('dropboxusercontent.com'))
     ) {
-      return `http://127.0.0.1:${port}/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`;
+      return serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`);
     }
     return rawUrl;
   }
@@ -262,7 +262,7 @@
     const raw = node.download_url || node.stream_url || '';
     const port = serverPortState.port || 0;
     if (raw.startsWith('/cloud_stream/') && port > 0) {
-      return `http://127.0.0.1:${port}${raw}`;
+      return serverPortState.mediaUrl(raw);
     }
     return raw;
   }

@@ -8,6 +8,7 @@ use std::sync::Mutex;
 const SETTINGS_PREFIX: &str = "setting.";
 const PAWCHIVE_SESSION_SECRET: &str = "pawchive-session";
 const PROXY_PASSWORD_SECRET: &str = "proxy-password";
+const PROVIDER_SESSION_SECRET_PREFIX: &str = "provider-session:";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -196,23 +197,30 @@ impl ConfigManager {
             }
         }
 
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let mut statement = conn
-            .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'setting.%'")
-            .map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        let values = rows
-            .collect::<Result<std::collections::HashMap<_, _>, _>>()
-            .map_err(|e| e.to_string())?;
+        let values = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let mut statement = conn
+                .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'setting.%'")
+                .map_err(|e| e.to_string())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+                .map_err(|e| e.to_string())?
+        };
         let mut settings = AppSettings::default();
         settings.apply_values(&values);
         settings.session_cookie = Self::load_secret_string(PAWCHIVE_SESSION_SECRET)?;
         settings.proxy_password = Self::load_secret_string(PROXY_PASSWORD_SECRET)?;
+        let migrated_plaintext_secret = Self::hydrate_provider_secrets(&mut settings)?;
         settings.normalize();
+
+        if migrated_plaintext_secret {
+            self.save(&settings)?;
+            return Ok(settings);
+        }
 
         if let Ok(mut guard) = self.cached.lock() {
             *guard = Some(settings.clone());
@@ -228,10 +236,18 @@ impl ConfigManager {
         if !settings.proxy_password.is_empty() {
             SecretStore::save_named(PROXY_PASSWORD_SECRET, settings.proxy_password.as_bytes())?;
         }
+        for provider in &settings.providers {
+            if !provider.session_cookie.trim().is_empty() {
+                SecretStore::save_named(
+                    &Self::provider_secret_name(&provider.id),
+                    provider.session_cookie.as_bytes(),
+                )?;
+            }
+        }
 
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let transaction = conn.transaction().map_err(|e| e.to_string())?;
-        for (key, value) in settings.values() {
+        for (key, value) in settings.values()? {
             transaction.execute(
                 "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, CURRENT_TIMESTAMP)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
@@ -260,9 +276,31 @@ impl ConfigManager {
         if let Ok(mut guard) = self.cached.lock() {
             if let Some(cached) = guard.as_mut() {
                 cached.session_cookie.clear();
+                if let Some(provider) = cached.providers.iter_mut().find(|p| p.id == "pawchive") {
+                    provider.session_cookie.clear();
+                }
             }
         }
-        SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)
+        SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)?;
+        SecretStore::delete_named(&Self::provider_secret_name("pawchive"))
+    }
+
+    pub fn clear_provider_session(&self, provider_id: &str) -> Result<(), String> {
+        if let Ok(mut guard) = self.cached.lock() {
+            if let Some(cached) = guard.as_mut() {
+                if let Some(provider) = cached.providers.iter_mut().find(|p| p.id == provider_id) {
+                    provider.session_cookie.clear();
+                }
+                if provider_id == "pawchive" {
+                    cached.session_cookie.clear();
+                }
+            }
+        }
+        SecretStore::delete_named(&Self::provider_secret_name(provider_id))?;
+        if provider_id == "pawchive" {
+            SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)?;
+        }
+        Ok(())
     }
 
     fn load_secret_string(name: &str) -> Result<String, String> {
@@ -271,11 +309,33 @@ impl ConfigManager {
             .transpose()
             .map(|value| value.unwrap_or_default())
     }
+
+    fn provider_secret_name(provider_id: &str) -> String {
+        format!(
+            "{PROVIDER_SESSION_SECRET_PREFIX}{}",
+            provider_id.trim().to_lowercase()
+        )
+    }
+
+    fn hydrate_provider_secrets(settings: &mut AppSettings) -> Result<bool, String> {
+        let mut migrated_plaintext_secret = false;
+        for provider in &mut settings.providers {
+            let secret_name = Self::provider_secret_name(&provider.id);
+            if provider.session_cookie.trim().is_empty() {
+                provider.session_cookie = Self::load_secret_string(&secret_name)?;
+            } else {
+                SecretStore::save_named(&secret_name, provider.session_cookie.as_bytes())?;
+                migrated_plaintext_secret = true;
+            }
+        }
+        Ok(migrated_plaintext_secret)
+    }
 }
 
 impl AppSettings {
-    fn values(&self) -> Vec<(&'static str, String)> {
-        vec![
+    fn values(&self) -> Result<Vec<(&'static str, String)>, String> {
+        let providers_json = serde_json::to_string(&self.providers).map_err(|e| e.to_string())?;
+        Ok(vec![
             ("download_dir", self.download_dir.clone()),
             ("cache_max_mb", self.cache_max_mb.to_string()),
             ("api_domain", self.api_domain.clone()),
@@ -326,6 +386,7 @@ impl AppSettings {
                 "sync_push_interval_seconds",
                 self.sync_push_interval_seconds.to_string(),
             ),
+            ("toast_position", self.toast_position.clone()),
             ("auto_check_updates", self.auto_check_updates.to_string()),
             ("include_prereleases", self.include_prereleases.to_string()),
             ("scroll_edge_mask", self.scroll_edge_mask.to_string()),
@@ -367,10 +428,7 @@ impl AppSettings {
                 self.panic_button_enabled.to_string(),
             ),
             ("panic_button_shortcut", self.panic_button_shortcut.clone()),
-            (
-                "providers_json",
-                serde_json::to_string(&self.providers).unwrap_or_else(|_| "[]".to_string()),
-            ),
+            ("providers_json", providers_json),
             (
                 "smart_merge_attachments",
                 self.smart_merge_attachments.to_string(),
@@ -380,7 +438,12 @@ impl AppSettings {
                 "persist_in_app_favorites_locally",
                 self.persist_in_app_favorites_locally.to_string(),
             ),
-        ]
+            (
+                "disable_blur_placeholders",
+                self.disable_blur_placeholders.to_string(),
+            ),
+            ("card_view_mode", self.card_view_mode.clone()),
+        ])
     }
 
     fn apply_values(&mut self, values: &std::collections::HashMap<String, String>) {
@@ -394,10 +457,7 @@ impl AppSettings {
         }
         string!(download_dir);
         #[cfg(target_os = "android")]
-        if self
-            .download_dir
-            .contains("/data/data/app.pawstash")
-        {
+        if self.download_dir.contains("/data/data/app.pawstash") {
             self.download_dir = "/storage/emulated/0/Download/Pawstash".to_string();
         }
         string!(api_domain);
@@ -408,11 +468,13 @@ impl AppSettings {
         string!(proxy_url);
         string!(proxy_username);
         string!(layout_mode);
+        string!(toast_position);
         string!(titlebar_style);
         string!(download_creator_folder_template);
         string!(download_post_folder_template);
         string!(download_filename_template);
         string!(download_metadata_format);
+        string!(card_view_mode);
         if let Some(value) = get("providers_json") {
             if let Ok(providers) =
                 serde_json::from_str::<Vec<crate::api::provider::ProviderConfig>>(value)
@@ -430,6 +492,9 @@ impl AppSettings {
         }
         if let Some(value) = get("persist_in_app_favorites_locally").and_then(|v| v.parse().ok()) {
             self.persist_in_app_favorites_locally = value;
+        }
+        if let Some(value) = get("disable_blur_placeholders").and_then(|v| v.parse().ok()) {
+            self.disable_blur_placeholders = value;
         }
         if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
             if value == "Alt+X" {
@@ -521,7 +586,7 @@ impl AppSettings {
         }
     }
 
-    fn normalize(&mut self) {
+    pub fn normalize(&mut self) {
         self.cache_max_mb = self.cache_max_mb.clamp(64, 2048);
         self.grid_scale = self.grid_scale.clamp(60, 160);
         self.download_max_concurrent = self.download_max_concurrent.clamp(1, 10);
@@ -531,52 +596,35 @@ impl AppSettings {
         if !matches!(self.titlebar_style.as_str(), "auto" | "windows" | "macos") {
             self.titlebar_style = "auto".to_string();
         }
+        if !matches!(self.toast_position.as_str(), "auto" | "top" | "bottom") {
+            self.toast_position = "auto".to_string();
+        }
+        if !matches!(self.card_view_mode.as_str(), "detailed" | "compact") {
+            self.card_view_mode = "detailed".to_string();
+        }
         if self.providers.is_empty() {
             self.providers = crate::api::provider_manager::ProviderManager::default_configs();
         }
+        let default_configs = crate::api::provider_manager::ProviderManager::default_configs();
         for p in &mut self.providers {
-            if p.id == "pawchive" {
-                if p.services.is_empty() {
-                    p.services = crate::api::providers::default_pawchive_services();
-                }
-                if p.file_prefix.is_none() {
-                    p.file_prefix = Some("file".into());
-                }
-                if p.image_prefix.is_none() {
-                    p.image_prefix = Some("img".into());
-                }
-            } else if p.id == "coomer" || p.api_url.contains("coomer") {
-                p.id = "coomer".to_string();
-                if p.name.is_empty() {
-                    p.name = "Coomer".to_string();
+            if let Some(def) = default_configs.iter().find(|d| d.id.eq_ignore_ascii_case(&p.id)) {
+                if p.name.trim().is_empty() {
+                    p.name = def.name.clone();
                 }
                 if p.services.is_empty() {
-                    p.services = crate::api::providers::default_coomer_services();
+                    p.services = def.services.clone();
                 }
                 if p.file_prefix.is_none() {
-                    p.file_prefix = Some("c1".into());
+                    p.file_prefix = def.file_prefix.clone();
                 }
                 if p.image_prefix.is_none() {
-                    p.image_prefix = Some("img".into());
-                }
-            } else if p.id == "onlyhaven" || p.api_url.contains("cum.st") {
-                p.id = "onlyhaven".to_string();
-                p.name = "OnlyHaven".to_string();
-                if p.services.is_empty() {
-                    p.services = crate::api::providers::default_onlyhaven_services();
-                }
-                if p.file_prefix.is_none() {
-                    p.file_prefix = Some("e1".into());
-                }
-                if p.image_prefix.is_none() {
-                    p.image_prefix = Some("img".into());
+                    p.image_prefix = def.image_prefix.clone();
                 }
             }
         }
-        if !self.providers.iter().any(|p| p.id == "coomer") {
-            let defaults = crate::api::provider_manager::ProviderManager::default_configs();
-            if let Some(coomer) = defaults.into_iter().find(|p| p.id == "coomer") {
-                self.providers.push(coomer);
+        for def in default_configs {
+            if !self.providers.iter().any(|p| p.id.eq_ignore_ascii_case(&def.id)) {
+                self.providers.push(def);
             }
         }
         if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
@@ -607,19 +655,7 @@ impl AppSettings {
             if let Ok(api_u) = reqwest::Url::parse(&p.api_url) {
                 if let Some(api_h) = api_u.host_str() {
                     let domain = api_h.trim_start_matches("www.").trim_start_matches("api.");
-                    let root_domain = domain
-                        .split('.')
-                        .rev()
-                        .take(2)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    if host == api_h
-                        || host.ends_with(&format!(".{domain}"))
-                        || (!root_domain.is_empty() && host.ends_with(&format!(".{root_domain}")))
-                    {
+                    if Self::host_matches(&host, api_h) || Self::host_matches(&host, domain) {
                         return Some(p.session_cookie.clone());
                     }
                 }
@@ -628,7 +664,7 @@ impl AppSettings {
                 if let Ok(fb_u) = reqwest::Url::parse(fb) {
                     if let Some(fb_h) = fb_u.host_str() {
                         let domain = fb_h.trim_start_matches("www.").trim_start_matches("api.");
-                        if host == fb_h || host.ends_with(&format!(".{domain}")) {
+                        if Self::host_matches(&host, fb_h) || Self::host_matches(&host, domain) {
                             return Some(p.session_cookie.clone());
                         }
                     }
@@ -637,19 +673,43 @@ impl AppSettings {
             if let Some(ref file_u_str) = p.file_url {
                 if let Ok(file_u) = reqwest::Url::parse(file_u_str) {
                     if let Some(file_h) = file_u.host_str() {
-                        if host == file_h {
+                        if Self::host_matches(&host, file_h) {
+                            return Some(p.session_cookie.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(ref image_u_str) = p.image_url {
+                if let Ok(image_u) = reqwest::Url::parse(image_u_str) {
+                    if let Some(image_h) = image_u.host_str() {
+                        if Self::host_matches(&host, image_h) {
                             return Some(p.session_cookie.clone());
                         }
                     }
                 }
             }
         }
+        None
+    }
 
-        if !self.session_cookie.trim().is_empty() {
-            Some(self.session_cookie.clone())
-        } else {
-            None
-        }
+    fn host_matches(candidate: &str, allowed: &str) -> bool {
+        let allowed = allowed.trim_end_matches('.').to_lowercase();
+        candidate == allowed || candidate.ends_with(&format!(".{allowed}"))
+    }
+
+    pub fn get_provider_for_service(
+        &self,
+        service: &str,
+    ) -> Option<&crate::api::providers::traits::ProviderConfig> {
+        let clean = service.trim().to_ascii_lowercase();
+        self.providers
+            .iter()
+            .find(|p| p.enabled && p.services.iter().any(|s| s.eq_ignore_ascii_case(&clean)))
+            .or_else(|| {
+                self.providers
+                    .iter()
+                    .find(|p| p.services.iter().any(|s| s.eq_ignore_ascii_case(&clean)))
+            })
     }
 }
 
@@ -713,6 +773,7 @@ mod tests {
         };
         let values = original
             .values()
+            .unwrap()
             .into_iter()
             .map(|(key, value)| (format!("{SETTINGS_PREFIX}{key}"), value))
             .collect();
@@ -731,6 +792,7 @@ mod tests {
         assert!(restored.sync_pawchive_session);
         assert_eq!(restored.sync_pull_interval_seconds, 120);
         assert_eq!(restored.sync_push_interval_seconds, 30);
+        assert!(!values[&format!("{SETTINGS_PREFIX}providers_json")].contains("session=secret"));
     }
 
     #[test]
@@ -753,5 +815,23 @@ mod tests {
             settings.resolve_cookie_for_url("https://file.pawchive.pw/data/ab/cd/video.mp4"),
             Some("pawchive_global_cookie".into())
         );
+        assert_eq!(
+            settings.resolve_cookie_for_url("https://pawchive.pw.evil.example/video.mp4"),
+            None
+        );
+        assert_eq!(
+            settings.resolve_cookie_for_url("https://unrelated.example/video.mp4"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_normalize_providers() {
+        let mut settings = AppSettings::default();
+        settings.normalize();
+
+        assert!(settings.providers.iter().any(|p| p.id == "pawchive" && p.file_prefix.as_deref() == Some("file")));
+        assert!(settings.providers.iter().any(|p| p.id == "coomer" && p.file_prefix.as_deref() == Some("c1")));
+        assert!(settings.providers.iter().any(|p| p.id == "onlyhaven" && p.file_prefix.as_deref() == Some("e1")));
     }
 }

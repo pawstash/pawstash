@@ -413,16 +413,31 @@
     return posts;
   });
 
-  let sortOptions = $derived([
-    { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
-    { value: 'newest', label: i18n.t('favorites.sort_published_desc') || 'Newest First' },
-    { value: 'oldest', label: i18n.t('favorites.sort_published_asc') || 'Oldest First' },
-    { value: 'popular', label: i18n.t('creators.sort_favorited_desc') || 'Most Favorited' }
-  ]);
+  let hasPopularityData = $derived(
+    entry.posts.some((p: any) => (p.favorite_count ?? p.extra?.favorite_count ?? p.extra?.bookmarked ?? 0) > 0)
+  );
+
+  let sortOptions = $derived.by(() => {
+    const opts = [
+      { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
+      { value: 'newest', label: i18n.t('favorites.sort_published_desc') || 'Newest First' },
+      { value: 'oldest', label: i18n.t('favorites.sort_published_asc') || 'Oldest First' }
+    ];
+    if (hasPopularityData) {
+      opts.push({ value: 'popular', label: i18n.t('creators.sort_favorited_desc') || 'Most Favorited' });
+    }
+    return opts;
+  });
 
   let currentSortLabel = $derived.by(() => {
     const opt = sortOptions.find((o) => o.value === sortOrder);
-    return opt?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+    return opt?.label ?? sortOptions[0]?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+  });
+
+  $effect(() => {
+    if (sortOrder === 'popular' && entry.loaded && !hasPopularityData) {
+      sortOrder = 'default';
+    }
   });
 
   let isPostsFiltered = $derived(
@@ -865,11 +880,12 @@
     return 'Provider';
   });
 
-  function openInProvider() {
+  function openInProvider(targetProvId?: string) {
+    const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
     const url = creatorPageUrl(
       service,
       creatorId,
-      activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined
+      effectiveProvId
     );
     if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator in provider', err));
   }
@@ -1455,16 +1471,31 @@
           <span class="capitalize">{service}</span>
         </Button>
 
-        <span class="text-[var(--fg-subtle)]">·</span>
-        <Button
-          variant="ghost"
-          onclick={openInProvider}
-          tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
-          aria-label={`Open in ${currentProviderName}`}
-        >
-          <IconOpen class="w-4 h-4" />
-          <span>{currentProviderName}</span>
-        </Button>
+        {#if activeProviderId === 'auto' && candidateProviders.length > 1}
+          {#each candidateProviders as prov}
+            <span class="text-[var(--fg-subtle)]">·</span>
+            <Button
+              variant="ghost"
+              onclick={() => openInProvider(prov.id)}
+              tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
+              aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
+            >
+              <IconOpen class="w-4 h-4" />
+              <span>{formatProviderName(prov.name || prov.id)}</span>
+            </Button>
+          {/each}
+        {:else}
+          <span class="text-[var(--fg-subtle)]">·</span>
+          <Button
+            variant="ghost"
+            onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
+            tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+            aria-label={`Open in ${currentProviderName}`}
+          >
+            <IconOpen class="w-4 h-4" />
+            <span>{currentProviderName}</span>
+          </Button>
+        {/if}
 
         <span class="text-[var(--fg-subtle)]">·</span>
         <Button
@@ -1482,8 +1513,7 @@
 
         {#if candidateProviders.length > 1}
           <span class="text-[var(--fg-subtle)]">·</span>
-          <div class="inline-flex items-center gap-1 shrink-0">
-            <span class="text-xs text-[var(--fg-subtle)]">{i18n.t('post.source') || 'Source'}:</span>
+          <div class="inline-flex items-center shrink-0">
             <Select
               variant="ghost"
               options={providerSelectOptions}
@@ -2048,21 +2078,41 @@
         </div>
       </button>
 
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          openInProvider();
-        }}
-      >
-        <IconOpen class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
-          <span class="text-xs text-muted">{currentProviderName}</span>
-        </div>
-      </button>
+      {#if activeProviderId === 'auto' && candidateProviders.length > 1}
+        {#each candidateProviders as prov}
+          <button
+            type="button"
+            class="sheet-action-item"
+            use:ripple
+            onclick={() => {
+              mobileMoreOpen = false;
+              openInProvider(prov.id);
+            }}
+          >
+            <IconOpen class="text-secondary" />
+            <div class="flex flex-col min-w-0">
+              <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
+              <span class="text-xs text-muted">{formatProviderName(prov.name || prov.id)}</span>
+            </div>
+          </button>
+        {/each}
+      {:else}
+        <button
+          type="button"
+          class="sheet-action-item"
+          use:ripple
+          onclick={() => {
+            mobileMoreOpen = false;
+            openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
+          }}
+        >
+          <IconOpen class="text-secondary" />
+          <div class="flex flex-col min-w-0">
+            <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
+            <span class="text-xs text-muted">{currentProviderName}</span>
+          </div>
+        </button>
+      {/if}
 
       <button
         type="button"
@@ -2459,6 +2509,8 @@
     opacity: 0.95;
     text-align: left;
     min-width: 0;
+    max-width: clamp(100px, 35vw, 220px);
+    flex-shrink: 1;
   }
 
   :global(.sticky-header-bar) :global(.sticky-fav-btn) {

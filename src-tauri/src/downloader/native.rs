@@ -36,7 +36,6 @@ impl NativeDownloader {
             connections: 1,
         };
 
-        // 1. Try HEAD request first (fastest, zero body transfer)
         if let Ok(headers) = Self::headers(&task_stub, None) {
             if let Ok(response) = client
                 .head(&target_url)
@@ -53,7 +52,6 @@ impl NativeDownloader {
             }
         }
 
-        // 2. Try Range GET (bytes=0-0)
         if let Ok(headers) = Self::headers(&task_stub, Some("bytes=0-0")) {
             if let Ok(response) = client
                 .get(&target_url)
@@ -83,7 +81,6 @@ impl NativeDownloader {
             }
         }
 
-        // 3. Fallback Range GET (bytes=0-1) in case single-byte range is rejected
         if let Ok(headers) = Self::headers(&task_stub, Some("bytes=0-1")) {
             if let Ok(response) = client
                 .get(&target_url)
@@ -138,6 +135,7 @@ impl NativeDownloader {
         };
 
         let session_cookie = task_template.session_cookie.clone();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
         let mut set = tokio::task::JoinSet::new();
 
         for url in urls {
@@ -145,8 +143,10 @@ impl NativeDownloader {
             let norm_url = super::normalize_download_url(url);
             let client = Arc::clone(&client);
             let session_cookie = session_cookie.clone();
+            let sem = Arc::clone(&semaphore);
 
             set.spawn(async move {
+                let _permit = sem.acquire().await.ok();
                 let size =
                     Self::probe_single_url(&client, &norm_url, session_cookie.as_deref()).await;
                 (orig_url, norm_url, size)

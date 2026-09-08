@@ -267,28 +267,30 @@ impl DownloadRepository {
         id: &str,
         sha256: &str,
         size: u64,
-        relative_blob_path: &str,
+        relative_blob_path: Option<&str>,
     ) -> Result<DownloadJob, String> {
         let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
         let transaction = connection
             .transaction()
             .map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                "INSERT INTO media_blobs (sha256, size, relative_path)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(sha256) DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP",
-                params![sha256, size, relative_blob_path],
-            )
-            .map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                "INSERT INTO download_blob_refs (job_id, blob_sha256)
-                 VALUES (?1, ?2)
-                 ON CONFLICT(job_id) DO UPDATE SET blob_sha256 = excluded.blob_sha256",
-                params![id, sha256],
-            )
-            .map_err(|error| error.to_string())?;
+        if let Some(blob_path) = relative_blob_path {
+            transaction
+                .execute(
+                    "INSERT INTO media_blobs (sha256, size, relative_path)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(sha256) DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP",
+                    params![sha256, size, blob_path],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "INSERT INTO download_blob_refs (job_id, blob_sha256)
+                     VALUES (?1, ?2)
+                     ON CONFLICT(job_id) DO UPDATE SET blob_sha256 = excluded.blob_sha256",
+                    params![id, sha256],
+                )
+                .map_err(|error| error.to_string())?;
+        }
         transaction
             .execute(
                 "UPDATE download_jobs SET status = 'completed', downloaded_bytes = ?2,
@@ -505,5 +507,34 @@ mod tests {
         repository.update_status("job-1", "downloading").unwrap();
         assert_eq!(repository.recover_interrupted().unwrap(), vec!["job-1"]);
         assert_eq!(repository.get("job-1").unwrap().unwrap().status, "queued");
+    }
+
+    #[test]
+    fn mark_completed_supports_optional_blob() {
+        let repository = DownloadRepository::in_memory();
+        repository.create_or_get(input()).unwrap();
+        let completed = repository
+            .mark_completed("job-1", "hash123", 1024, None)
+            .unwrap();
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.downloaded_bytes, 1024);
+        assert_eq!(repository.take_orphan_blob("hash123").unwrap(), None);
+
+        repository
+            .create_or_get(NewDownloadJob {
+                id: "job-2",
+                logical_key: "key-2",
+                ..input()
+            })
+            .unwrap();
+        let completed2 = repository
+            .mark_completed("job-2", "hash456", 2048, Some(".media/45/hash456"))
+            .unwrap();
+        assert_eq!(completed2.status, "completed");
+        repository.remove("job-2").unwrap();
+        assert_eq!(
+            repository.take_orphan_blob("hash456").unwrap(),
+            Some(".media/45/hash456".to_string())
+        );
     }
 }

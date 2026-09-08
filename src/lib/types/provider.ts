@@ -44,6 +44,38 @@ export interface ProviderAuthSchema {
   help_url?: string | null;
 }
 
+export interface PopularPeriodOption {
+  id: string;
+  label_key: string;
+}
+
+export interface PopularCapabilities {
+  supported: boolean;
+  periods: PopularPeriodOption[];
+  default_period?: string | null;
+  supports_date: boolean;
+}
+
+export interface SortOption {
+  id: string;
+  label_key: string;
+  is_server_side: boolean;
+}
+
+export interface ProviderCapabilities {
+  provider_id: string;
+  popular: PopularCapabilities;
+  creator_sorts: SortOption[];
+  post_sorts: SortOption[];
+  supports_query_search: boolean;
+  supports_date_filter: boolean;
+  supports_hash_search: boolean;
+  supports_announcements: boolean;
+  supports_fancards: boolean;
+  supports_similar_creators: boolean;
+  supports_creator_tags: boolean;
+}
+
 export interface FavoritesSyncResult {
   provider_id: string;
   pulled_count: number;

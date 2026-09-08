@@ -12,10 +12,11 @@
   import { tooltip, ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, postMediaUrl, postThumbnailUrl, postPlaceholderUrl, getPostFileCounts } from '$lib/utils/media';
+  import { isVideoUrl, postMediaUrl, postThumbnailUrl, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
+  import IconWarning from '~icons/fluent/warning-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
@@ -73,6 +74,7 @@
 
   let isLite = $derived(configState.settings.card_view_mode === 'lite');
   let fileCounts = $derived(getPostFileCounts(effectivePost));
+  let isUnarchived = $derived(isPostUnarchived(effectivePost));
   let isFavorited = $derived(accountState.isPostFavorite(post.service, post.user, post.id));
   let favoritingPending = $state(false);
   let stashMenuOpen = $state(false);
@@ -230,6 +232,20 @@
     selectionState.toggle('posts', postKey, post, orderedKeys, event.shiftKey, itemsMap);
   }
 
+  $effect(() => {
+    const service = post?.service;
+    const user = post?.user;
+    const id = post?.id;
+    if (service && user && id && !effectivePost.detail_fetched) {
+      contentState.enqueueDetailPrefetch(service, user, id);
+    }
+    return () => {
+      if (service && user && id) {
+        contentState.cancelPrefetch(service, user, id);
+      }
+    };
+  });
+
   function handleCardHover() {
     if (post?.service && post?.user && post?.id && !effectivePost.detail_fetched) {
       void contentState.loadPost(post.service, post.user, post.id);
@@ -326,51 +342,68 @@
         <IconCheckmark class="w-[14px] h-[14px]" />
       {/if}
     </button>
+  {:else if isLite && isUnarchived}
+    <div class="grid-tile-top-files">
+      <span
+        class="grid-tile-file-item grid-tile-unarchived-item"
+        use:tooltip={i18n.t('feed.unarchived_badge') || "Haven't archived this post yet"}
+      >
+        <IconWarning class="w-3.5 h-3.5 text-amber-400" />
+      </span>
+    </div>
   {:else if !isLite}
-    {#if fileCounts.attachments > 0}
+    {#if isUnarchived || fileCounts.attachments > 0 || fileCounts.images > 0 || fileCounts.videos > 0 || fileCounts.audios > 0 || fileCounts.archives > 0 || fileCounts.documents > 0 || fileCounts.clouds > 0}
       <div class="grid-tile-top-files">
-        <span class="grid-tile-file-item" use:tooltip={i18n.t('feed.attachments_count', { count: fileCounts.attachments }) || `${fileCounts.attachments} attachments`}>
-          <IconAttach />
-          <span>{fileCounts.attachments}</span>
-        </span>
-      </div>
-    {:else if fileCounts.images > 0 || fileCounts.videos > 0 || fileCounts.audios > 0 || fileCounts.archives > 0 || fileCounts.documents > 0 || fileCounts.clouds > 0}
-      <div class="grid-tile-top-files">
-        {#if fileCounts.images > 0}
-          <span class="grid-tile-file-item" use:tooltip={`${fileCounts.images} ${i18n.t('feed.photos') || 'photos'}`}>
-            <IconImage />
-            {#if fileCounts.images > 1}<span>{fileCounts.images}</span>{/if}
+        {#if isUnarchived}
+          <span
+            class="grid-tile-file-item grid-tile-unarchived-item"
+            use:tooltip={i18n.t('feed.unarchived_badge') || "Haven't archived this post yet"}
+          >
+            <IconWarning class="w-3.5 h-3.5 text-amber-400" />
           </span>
         {/if}
-        {#if fileCounts.videos > 0}
-          <span class="grid-tile-file-item" use:tooltip={`${fileCounts.videos} ${i18n.t('feed.videos') || 'videos'}`}>
-            <IconVideo />
-            {#if fileCounts.videos > 1}<span>{fileCounts.videos}</span>{/if}
+        {#if fileCounts.attachments > 0}
+          <span class="grid-tile-file-item" use:tooltip={i18n.t('feed.attachments_count', { count: fileCounts.attachments }) || `${fileCounts.attachments} attachments`}>
+            <IconAttach />
+            <span>{fileCounts.attachments}</span>
           </span>
-        {/if}
-        {#if fileCounts.audios > 0}
-          <span class="grid-tile-file-item" use:tooltip={`${fileCounts.audios} ${i18n.t('feed.audio') || 'audio'}`}>
-            <IconMusic />
-            {#if fileCounts.audios > 1}<span>{fileCounts.audios}</span>{/if}
-          </span>
-        {/if}
-        {#if fileCounts.archives > 0}
-          <span class="grid-tile-file-item" use:tooltip={`${fileCounts.archives} ${i18n.t('feed.archives') || 'archives'}`}>
-            <IconFolderZip />
-            {#if fileCounts.archives > 1}<span>{fileCounts.archives}</span>{/if}
-          </span>
-        {/if}
-        {#if fileCounts.documents > 0}
-          <span class="grid-tile-file-item" use:tooltip={`${fileCounts.documents} ${i18n.t('feed.documents') || 'documents'}`}>
-            <IconDocument />
-            {#if fileCounts.documents > 1}<span>{fileCounts.documents}</span>{/if}
-          </span>
-        {/if}
-        {#if fileCounts.clouds > 0}
-          <span class="grid-tile-file-item grid-tile-cloud-item" use:tooltip={`${fileCounts.clouds} ${i18n.t('feed.cloud_links') || 'cloud links'}`}>
-            <IconCloud />
-            {#if fileCounts.clouds > 1}<span>{fileCounts.clouds}</span>{/if}
-          </span>
+        {:else}
+          {#if fileCounts.images > 0}
+            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.images} ${i18n.t('feed.photos') || 'photos'}`}>
+              <IconImage />
+              {#if fileCounts.images > 1}<span>{fileCounts.images}</span>{/if}
+            </span>
+          {/if}
+          {#if fileCounts.videos > 0}
+            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.videos} ${i18n.t('feed.videos') || 'videos'}`}>
+              <IconVideo />
+              {#if fileCounts.videos > 1}<span>{fileCounts.videos}</span>{/if}
+            </span>
+          {/if}
+          {#if fileCounts.audios > 0}
+            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.audios} ${i18n.t('feed.audio') || 'audio'}`}>
+              <IconMusic />
+              {#if fileCounts.audios > 1}<span>{fileCounts.audios}</span>{/if}
+            </span>
+          {/if}
+          {#if fileCounts.archives > 0}
+            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.archives} ${i18n.t('feed.archives') || 'archives'}`}>
+              <IconFolderZip />
+              {#if fileCounts.archives > 1}<span>{fileCounts.archives}</span>{/if}
+            </span>
+          {/if}
+          {#if fileCounts.documents > 0}
+            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.documents} ${i18n.t('feed.documents') || 'documents'}`}>
+              <IconDocument />
+              {#if fileCounts.documents > 1}<span>{fileCounts.documents}</span>{/if}
+            </span>
+          {/if}
+          {#if fileCounts.clouds > 0}
+            <span class="grid-tile-file-item grid-tile-cloud-item" use:tooltip={`${fileCounts.clouds} ${i18n.t('feed.cloud_links') || 'cloud links'}`}>
+              <IconCloud />
+              {#if fileCounts.clouds > 1}<span>{fileCounts.clouds}</span>{/if}
+            </span>
+          {/if}
         {/if}
       </div>
     {/if}

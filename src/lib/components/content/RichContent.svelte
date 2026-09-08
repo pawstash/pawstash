@@ -325,7 +325,6 @@
     const url = anchor.href;
     const platform = smartLinkPlatform(url);
 
-    // 1. Cloud folder links (MEGA, Dropbox, Pixeldrain, Google Drive)
     if (platform && CLOUD_PLATFORMS.has(platform)) {
       linkPopover = {
         url,
@@ -337,7 +336,6 @@
       return;
     }
 
-    // 2. Creator Post Smart links (Patreon, Fanbox, Fantia, Boosty, etc.)
     if (platform && (POST_PLATFORMS.has(platform) || platform === 'shortlink')) {
       anchor.dataset.smartState = 'checking';
       const resolved = await resolveSmartLink(url, currentService, currentCreatorId);
@@ -354,8 +352,6 @@
       }
     }
 
-    // 3. Regular external links (Proton Drive, Bunny, Gofile, MediaFire, general web links)
-    // Directly open external URL in the default browser so it works instantly!
     void apiOpenInBrowser(url);
   }
 

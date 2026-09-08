@@ -570,11 +570,12 @@ fn find_provider_for_service(
         })
         .map(|p| p.id.clone())
         .unwrap_or_else(|| {
-            if srv_clean == "onlyfans" || srv_clean == "fansly" {
-                "onlyhaven".to_string()
-            } else {
-                "pawchive".to_string()
-            }
+            let defaults = crate::api::providers::manager::ProviderManager::default_configs();
+            defaults
+                .iter()
+                .find(|p| p.services.iter().any(|s| s.eq_ignore_ascii_case(&srv_clean)))
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| "pawchive".to_string())
         })
 }
 
@@ -589,7 +590,6 @@ pub fn parse_deep_link(
 
     let url = Url::parse(raw).map_err(|e| format!("Invalid deep link URL: {e}"))?;
 
-    // 1. Custom Scheme: pawstash://
     if url.scheme().eq_ignore_ascii_case("pawstash") {
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
         let segments: Vec<&str> = url
@@ -597,7 +597,6 @@ pub fn parse_deep_link(
             .map(|s| s.filter(|p| !p.is_empty()).collect())
             .unwrap_or_default();
 
-        // 1.1 pawstash://open?url=...
         if host == "open" {
             let inner_url = url
                 .query_pairs()
@@ -607,7 +606,6 @@ pub fn parse_deep_link(
             return parse_deep_link(&inner_url, configured_providers);
         }
 
-        // 1.2 pawstash://search?q=...
         if host == "search" {
             let query = url
                 .query_pairs()
@@ -621,7 +619,6 @@ pub fn parse_deep_link(
             return Ok(DeepLinkTarget::Search { provider_id, query });
         }
 
-        // 1.3 pawstash://post/{service}/{creator_id}/{post_id}
         if host == "post" || host == "posts" {
             if segments.len() >= 3 {
                 let service = segments[0].to_string();
@@ -655,7 +652,6 @@ pub fn parse_deep_link(
             }
         }
 
-        // 1.4 pawstash://creator/{service}/{creator_id}
         if (host == "creator" || host == "creators" || host == "user") && segments.len() >= 2 {
             let service = segments[0].to_string();
             let creator_id = segments[1].to_string();
@@ -671,7 +667,6 @@ pub fn parse_deep_link(
             });
         }
 
-        // 1.5 pawstash://{provider_id}/post/{service}/{creator_id}/{post_id} or pawstash://{provider_id}/{service}/user/{creator_id}/post/{post_id}
         if let Some(prov) = configured_providers
             .iter()
             .find(|p| p.id.eq_ignore_ascii_case(&host))
@@ -704,7 +699,6 @@ pub fn parse_deep_link(
         return Err(format!("Unrecognized pawstash scheme format: {raw}"));
     }
 
-    // 2. Direct Web URLs (HTTP / HTTPS)
     if matches!(url.scheme(), "http" | "https") {
         let host = url
             .host_str()
@@ -715,7 +709,6 @@ pub fn parse_deep_link(
             .map(|s| s.filter(|p| !p.is_empty()).collect())
             .unwrap_or_default();
 
-        // 2.1 Check if host matches any configured provider's dynamic domain / mirror
         if let Some(prov) = configured_providers
             .iter()
             .find(|p| matches_provider_domain(&host, p))
@@ -774,7 +767,6 @@ pub fn parse_deep_link(
             }
         }
 
-        // 2.2 Check external creator / post links (Patreon, Fanbox, Fantia, Boosty, OnlyFans, Fansly, etc.)
         if let Some(ext_post) = parse_external_post_link(raw) {
             let provider_id = find_provider_for_service(&ext_post.service, configured_providers);
             return Ok(DeepLinkTarget::Post {
@@ -920,7 +912,6 @@ mod tests {
             },
         ];
 
-        // 1. Direct scheme post
         let res =
             parse_deep_link("pawstash://post/patreon/12516244/168022069", &providers).unwrap();
         assert_eq!(
@@ -933,7 +924,6 @@ mod tests {
             }
         );
 
-        // 2. Direct scheme creator
         let res = parse_deep_link("pawstash://creator/fanbox/51803217", &providers).unwrap();
         assert_eq!(
             res,
@@ -944,7 +934,6 @@ mod tests {
             }
         );
 
-        // 3. Direct scheme search
         let res = parse_deep_link("pawstash://search?q=art", &providers).unwrap();
         assert_eq!(
             res,
@@ -954,7 +943,6 @@ mod tests {
             }
         );
 
-        // 4. pawstash://open?url=...
         let res = parse_deep_link(
             "pawstash://open?url=https%3A%2F%2Fpawchive.pw%2Ffanbox%2Fuser%2F51803217%2Fpost%2F12531297",
             &providers,

@@ -219,7 +219,6 @@
     -webkit-overflow-scrolling: touch;
     -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
     mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    padding-right: 20px;
   }
 
   .sticky-header-bar.is-mobile .sticky-leading-zone:not(:has(.btn-icon)) {

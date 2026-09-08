@@ -289,6 +289,22 @@ impl Post {
             }
         }
     }
+
+    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+        provider.resolve_post_url(&self.service, &self.user, &self.id)
+    }
+}
+
+impl Creator {
+    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+        provider.resolve_creator_url(&self.service, &self.id)
+    }
+}
+
+impl CreatorProfile {
+    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+        provider.resolve_creator_url(&self.service, &self.id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

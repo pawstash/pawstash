@@ -88,13 +88,13 @@
       {#if children}
         {#if isScrollable}
           <div class="modal-body-wrapper" class:is-fixed-height={fixedHeight} use:scrollable>
-            <div class="modal-body" class:is-flush={flush} class:is-fixed-height={fixedHeight}>
+            <div class="modal-body" class:is-flush={flush} class:has-footer={Boolean(footer)} class:is-fixed-height={fixedHeight}>
               {@render children()}
             </div>
           </div>
         {:else}
           <div class="modal-body-wrapper is-unscrollable" class:is-fixed-height={fixedHeight}>
-            <div class="modal-body" class:is-flush={flush} class:is-fixed-height={fixedHeight}>
+            <div class="modal-body" class:is-flush={flush} class:has-footer={Boolean(footer)} class:is-fixed-height={fixedHeight}>
               {@render children()}
             </div>
           </div>
@@ -151,7 +151,7 @@
     max-height: min(90vh, calc(100vh - 48px));
     display: flex;
     flex-direction: column;
-    padding: var(--modal-padding, 6px);
+    padding: var(--modal-padding, 0px);
     background: var(--floating-bg);
     border: var(--floating-border);
     border-radius: var(--modal-radius, 20px);
@@ -178,7 +178,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 6px 6px 10px;
+    padding:
+      calc(var(--modal-padding-top, 18px) * var(--ui-scale, 1))
+      calc((var(--modal-padding-x, 18px) - 4px) * var(--ui-scale, 1))
+      0
+      calc(var(--modal-padding-x, 18px) * var(--ui-scale, 1));
     border-bottom: none;
     flex-shrink: 0;
     box-sizing: border-box;
@@ -304,8 +308,15 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 0;
+    padding:
+      calc(var(--modal-title-content-gap, 12px) * var(--ui-scale, 1))
+      calc(var(--modal-padding-x, 18px) * var(--ui-scale, 1))
+      calc(var(--modal-padding-bottom, 18px) * var(--ui-scale, 1));
     box-sizing: border-box;
+  }
+
+  .modal-body.has-footer {
+    padding-bottom: 0;
   }
 
   .modal-body.is-fixed-height {
@@ -318,18 +329,21 @@
   .modal-footer {
     display: flex;
     flex-direction: column;
-    padding: 8px 6px 4px 6px;
+    padding:
+      calc(var(--modal-content-footer-gap, 16px) * var(--ui-scale, 1))
+      calc(var(--modal-padding-x, 18px) * var(--ui-scale, 1))
+      calc(var(--modal-padding-bottom, 18px) * var(--ui-scale, 1));
     border-top: var(--border-width) solid var(--border-color);
     flex-shrink: 0;
     box-sizing: border-box;
   }
 
-  .modal-footer.is-flush {
-    padding: 10px 14px 14px 14px;
-  }
-
   .modal-footer.is-borderless {
     border-top: none;
+  }
+
+  .modal-footer.is-flush {
+    padding: 0;
   }
 
   .modal-box.is-flush {
@@ -337,7 +351,11 @@
   }
 
   .modal-header.is-flush {
-    padding: 10px 14px 6px 14px;
+    padding:
+      calc(var(--modal-padding-top, 18px) * var(--ui-scale, 1))
+      calc((var(--modal-padding-x, 18px) - 4px) * var(--ui-scale, 1))
+      calc(var(--modal-title-content-gap, 12px) * var(--ui-scale, 1))
+      calc(var(--modal-padding-x, 18px) * var(--ui-scale, 1));
   }
 
   .modal-header.is-borderless {

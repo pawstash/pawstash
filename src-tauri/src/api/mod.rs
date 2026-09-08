@@ -1,4 +1,3 @@
-pub mod fixtures;
 pub mod models;
 pub mod providers;
 pub mod reconciliation;

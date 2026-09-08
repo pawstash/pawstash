@@ -1,7 +1,8 @@
 import type { Post, Attachment } from '$lib/types/content';
 import { providerState } from '$lib/state/providerState.svelte';
-import { getProviderDriver, deriveSubdomainOrigin } from '$lib/providers/drivers';
+import { getProviderDriver, deriveSubdomainOrigin, DRIVERS } from '$lib/providers/drivers';
 import { thumbHashToUrl } from './thumbhash';
+import { apiProbeDownloadSize } from '$lib/utils/ipc';
 
 export { deriveSubdomainOrigin };
 
@@ -182,14 +183,39 @@ export function resolveServerOrigin(server: string, service?: string): string {
   }
 }
 
-export function attachmentMediaUrl(file: Attachment, service: string): string {
+export function isPostUnarchived(post?: Post | null): boolean {
+  if (!post) return false;
+  const hasMedia = Boolean(
+    (post.file && (post.file.path || post.file.name)) ||
+    (post.attachments && post.attachments.length > 0) ||
+    (post.attachment_count && post.attachment_count > 0)
+  );
+  if (!hasMedia) return false;
+
+  if (post.has_full === false) return true;
+  if (post.preview_state === 'pending') return true;
+
+  if (post.attachments && Array.isArray(post.attachments)) {
+    if (post.attachments.some((a: any) => a?.deferred === true || a?.extra?.deferred === true)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function attachmentMediaUrl(file: Attachment, service: string, post?: Post | null): string {
   if (!file?.path) return '';
   if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
     return file.path;
   }
 
-  const isPreviewOnly = (file as any).preview_only === true || (file.extra as any)?.preview_only === true;
-  if (isPreviewOnly) {
+  const isPreviewOnly = (file as any).preview_only === true ||
+    (file.extra as any)?.preview_only === true ||
+    (file as any).deferred === true ||
+    (file.extra as any)?.deferred === true;
+
+  if (isPreviewOnly || (post?.has_full === false && !isAttachmentVideo(file, file.path))) {
     return attachmentThumbnailUrl(file, service);
   }
 
@@ -206,7 +232,7 @@ export function attachmentThumbnailUrl(file: Attachment, service: string): strin
     if (thumb && typeof thumb === 'string') return thumb;
     const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
     const { config, driver } = resolveDriver(service, explicitProv);
-    if (config.id === 'onlyhaven') {
+    if (driver.supportsVideoThumbnails) {
       return driver.resolveThumbnailUrl(config, file.path);
     }
     return '';
@@ -228,7 +254,7 @@ export function postThumbnailUrl(post: Post): string | null {
   if (media?.path) {
     const explicitProv = (post as any)?.provider_id || (post.extra as any)?.provider_id || (media as any)?.provider_id || (media?.extra as any)?.provider_id;
     const { config, driver } = resolveDriver(post.service, explicitProv);
-    if (isAttachmentVideo(media, media.path) && config.id !== 'onlyhaven') {
+    if (isAttachmentVideo(media, media.path) && !driver.supportsVideoThumbnails) {
       const thumb = (media as any)?.thumbnail || (media as any)?.preview || (media.extra as any)?.thumbnail || (media.extra as any)?.preview;
       if (thumb && typeof thumb === 'string') return thumb;
       return null;
@@ -250,6 +276,36 @@ export function postThumbnailUrl(post: Post): string | null {
   }
 
   return null;
+}
+
+export function deriveCdnThumbnailUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const providers = providerState.providers;
+  if (providers.length > 0) {
+    for (const config of providers) {
+      const driver = getProviderDriver(config.id);
+      const thumb = driver.resolveCdnThumbnailUrl(config, url);
+      if (thumb) return thumb;
+    }
+  } else {
+    for (const [id, driver] of Object.entries(DRIVERS)) {
+      const fallbackConfig = {
+        id,
+        name: id,
+        enabled: true,
+        api_url: '',
+        fallback_urls: [],
+        session_cookie: '',
+        username: '',
+        services: [],
+        is_custom: false,
+        priority: 1
+      };
+      const thumb = driver.resolveCdnThumbnailUrl(fallbackConfig, url);
+      if (thumb) return thumb;
+    }
+  }
+  return undefined;
 }
 
 export function postPlaceholderUrl(post: Post): string | null {
@@ -472,7 +528,6 @@ export function getPostFormats(post: Post): string[] {
 
   const formats: string[] = [];
 
-  // Video
   const hasVideoFile = allFiles.some((f) => /\.(mp4|webm|mkv|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f));
   const hasVideoEmbed = /youtube|youtu\.be|vimeo|bilibili|streamable|gfycat|sproutvideo|vids\.io|redgifs|mediadelivery\.net|b-cdn\.net|\.(mp4|webm|mkv|mov|m4v)/i.test(embedStr) || /<video|\.(mp4|webm|mkv|mov|m4v)/i.test(contentStr);
   const hasVideoTitle = /\b(video|mp4|webm|movie|animation|anim|clip|mkv|mov|4k|1080p|720p|60fps|short|pv|trailer)\b/i.test(titleStr);
@@ -482,7 +537,6 @@ export function getPostFormats(post: Post): string[] {
     formats.push('video');
   }
 
-  // Image
   const hasImageFile = allFiles.some((f) => /\.(avif|bmp|gif|jpe?g|png|webp)(?:$|[?#])/i.test(f));
   const hasImageEmbed = /\.(avif|bmp|gif|jpe?g|png|webp)|<img/i.test(embedStr) || /<img/i.test(contentStr);
   const hasImageTag = /\b(photo|photos|image|images|pic|pics|picture|pictures|illustration|art|cg|drawing|wallpaper)\b/i.test(tagsStr);
@@ -492,7 +546,6 @@ export function getPostFormats(post: Post): string[] {
     formats.push('image');
   }
 
-  // Audio
   const hasAudioFile = allFiles.some((f) => /\.(mp3|wav|ogg|m4a|flac|aac|opus|wma)(?:$|[?#])/i.test(f));
   const hasAudioEmbed = /soundcloud|bandcamp|spotify|audio|\.(mp3|wav|ogg|m4a|flac)/i.test(embedStr) || /<audio|\.(mp3|wav|ogg|m4a|flac)/i.test(contentStr);
   const hasAudioTitle = /\b(audio|mp3|wav|flac|sound|track|voice|podcast|asmr|song|music|ost)\b/i.test(titleStr);
@@ -502,14 +555,12 @@ export function getPostFormats(post: Post): string[] {
     formats.push('audio');
   }
 
-  // Text
   const hasTextContent = Boolean(p.content && p.content.trim().length > 20);
   const isTextOnlyPost = (p.attachment_count ?? 0) === 0 && !p.file?.path && !p.file?.name && directMedia.length === 0;
   if (hasTextContent || isTextOnlyPost) {
     formats.push('text');
   }
 
-  // Archive / Files
   const hasArchiveFile = allFiles.some((f) => /\.(zip|rar|7z|tar|gz|pdf|txt|epub|html|cbz|cbr|psd|clip|blend|fbx|obj|stl)(?:$|[?#])/i.test(f));
   const hasArchiveLink = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(contentStr) || /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(embedStr);
   const hasArchiveTitle = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|file|files|psd|clip|brush|brushes|model|blend)\b/i.test(titleStr);
@@ -518,7 +569,6 @@ export function getPostFormats(post: Post): string[] {
     formats.push('archive');
   }
 
-  // WIP (Work in Progress / Sketches / Drafts / Previews)
   const isWipTag = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|progress|in\s+progress)\b/i.test(tagsStr);
   const isWipTitle = /\b(wip|w\.i\.p|w\/i\/p|work\s+in\s+progress|sketch|sketches|rough|draft|preview|doodle|doodles|lineart|line\s*art|in\s+progress)\b|[\[\(]wip[\]\)]|wip\s*#?\d+/i.test(titleStr);
   const isWipContent = /#(wip|sketch|workinprogress|draft|preview|doodle)\b|\[wip\]|\(wip\)/i.test(contentStr);
@@ -552,7 +602,6 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
   const results: Array<{ url: string; name: string }> = [];
   const seen = new Set<string>();
 
-  // 1. Anchors: <a href="...">
   const anchorRegex = /<a\s+[^>]*href=["'](https?:\/\/[^"'>]+)["'][^>]*>(.*?)<\/a>/gi;
   let match: RegExpExecArray | null;
   while ((match = anchorRegex.exec(raw)) !== null) {
@@ -567,7 +616,6 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
     }
   }
 
-  // 2. Images: <img src="...">
   const imgRegex = /<img\s+[^>]*src=["'](https?:\/\/[^"'>]+)["'][^>]*>/gi;
   while ((match = imgRegex.exec(raw)) !== null) {
     const url = match[1];
@@ -578,7 +626,6 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
     }
   }
 
-  // 3. Raw URLs in plain text
   const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
   while ((match = urlRegex.exec(raw)) !== null) {
     const url = match[0];
@@ -930,7 +977,6 @@ export function diagnoseVideoFailure(
   }
 
   if (mediaErr) {
-    // 1: MEDIA_ERR_ABORTED, 2: MEDIA_ERR_NETWORK, 3: MEDIA_ERR_DECODE, 4: MEDIA_ERR_SRC_NOT_SUPPORTED
     if (mediaErr.code === 2) {
       return {
         preset: 'network',
@@ -966,7 +1012,6 @@ export function diagnoseVideoFailure(
     }
   }
 
-  // Fallback for local files: if local video fails to play, it's decode or format
   if (isLocal) {
     return {
       preset: 'decode',
@@ -974,7 +1019,6 @@ export function diagnoseVideoFailure(
     };
   }
 
-  // If container format is a known non-native web format fallback
   const ext = getFileExtension(name);
   if (['AVI', 'WMV', 'FLV', 'MKV', 'MOV', 'M4V', 'TS'].includes(ext)) {
     return {
@@ -1003,40 +1047,20 @@ export async function diagnoseVideoFailureAsync(
   const src = videoEl?.src || file?.path || '';
   if (src.startsWith('http://') || src.startsWith('https://')) {
     try {
-      const resp = await fetch(src, { method: 'HEAD' });
-      if (!resp.ok) {
-        if (resp.status === 403) {
-          return {
-            preset: 'forbidden',
-            httpStatus: 403,
-            message: '403 Forbidden'
-          };
-        }
-        if (resp.status === 404) {
-          return {
-            preset: 'not_found',
-            httpStatus: 404,
-            message: '404 Not Found'
-          };
-        }
-        if (resp.status === 429) {
-          return {
-            preset: 'rate_limited',
-            httpStatus: 429,
-            message: '429 Too Many Requests'
-          };
-        }
-        if (resp.status >= 500) {
-          return {
-            preset: 'server_error',
-            httpStatus: resp.status,
-            message: `HTTP ${resp.status} ${resp.statusText || 'Server Error'}`
-          };
-        }
+      const size = await apiProbeDownloadSize(src);
+      if (typeof size === 'number' && size > 0) {
+        return {
+          preset: 'decode',
+          message: 'Video codec or container is not supported by browser'
+        };
+      } else {
+        return {
+          preset: 'not_found',
+          httpStatus: 404,
+          message: 'Video file is unavailable or missing on server'
+        };
       }
-    } catch {
-      // ignore network fetch failures
-    }
+    } catch {}
   }
 
   return syncDiag;

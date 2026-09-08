@@ -152,8 +152,8 @@
   }
 
   function getAvatarUrl(creator: Creator) {
-    const headerThumb = (creator.extra as any)?.header_thumbhash;
-    const avatarThumb = (creator.extra as any)?.avatar_thumbhash;
+    const headerThumb = (creator as any).header_thumbhash || (creator.extra as any)?.header_thumbhash;
+    const avatarThumb = (creator as any).avatar_thumbhash || (creator.extra as any)?.avatar_thumbhash;
     if (headerThumb) {
       const url = thumbHashToUrl(headerThumb);
       if (url) return url;
@@ -201,16 +201,34 @@
     }, 500);
   }
 
-  let sortOptions = $derived([
-    { value: 'favorited_desc', label: i18n.t('creators.sort_favorited_desc') || 'Popularity (Desc)' },
-    { value: 'favorited_asc', label: i18n.t('creators.sort_favorited_asc') || 'Popularity (Asc)' },
-    { value: 'updated_desc', label: i18n.t('creators.sort_updated_desc') || 'Updated (Newest first)' },
-    { value: 'updated_asc', label: i18n.t('creators.sort_updated_asc') || 'Updated (Oldest first)' },
-    { value: 'indexed_desc', label: i18n.t('creators.sort_indexed_desc') || 'Indexed (Newest first)' },
-    { value: 'indexed_asc', label: i18n.t('creators.sort_indexed_asc') || 'Indexed (Oldest first)' },
-    { value: 'name_asc', label: i18n.t('creators.sort_name_asc') || 'Name (A-Z)' },
-    { value: 'name_desc', label: i18n.t('creators.sort_name_desc') || 'Name (Z-A)' }
-  ]);
+  let activeCreatorSorts = $derived(providerState.activeCapabilities?.creator_sorts);
+
+  let sortOptions = $derived.by(() => {
+    const sorts = activeCreatorSorts;
+    const allOptions = [
+      { id: 'favorited', desc: { value: 'favorited_desc', label: i18n.t('creators.sort_favorited_desc') || 'Popularity (Desc)' }, asc: { value: 'favorited_asc', label: i18n.t('creators.sort_favorited_asc') || 'Popularity (Asc)' } },
+      { id: 'updated', desc: { value: 'updated_desc', label: i18n.t('creators.sort_updated_desc') || 'Updated (Newest first)' }, asc: { value: 'updated_asc', label: i18n.t('creators.sort_updated_asc') || 'Updated (Oldest first)' } },
+      { id: 'indexed', desc: { value: 'indexed_desc', label: i18n.t('creators.sort_indexed_desc') || 'Indexed (Newest first)' }, asc: { value: 'indexed_asc', label: i18n.t('creators.sort_indexed_asc') || 'Indexed (Oldest first)' } },
+      { id: 'name', asc: { value: 'name_asc', label: i18n.t('creators.sort_name_asc') || 'Name (A-Z)' }, desc: { value: 'name_desc', label: i18n.t('creators.sort_name_desc') || 'Name (Z-A)' } }
+    ];
+
+    if (!sorts || sorts.length === 0) {
+      return allOptions.flatMap(o => o.id === 'name' ? [o.asc, o.desc] : [o.desc, o.asc]);
+    }
+
+    const result: { value: string; label: string }[] = [];
+    for (const s of sorts) {
+      const matched = allOptions.find(o => o.id === s.id);
+      if (matched) {
+        if (s.id === 'name') {
+          result.push(matched.asc, matched.desc);
+        } else {
+          result.push(matched.desc, matched.asc);
+        }
+      }
+    }
+    return result.length > 0 ? result : allOptions.flatMap(o => o.id === 'name' ? [o.asc, o.desc] : [o.desc, o.asc]);
+  });
 
   let currentSortValue = $derived(`${creatorsState.sortBy}_${creatorsState.sortOrder}`);
 

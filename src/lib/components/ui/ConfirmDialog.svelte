@@ -129,7 +129,7 @@
     font-size: calc(var(--text-sm, 13px) * var(--ui-scale, 1));
     line-height: var(--leading-relaxed, 1.5);
     color: var(--text-secondary);
-    padding: 0 10px 14px 10px;
+    padding: 0 0 calc(14px * var(--ui-scale, 1)) 0;
     box-sizing: border-box;
   }
 

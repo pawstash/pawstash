@@ -1,6 +1,7 @@
 import type { ProviderConfig } from '$lib/types/provider';
 
 export interface ProviderDriver {
+  readonly supportsVideoThumbnails?: boolean;
   resolveMediaUrl(config: ProviderConfig, path: string, server?: string, ext?: string): string;
   resolveThumbnailUrl(config: ProviderConfig, path: string): string;
   resolveAvatarUrl(config: ProviderConfig, service: string, creatorId: string): string;
@@ -9,6 +10,7 @@ export interface ProviderDriver {
   resolvePostPageUrl(config: ProviderConfig, service: string, creatorId: string, postId: string): string;
   resolveFancardMediaUrl(config: ProviderConfig, service: string, card: { hash?: string; ext?: string }): string;
   resolveFancardThumbnailUrl(config: ProviderConfig, service: string, card: { hash?: string; ext?: string }): string;
+  resolveCdnThumbnailUrl(config: ProviderConfig, url: string): string | undefined;
 }
 
 function siteOrigin(domain: string): string {
@@ -31,6 +33,8 @@ export function deriveSubdomainOrigin(baseUrl: string, prefix: string): string {
 }
 
 export const PawchiveDriver: ProviderDriver = {
+  supportsVideoThumbnails: false,
+
   resolveMediaUrl(config, path, server) {
     const clean = path.replace(/^\/*data\//, '').replace(/^\/+/, '');
     if (server) {
@@ -96,10 +100,29 @@ export const PawchiveDriver: ProviderDriver = {
     const ext = card.ext || 'jpg';
     const origin = config.image_url ? siteOrigin(config.image_url) : deriveSubdomainOrigin(config.api_url, 'img');
     return `${origin}/thumbnail/data/${sub1}/${sub2}/${hash}.${ext}`;
+  },
+
+  resolveCdnThumbnailUrl(config, url) {
+    const cleanUrl = url.split(/[?#]/)[0];
+    if (/\.(m4v|mkv|mov|mp4|webm)$/i.test(cleanUrl)) return undefined;
+    if (cleanUrl.includes('/data/')) {
+      const imgPrefix = config.image_prefix || 'img';
+      if (config.image_url) {
+        const origin = siteOrigin(config.image_url);
+        const dataIdx = cleanUrl.indexOf('/data/');
+        return `${origin}/thumbnail/data/${cleanUrl.slice(dataIdx + '/data/'.length)}`;
+      }
+      return cleanUrl
+        .replace('/data/', '/thumbnail/data/')
+        .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, `://${imgPrefix}.`);
+    }
+    return undefined;
   }
 };
 
 export const OnlyHavenDriver: ProviderDriver = {
+  supportsVideoThumbnails: true,
+
   resolveMediaUrl(config, path, _server, ext) {
     const clean = path.replace(/^\/*media\//, '').replace(/^\/*data\//, '').replace(/^\/+/, '');
     const origin = config.file_url ? siteOrigin(config.file_url) : deriveSubdomainOrigin(config.api_url, 'e1');
@@ -151,10 +174,22 @@ export const OnlyHavenDriver: ProviderDriver = {
     const sub2 = hash.slice(2, 4);
     const origin = config.image_url ? siteOrigin(config.image_url) : deriveSubdomainOrigin(config.api_url, 'img');
     return `${origin}/thumbnail/${sub1}/${sub2}/${hash}/preview.webp`;
+  },
+
+  resolveCdnThumbnailUrl(config, url) {
+    const cleanUrl = url.split(/[?#]/)[0];
+    const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
+    if (match) {
+      const origin = config.image_url
+        ? siteOrigin(config.image_url)
+        : (config.api_url ? deriveSubdomainOrigin(config.api_url, 'img') : 'https://img.onlyhaven.net');
+      return `${origin}/thumbnail/${match[1]}/preview.webp`;
+    }
+    return undefined;
   }
 };
 
-const DRIVERS: Record<string, ProviderDriver> = {
+export const DRIVERS: Record<string, ProviderDriver> = {
   pawchive: PawchiveDriver,
   coomer: PawchiveDriver,
   onlyhaven: OnlyHavenDriver,

@@ -1,7 +1,9 @@
 use super::traits::{
-    AuthField, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+    AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema, ProviderCapabilities,
+    ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
+use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use crate::config::settings::{AppSettings, ProxyMode};
 use crate::smart_links::{
     is_known_shortener_url, parse_external_post_link, parse_pawchive_post_url,
@@ -22,6 +24,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 pub struct PawchiveClient {
     client: Arc<AsyncRwLock<Client>>,
     settings: Arc<AsyncRwLock<AppSettings>>,
+    queue: Arc<ProviderRequestQueue>,
 }
 
 impl PawchiveClient {
@@ -102,24 +105,39 @@ impl PawchiveClient {
             return Ok(());
         }
         let client = self.client.read().await.clone();
-        client
-            .get(format!(
-                "{}/account/logout",
-                Self::site_url(&settings.api_domain)
-            ))
-            .headers(Self::build_headers(&settings))
-            .send()
+        let url = format!("{}/account/logout", Self::site_url(&settings.api_domain));
+        let url_clone = url.clone();
+        let settings_clone = settings.clone();
+        self.queue
+            .send_request(move || {
+                client
+                    .get(&url_clone)
+                    .headers(Self::build_headers(&settings_clone))
+            })
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn new(settings: AppSettings) -> Result<Self, String> {
+        Self::with_queue_config(settings, PawchiveProvider::default_queue_config())
+    }
+
+    pub fn with_queue_config(
+        settings: AppSettings,
+        queue_config: ProviderQueueConfig,
+    ) -> Result<Self, String> {
         let client = Self::build_client(&settings)?;
+        let queue = Arc::new(ProviderRequestQueue::new("pawchive", queue_config));
         Ok(Self {
             client: Arc::new(AsyncRwLock::new(client)),
             settings: Arc::new(AsyncRwLock::new(settings)),
+            queue,
         })
+    }
+
+    pub fn queue(&self) -> Arc<ProviderRequestQueue> {
+        Arc::clone(&self.queue)
     }
 
     pub async fn update_settings(&self, settings: AppSettings) -> Result<(), String> {
@@ -242,10 +260,15 @@ impl PawchiveClient {
             Self::segment(service),
             Self::segment(creator_id)
         );
-        let response = client
-            .get(url)
-            .headers(Self::build_headers(&settings))
-            .send()
+        let url_clone = url.clone();
+        let settings_clone = settings.clone();
+        let response = self
+            .queue
+            .send_request(move || {
+                client
+                    .get(url_clone.clone())
+                    .headers(Self::build_headers(&settings_clone))
+            })
             .await
             .map_err(|error| error.to_string())?;
         if !response.status().is_success() {
@@ -357,11 +380,15 @@ impl PawchiveClient {
         let settings = self.settings.read().await.clone();
         let client = self.client.read().await.clone();
         let url = format!("{}{}", Self::base_url(&settings.api_domain), path);
-        client
-            .request(method, url)
-            .headers(Self::build_headers(&settings))
-            .query(query)
-            .send()
+        let query_vec = query.to_vec();
+        let url_clone = url.clone();
+        self.queue
+            .send_request(move || {
+                client
+                    .request(method.clone(), url_clone.clone())
+                    .headers(Self::build_headers(&settings))
+                    .query(&query_vec)
+            })
             .await
             .map_err(|e| e.to_string())
     }
@@ -388,11 +415,17 @@ impl PawchiveClient {
             };
             let client = self.client.read().await.clone();
             let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
-            if let Ok(guest_resp) = client
-                .request(method.clone(), url)
-                .headers(Self::build_headers(&guest_settings))
-                .query(query)
-                .send()
+            let query_vec = query.to_vec();
+            let method_clone = method.clone();
+            let url_clone = url.clone();
+            if let Ok(guest_resp) = self
+                .queue
+                .send_request(move || {
+                    client
+                        .request(method_clone.clone(), url_clone.clone())
+                        .headers(Self::build_headers(&guest_settings))
+                        .query(&query_vec)
+                })
                 .await
             {
                 if guest_resp.status().is_success() {
@@ -421,11 +454,17 @@ impl PawchiveClient {
                     };
                     let client = self.client.read().await.clone();
                     let url = format!("{}{}", Self::base_url(&guest_settings.api_domain), path);
-                    if let Ok(guest_resp) = client
-                        .request(method, url)
-                        .headers(Self::build_headers(&guest_settings))
-                        .query(query)
-                        .send()
+                    let query_vec = query.to_vec();
+                    let method_clone = method;
+                    let url_clone = url.clone();
+                    if let Ok(guest_resp) = self
+                        .queue
+                        .send_request(move || {
+                            client
+                                .request(method_clone.clone(), url_clone.clone())
+                                .headers(Self::build_headers(&guest_settings))
+                                .query(&query_vec)
+                        })
                         .await
                     {
                         if guest_resp.status().is_success() {
@@ -478,10 +517,16 @@ impl PawchiveClient {
                 headers.remove(COOKIE);
             }
 
-            let response = client
-                .get(url.clone())
-                .headers(headers)
-                .send()
+            let client_clone = client.clone();
+            let url_for_req = url.clone();
+            let headers_clone = headers.clone();
+            let response = self
+                .queue
+                .send_request(move || {
+                    client_clone
+                        .get(url_for_req.clone())
+                        .headers(headers_clone.clone())
+                })
                 .await
                 .map_err(|e| e.to_string())?;
             if !response.status().is_redirection() {
@@ -588,10 +633,15 @@ impl PawchiveClient {
 
         let client = self.client.read().await.clone();
         for redirect_count in 0..=MAX_SHORTENER_REDIRECTS {
-            let response = client
-                .get(url.clone())
-                .header(USER_AGENT, "Pawstash/0.1 link resolver")
-                .send()
+            let client_clone = client.clone();
+            let u = url.clone();
+            let response = self
+                .queue
+                .send_request(move || {
+                    client_clone
+                        .get(u.clone())
+                        .header(USER_AGENT, "Pawstash/0.1 link resolver")
+                })
                 .await
                 .map_err(|error| error.to_string())?;
             if !response.status().is_redirection() {
@@ -650,8 +700,8 @@ impl PawchiveClient {
         if !offset.is_multiple_of(50) {
             return Err("Pawchive offset must be a multiple of 50".to_string());
         }
-        if !matches!(period, "day" | "week" | "month") {
-            return Err("Popular period must be day, week, or month".to_string());
+        if !matches!(period, "day" | "week" | "month" | "recent" | "all") {
+            return Err("Popular period must be day, week, month, recent, or all".to_string());
         }
 
         let settings = self.settings.read().await.clone();
@@ -757,7 +807,7 @@ impl PawchiveClient {
                     tags: None,
                     origin: Some("popular".to_string()),
                     preview_state: Some("scraped".to_string()),
-                    has_full: Some(false),
+                    has_full: None,
                     detail_fetched: Some(false),
                     next: None,
                     prev: None,
@@ -1085,7 +1135,11 @@ impl PawchiveClient {
             Self::segment(creator_id),
             Self::segment(post_id)
         );
-        self.json(Method::GET, &path, &[]).await
+        match self.json(Method::GET, &path, &[]).await {
+            Ok(revs) => Ok(revs),
+            Err(e) if e.contains("404") => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn fetch_post_comments(
@@ -1100,7 +1154,11 @@ impl PawchiveClient {
             Self::segment(creator_id),
             Self::segment(post_id)
         );
-        self.json(Method::GET, &path, &[]).await
+        match self.json(Method::GET, &path, &[]).await {
+            Ok(comments) => Ok(comments),
+            Err(e) if e.contains("404") => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn app_version(&self) -> Result<String, String> {
@@ -1121,7 +1179,47 @@ pub struct PawchiveProvider {
 }
 
 impl PawchiveProvider {
+    pub fn default_services() -> Vec<String> {
+        vec!["patreon".into(), "fanbox".into(), "discord".into()]
+    }
+
+    pub fn default_queue_config() -> ProviderQueueConfig {
+        ProviderQueueConfig {
+            max_concurrent: 4,
+            min_interval: std::time::Duration::from_millis(50),
+            max_retries: 3,
+            default_retry_after: std::time::Duration::from_millis(1500),
+            max_cooldown: std::time::Duration::from_secs(10),
+        }
+    }
+
+    pub fn default_config() -> ProviderConfig {
+        ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://file.pawchive.pw".into()),
+            image_url: Some("https://img.pawchive.pw".into()),
+            file_prefix: Some("file".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: String::new(),
+            username: String::new(),
+            services: Self::default_services(),
+            is_custom: false,
+            priority: 1,
+        }
+    }
+
     pub fn new(config: ProviderConfig) -> Result<Self, String> {
+        Self::with_queue_config(config, Self::default_queue_config())
+    }
+
+    pub fn with_queue_config(
+        config: ProviderConfig,
+        queue_config: ProviderQueueConfig,
+    ) -> Result<Self, String> {
         let id = config.id.clone();
         let name = if config.name.trim().is_empty() {
             "Pawchive".to_string()
@@ -1137,13 +1235,20 @@ impl PawchiveProvider {
             ..AppSettings::default()
         };
 
-        let client = Arc::new(PawchiveClient::new(app_settings)?);
+        let client = Arc::new(PawchiveClient::with_queue_config(
+            app_settings,
+            queue_config,
+        )?);
         Ok(Self {
             id,
             name,
             config: Arc::new(RwLock::new(config)),
             client,
         })
+    }
+
+    pub fn queue(&self) -> Arc<ProviderRequestQueue> {
+        self.client.queue()
     }
 }
 
@@ -1170,6 +1275,84 @@ impl SourceProvider for PawchiveProvider {
 
     fn get_active_endpoint(&self) -> String {
         self.config.read().unwrap().api_url.clone()
+    }
+
+    fn request_queue(&self) -> Option<Arc<ProviderRequestQueue>> {
+        Some(self.queue())
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            provider_id: self.id().to_string(),
+            popular: PopularCapabilities {
+                supported: true,
+                periods: vec![
+                    PopularPeriodOption {
+                        id: "day".to_string(),
+                        label_key: "feed.day".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "week".to_string(),
+                        label_key: "feed.week".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "month".to_string(),
+                        label_key: "feed.month".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "recent".to_string(),
+                        label_key: "feed.recent".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "all".to_string(),
+                        label_key: "feed.all".to_string(),
+                    },
+                ],
+                default_period: Some("day".to_string()),
+                supports_date: true,
+            },
+            creator_sorts: vec![
+                SortOption {
+                    id: "favorited".to_string(),
+                    label_key: "creators.sort_favorited".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "updated".to_string(),
+                    label_key: "creators.sort_updated".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "indexed".to_string(),
+                    label_key: "creators.sort_indexed".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "name".to_string(),
+                    label_key: "creators.sort_name".to_string(),
+                    is_server_side: false,
+                },
+            ],
+            post_sorts: vec![
+                SortOption {
+                    id: "recent".to_string(),
+                    label_key: "feed.recent".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "popular".to_string(),
+                    label_key: "feed.popular".to_string(),
+                    is_server_side: true,
+                },
+            ],
+            supports_query_search: true,
+            supports_date_filter: true,
+            supports_hash_search: false,
+            supports_announcements: true,
+            supports_fancards: true,
+            supports_similar_creators: true,
+            supports_creator_tags: true,
+        }
     }
 
     async fn test_connection(&self) -> Result<ProviderHealth, String> {
@@ -1532,6 +1715,27 @@ impl SourceProvider for PawchiveProvider {
         format!("{base}/thumbnail/data/{clean}")
     }
 
+    fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/{}/user/{}/post/{}",
+            PawchiveClient::segment(service),
+            PawchiveClient::segment(creator_id),
+            PawchiveClient::segment(post_id)
+        )
+    }
+
+    fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/{}/user/{}",
+            PawchiveClient::segment(service),
+            PawchiveClient::segment(creator_id)
+        )
+    }
+
     async fn fetch_creator_artwork_data_url(
         &self,
         service: &str,
@@ -1618,6 +1822,7 @@ impl SourceProvider for PawchiveProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::providers::traits::SourceProvider;
 
     #[test]
     fn session_cookie_is_normalized() {
@@ -1725,42 +1930,6 @@ mod tests {
     }
 
     #[test]
-    fn test_coomer_provider_parametric_configuration() {
-        let coomer_conf = ProviderConfig {
-            id: "coomer".into(),
-            name: "Coomer".into(),
-            enabled: true,
-            api_url: "https://coomer.st".into(),
-            fallback_urls: vec!["https://coomer.su".into()],
-            file_url: Some("https://c1.coomer.st".into()),
-            image_url: Some("https://img.coomer.st".into()),
-            file_prefix: Some("c1".into()),
-            image_prefix: Some("img".into()),
-            session_cookie: String::new(),
-            username: String::new(),
-            services: vec!["onlyfans".into(), "fansly".into(), "candfans".into()],
-            is_custom: false,
-            priority: 2,
-        };
-        let provider = PawchiveProvider::new(coomer_conf).unwrap();
-        assert_eq!(provider.id(), "coomer");
-        assert_eq!(provider.name(), "Coomer");
-        assert_eq!(
-            provider.resolve_media_url("/data/12/34/clip.mp4", None),
-            "https://c1.coomer.st/data/12/34/clip.mp4"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("/data/12/34/clip.jpg"),
-            "https://img.coomer.st/thumbnail/data/12/34/clip.jpg"
-        );
-        let auth = provider.auth_schema();
-        assert_eq!(auth.provider_id, "coomer");
-        assert!(auth.supports_auth);
-        assert!(auth.supports_remote_favorites);
-        assert!(auth.supports_push_favorites);
-    }
-
-    #[test]
     fn popular_cards_include_server_favorite_counts() {
         let html = r#"
           <article class="post-card" data-id="42" data-service="patreon" data-user="7">
@@ -1786,28 +1955,72 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live pawchive.pw"]
-    async fn live_public_contracts() {
-        let client = PawchiveClient::new(AppSettings::default()).unwrap();
-        assert!(!client.fetch_recent_posts(None, 0).await.unwrap().is_empty());
-        assert!(!client
-            .fetch_popular_posts("day", None, 0)
-            .await
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            client
-                .fetch_creator_profile("patreon", "3340149")
-                .await
-                .unwrap()
-                .id,
-            "3340149"
+    async fn live_pawchive_public_contracts() {
+        let conf = ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://file.pawchive.pw".into()),
+            image_url: Some("https://img.pawchive.pw".into()),
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["patreon".into(), "fanbox".into()],
+            is_custom: false,
+            priority: 1,
+        };
+        let provider = PawchiveProvider::new(conf).unwrap();
+
+        let health = provider.test_connection().await.unwrap();
+        assert!(
+            health.is_healthy,
+            "Pawchive health check failed: {:?}",
+            health.error
         );
-        assert!(!client
-            .fetch_creator_posts("patreon", "3340149", None, 0)
+
+        let creators = provider.fetch_creators().await.unwrap();
+        assert!(
+            !creators.is_empty(),
+            "Pawchive creators list returned 0 creators"
+        );
+
+        let recent = provider.fetch_recent_posts(None, 0).await.unwrap();
+        assert!(!recent.is_empty(), "Pawchive recent feed returned 0 posts");
+
+        let paged = provider.fetch_recent_posts(None, 50).await.unwrap();
+        assert!(!paged.is_empty(), "Pawchive offset 50 returned 0 posts");
+
+        let searched = provider.fetch_recent_posts(Some("cat"), 0).await.unwrap();
+        assert!(!searched.is_empty(), "Pawchive search returned 0 posts");
+
+        let popular = provider.fetch_popular_posts("day", None, 0).await.unwrap();
+        assert!(
+            !popular.is_empty(),
+            "Pawchive popular feed returned 0 posts"
+        );
+
+        let profile = provider
+            .fetch_creator_profile("patreon", "3340149")
             .await
-            .unwrap()
-            .is_empty());
+            .unwrap();
+        assert_eq!(profile.id, "3340149");
+
+        let posts = provider
+            .fetch_posts("patreon", "3340149", 0, None)
+            .await
+            .unwrap();
+        assert!(!posts.is_empty(), "Pawchive creator posts returned 0 posts");
+
+        let filtered_posts = provider
+            .fetch_posts("patreon", "3340149", 0, Some("highres"))
+            .await
+            .unwrap();
+        let _ = filtered_posts;
+
+        let client = PawchiveClient::new(AppSettings::default()).unwrap();
         client
             .fetch_announcements("patreon", "8693043")
             .await
@@ -1817,14 +2030,35 @@ mod tests {
             .fetch_creator_links("patreon", "3340149")
             .await
             .unwrap();
-        assert_eq!(
-            client
-                .fetch_post("patreon", "3340149", "142680139")
-                .await
-                .unwrap()
-                .id,
-            "142680139"
+
+        let tags = provider
+            .fetch_creator_tags("patreon", "3340149")
+            .await
+            .unwrap();
+        assert!(!tags.is_empty(), "Pawchive creator tags returned 0 tags");
+
+        let post = provider
+            .fetch_post("patreon", "3340149", "142680139")
+            .await
+            .unwrap();
+        assert!(post.is_some(), "Pawchive post 142680139 returned None");
+        assert_eq!(post.unwrap().id, "142680139");
+
+        let non_existent = provider
+            .fetch_post("patreon", "3340149", "999999999999999")
+            .await
+            .unwrap();
+        assert!(
+            non_existent.is_none(),
+            "Pawchive non-existent post returned Some"
         );
+
+        let revisions = provider
+            .fetch_post_revisions("patreon", "3340149", "142680139")
+            .await
+            .unwrap();
+        let _ = revisions;
+
         assert!(!client
             .fetch_post_comments("fanbox", "6570768", "1836570")
             .await
@@ -1835,11 +2069,29 @@ mod tests {
             .await
             .unwrap());
         assert!(!client.app_version().await.unwrap().trim().is_empty());
+
+        let hash_search = provider
+            .search_hash("0000000000000000000000000000000000000000000000000000000000000000")
+            .await;
+        let _ = hash_search;
+
+        let media_url = provider.resolve_media_url("/data/aa/bb/video.mp4", None);
+        assert!(media_url.starts_with("https://file.pawchive.pw/data/"));
+        let thumb_url = provider.resolve_thumbnail_url("/data/aa/bb/thumb.jpg");
+        assert!(thumb_url.starts_with("https://img.pawchive.pw/thumbnail/data/"));
+
+        assert_eq!(provider.id(), "pawchive");
+        assert_eq!(provider.name(), "Pawchive");
+        assert!(provider.supports_service("patreon"));
+        assert!(provider.logout().await.is_ok());
+        assert!(provider
+            .login("fake_user_12345", "fake_pass_12345")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
-    #[ignore = "requires live pawchive.pw"]
-    async fn live_popular_contract() {
+    async fn live_pawchive_popular_contracts() {
         let client = PawchiveClient::new(AppSettings::default()).unwrap();
         for period in ["day", "week", "month"] {
             let posts = client.fetch_popular_posts(period, None, 0).await.unwrap();
@@ -1849,5 +2101,31 @@ mod tests {
                 "{period} popular feed is missing favorite counts"
             );
         }
+    }
+
+    #[test]
+    fn test_pawchive_auth_schema() {
+        let conf = ProviderConfig {
+            id: "pawchive".into(),
+            name: "Pawchive".into(),
+            enabled: true,
+            api_url: "https://pawchive.pw".into(),
+            fallback_urls: vec![],
+            file_url: None,
+            image_url: None,
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["patreon".into(), "fanbox".into()],
+            is_custom: false,
+            priority: 1,
+        };
+        let provider = PawchiveProvider::new(conf).unwrap();
+        let schema = provider.auth_schema();
+        assert_eq!(schema.provider_id, "pawchive");
+        assert!(schema.supports_auth);
+        assert!(schema.supports_remote_favorites);
+        assert!(schema.supports_push_favorites);
     }
 }

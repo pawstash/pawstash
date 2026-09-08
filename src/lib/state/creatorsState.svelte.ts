@@ -19,7 +19,7 @@ function parseTimestamp(value: unknown): number {
 }
 
 function parseFavoriteCount(c: Creator): number {
-  const val = c.favorited ?? (c.extra as any)?.favorited ?? (c as any).kemono_favorited ?? (c.extra as any)?.kemono_favorited ?? (c as any).favorite_count ?? 0;
+  const val = c.favorited ?? (c as any).favorited ?? (c as any).kemono_favorited ?? (c as any).favorite_count ?? (c.extra as any)?.favorited ?? 0;
   const num = Number(val);
   return Number.isFinite(num) ? num : 0;
 }
@@ -56,8 +56,10 @@ export class CreatorsState {
 
     if (Object.keys(this.providerFilters).length > 0) {
       result = result.filter((c) => {
-        const cProvider = (c.extra as any)?.provider_id || providerState.getProviderIdForService(c.service);
-        return matchesTriStateFilter([cProvider], this.providerFilters);
+        const cProviders: string[] = (c as any).provider_ids || [
+          (c as any).provider_id || (c.extra as any)?.provider_id || providerState.getProviderIdForService(c.service)
+        ];
+        return matchesTriStateFilter(cProviders, this.providerFilters);
       });
     }
 

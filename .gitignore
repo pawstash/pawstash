@@ -10,6 +10,7 @@ dist/
 
 # Tauri & Rust
 src-tauri/target/
+src-tauri/target-test/
 *.pdb
 
 # Android build artifacts (tracks custom Kotlin/Manifest/Res in git, ignores build outputs)

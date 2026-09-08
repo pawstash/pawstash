@@ -63,9 +63,9 @@
       } catch {
         authSchemas[p.id] = {
           provider_id: p.id,
-          supports_auth: p.id === 'pawchive' || p.id === 'coomer',
-          supports_remote_favorites: p.id === 'pawchive' || p.id === 'coomer',
-          supports_push_favorites: p.id === 'pawchive' || p.id === 'coomer',
+          supports_auth: false,
+          supports_remote_favorites: false,
+          supports_push_favorites: false,
           auth_fields: []
         };
       }

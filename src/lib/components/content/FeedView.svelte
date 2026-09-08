@@ -239,26 +239,69 @@
   let customDateInput = $state<HTMLInputElement>();
   let customMonthInput = $state<HTMLInputElement>();
 
-  let popularSelectOptions = $derived([
-    { value: 'day:today', label: i18n.t('feed.today') || 'Today' },
-    { value: 'day:yesterday', label: i18n.t('feed.yesterday') || 'Yesterday' },
-    { value: 'week:current', label: i18n.t('feed.this_week') || 'This Week' },
-    { value: 'week:last', label: i18n.t('feed.last_week') || 'Last Week' },
-    { value: 'month:current', label: i18n.t('feed.this_month') || 'This Month' },
-    { value: 'month:last', label: i18n.t('feed.last_month') || 'Last Month' },
-    {
-      value: 'custom:day',
-      label: feedState.popularPeriod === 'day' && feedState.popularDate
-        ? `${i18n.t('feed.day') || 'Day'}: ${feedState.popularDate}`
-        : `${i18n.t('feed.custom_day') || 'Custom Day...'}`
-    },
-    {
-      value: 'custom:month',
-      label: feedState.popularPeriod === 'month' && feedState.popularDate
-        ? `${i18n.t('feed.month') || 'Month'}: ${feedState.popularDate}`
-        : `${i18n.t('feed.custom_month') || 'Custom Month...'}`
+  let activePopularCaps = $derived(providerState.activeCapabilities?.popular);
+
+  let popularSelectOptions = $derived.by(() => {
+    const caps = activePopularCaps;
+    if (!caps || !caps.supported || caps.periods.length === 0) {
+      return [];
     }
-  ]);
+
+    const options: { value: string; label: string }[] = [];
+    const periods = caps.periods;
+
+    if (periods.some((p) => p.id === 'day')) {
+      options.push(
+        { value: 'day:today', label: i18n.t('feed.today') || 'Today' },
+        { value: 'day:yesterday', label: i18n.t('feed.yesterday') || 'Yesterday' }
+      );
+    }
+    if (periods.some((p) => p.id === 'week')) {
+      options.push(
+        { value: 'week:current', label: i18n.t('feed.this_week') || 'This Week' },
+        { value: 'week:last', label: i18n.t('feed.last_week') || 'Last Week' }
+      );
+    }
+    if (periods.some((p) => p.id === 'month')) {
+      options.push(
+        { value: 'month:current', label: i18n.t('feed.this_month') || 'This Month' },
+        { value: 'month:last', label: i18n.t('feed.last_month') || 'Last Month' }
+      );
+    }
+    if (periods.some((p) => p.id === 'recent')) {
+      options.push({ value: 'recent:all', label: i18n.t('feed.recent') || 'Recent' });
+    }
+    if (periods.some((p) => p.id === 'all')) {
+      options.push({ value: 'all:all', label: i18n.t('feed.all') || 'All Time' });
+    }
+
+    for (const p of periods) {
+      if (!['day', 'week', 'month', 'recent', 'all'].includes(p.id)) {
+        options.push({ value: `${p.id}:all`, label: i18n.t(p.label_key) || p.id });
+      }
+    }
+
+    if (caps.supports_date) {
+      if (periods.some((p) => p.id === 'day')) {
+        options.push({
+          value: 'custom:day',
+          label: feedState.popularPeriod === 'day' && feedState.popularDate
+            ? `${i18n.t('feed.day') || 'Day'}: ${feedState.popularDate}`
+            : `${i18n.t('feed.custom_day') || 'Custom Day...'}`
+        });
+      }
+      if (periods.some((p) => p.id === 'month')) {
+        options.push({
+          value: 'custom:month',
+          label: feedState.popularPeriod === 'month' && feedState.popularDate
+            ? `${i18n.t('feed.month') || 'Month'}: ${feedState.popularDate}`
+            : `${i18n.t('feed.custom_month') || 'Custom Month...'}`
+        });
+      }
+    }
+
+    return options;
+  });
 
   function getSelectedOptionValue(): string {
     const period = feedState.popularPeriod;
@@ -268,7 +311,9 @@
       if (period === 'day') return 'day:today';
       if (period === 'week') return 'week:current';
       if (period === 'month') return 'month:current';
-      return 'day:today';
+      if (period === 'recent') return 'recent:all';
+      if (period === 'all') return 'all:all';
+      return `${period}:all`;
     }
 
     const today = new Date();
@@ -297,10 +342,16 @@
     return opt?.label ?? (i18n.t('feed.today') || 'Today');
   });
 
-  let feedModeOptions = $derived<ChoiceOption<FeedMode>[]>([
-    { value: 'recent', label: i18n.t('feed.recent') || 'Recent' },
-    { value: 'popular', label: i18n.t('feed.popular') || 'Popular' }
-  ]);
+  let feedModeOptions = $derived.by<ChoiceOption<FeedMode>[]>(() => {
+    const caps = activePopularCaps;
+    const options: ChoiceOption<FeedMode>[] = [
+      { value: 'recent', label: i18n.t('feed.recent') || 'Recent' }
+    ];
+    if (!caps || caps.supported) {
+      options.push({ value: 'popular', label: i18n.t('feed.popular') || 'Popular' });
+    }
+    return options;
+  });
 
   function handlePeriodChange(val: string) {
     const today = new Date();
@@ -335,6 +386,14 @@
       feedState.popularPeriod = 'month';
       feedState.popularDate = lastMonth.toISOString().split('T')[0].substring(0, 7);
       void feedState.refresh();
+    } else if (val === 'recent:all') {
+      feedState.popularPeriod = 'recent';
+      feedState.popularDate = '';
+      void feedState.refresh();
+    } else if (val === 'all:all') {
+      feedState.popularPeriod = 'all';
+      feedState.popularDate = '';
+      void feedState.refresh();
     } else if (val === 'custom:day') {
       if (customDateInput) {
         customDateInput.showPicker();
@@ -343,6 +402,11 @@
       if (customMonthInput) {
         customMonthInput.showPicker();
       }
+    } else {
+      const [period] = val.split(':');
+      feedState.popularPeriod = period;
+      feedState.popularDate = '';
+      void feedState.refresh();
     }
   }
 
@@ -408,6 +472,9 @@
   let enabledProviders = $derived(providerState.providers.filter((p) => p.enabled));
 
   onMount(() => {
+    if (!providerState.activeCapabilities) {
+      void providerState.loadCapabilities();
+    }
     if (!feedState.current.loaded) void feedState.refresh();
   });
 </script>
@@ -566,7 +633,7 @@
 {/snippet}
 
 {#snippet popularFilter()}
-  {#if feedState.mode === 'popular'}
+  {#if feedState.mode === 'popular' && popularSelectOptions.length > 0}
     <Select
       options={popularSelectOptions}
       value={getSelectedOptionValue()}

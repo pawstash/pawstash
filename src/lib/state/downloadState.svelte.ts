@@ -180,7 +180,7 @@ export class DownloadState {
             for (const node of fileNodes) {
               let targetUrl = node.download_url || node.stream_url || '';
               if (targetUrl.startsWith('/cloud_stream/') && port > 0) {
-                targetUrl = `http://127.0.0.1:${port}${targetUrl}`;
+                targetUrl = serverPortState.mediaUrl(targetUrl);
               }
               const mediaId = node.stream_url || node.download_url || `cloud:${res.provider}:${node.id}`;
               if (targetUrl && !seenMediaIds.has(mediaId)) {

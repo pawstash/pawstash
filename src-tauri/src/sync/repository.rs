@@ -914,6 +914,8 @@ impl SyncRepository {
                             params![parts[0], parts[1], parts[2], parts[3]],
                         )
                         .map_err(|e| e.to_string())?;
+                    } else {
+                        return Err(format!("Malformed membership record ID: {record_id}"));
                     }
                 }
                 "subscription" => {
@@ -930,6 +932,8 @@ impl SyncRepository {
                             params![parts[0], parts[1], parts[2]],
                         )
                         .map_err(|e| e.to_string())?;
+                    } else {
+                        return Err(format!("Malformed favorite post record ID: {record_id}"));
                     }
                 }
                 "fav_creator" => {
@@ -941,12 +945,17 @@ impl SyncRepository {
                             params![parts[0], parts[1]],
                         )
                         .map_err(|e| e.to_string())?;
+                    } else {
+                        return Err(format!("Malformed favorite creator record ID: {record_id}"));
                     }
                 }
-                "post" => {
-                    // Posts can remain cached locally unless unpinned, but we delete from sync_records
+                "post" | "session" => {
+                    // Posts and sessions can remain cached locally unless unpinned/overwritten
                 }
-                _ => {}
+                unknown => {
+                    tracing::warn!(kind = %unknown, record_id = %record_id, "Skipping tombstone for unsupported sync record kind");
+                    return Ok(());
+                }
             }
             tx.execute(
                 "INSERT INTO sync_records(record_id,kind,revision,content_hash,dirty,tombstone,updated_at)
@@ -1059,25 +1068,26 @@ impl SyncRepository {
                 .map_err(|e| e.to_string())?;
             }
             "session" => {
-                if let Ok(config_mgr) = crate::config::settings::ConfigManager::new() {
-                    if let Ok(settings) = config_mgr.load() {
-                        if settings.sync_pawchive_session {
-                            if let Ok(rec) = serde_json::from_slice::<PawchiveSessionRecord>(bytes)
-                            {
-                                if !rec.session_cookie.is_empty() {
-                                    let _ = crate::sync::secrets::SecretStore::save_named(
-                                        "pawchive-session",
-                                        rec.session_cookie.as_bytes(),
-                                    );
-                                    if !rec.username.is_empty()
-                                        && settings.pawchive_username != rec.username
-                                    {
-                                        let mut updated = settings;
-                                        updated.pawchive_username = rec.username;
-                                        let _ = config_mgr.save(&updated);
-                                    }
-                                }
-                            }
+                let config_mgr = crate::config::settings::ConfigManager::new()
+                    .map_err(|e| format!("Failed to load config manager: {e}"))?;
+                let settings = config_mgr
+                    .load()
+                    .map_err(|e| format!("Failed to load settings: {e}"))?;
+                if settings.sync_pawchive_session {
+                    let rec = serde_json::from_slice::<PawchiveSessionRecord>(bytes)
+                        .map_err(|e| format!("Failed to parse session record: {e}"))?;
+                    if !rec.session_cookie.is_empty() {
+                        crate::sync::secrets::SecretStore::save_named(
+                            "pawchive-session",
+                            rec.session_cookie.as_bytes(),
+                        )
+                        .map_err(|e| format!("Failed to save synced session secret: {e}"))?;
+                        if !rec.username.is_empty() && settings.pawchive_username != rec.username {
+                            let mut updated = settings;
+                            updated.pawchive_username = rec.username;
+                            config_mgr
+                                .save(&updated)
+                                .map_err(|e| format!("Failed to update settings: {e}"))?;
                         }
                     }
                 }
@@ -1139,7 +1149,14 @@ impl SyncRepository {
                 )
                 .map_err(|e| e.to_string())?;
             }
-            _ => {}
+            unknown => {
+                tracing::warn!(
+                    kind = %unknown,
+                    record_id = %record_id,
+                    "Skipping unsupported sync record kind to maintain forward compatibility"
+                );
+                return Ok(());
+            }
         }
 
         tx.execute(

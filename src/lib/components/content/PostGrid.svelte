@@ -136,6 +136,12 @@
         pendingScrollRestore = null;
       }
     }
+    if (viewport && hasMore && !loading) {
+      const scrollBottom = viewport.scrollTop + viewport.clientHeight;
+      if (scrollBottom >= viewport.scrollHeight - 1200) {
+        requestMore();
+      }
+    }
   }
 
   function requestMore() {
@@ -201,6 +207,21 @@
   });
 
   $effect(() => {
+    if (!loading) {
+      lastRequestKey = '';
+    }
+  });
+
+  $effect(() => {
+    if (posts.length > 0 && hasMore && !loading && viewport) {
+      const scrollBottom = viewport.scrollTop + viewport.clientHeight;
+      if (scrollBottom >= viewport.scrollHeight - 600) {
+        requestMore();
+      }
+    }
+  });
+
+  $effect(() => {
     if (pendingScrollRestore !== null && viewport && virtualHeight > 0) {
       const target = pendingScrollRestore;
       requestAnimationFrame(() => {
@@ -229,7 +250,7 @@
   $effect(() => {
     const remaining = virtualHeight - (relativeScroll + viewportHeight);
     const nearEnd = viewportHeight > 0 && remaining <= Math.max(viewportHeight * 2, rowStride * 4);
-    if (nearEnd) requestMore();
+    if (nearEnd && posts.length > 0) requestMore();
   });
 
   onDestroy(() => {

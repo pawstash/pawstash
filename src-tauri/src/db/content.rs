@@ -1,4 +1,6 @@
 use crate::api::models::{Creator, CreatorProfile, Favorite, Post, PostRevision};
+#[cfg(test)]
+use crate::db::storage::prepare_connection;
 use crate::db::storage::{content_cache_path, open_database};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -37,10 +39,21 @@ pub struct ContentRepository {
 
 impl ContentRepository {
     pub fn new(cache_limit_mb: u64) -> Result<Self, String> {
-        Ok(Self {
-            connection: Mutex::new(open_database()?),
+        Ok(Self::from_connection(open_database()?, cache_limit_mb))
+    }
+
+    fn from_connection(connection: Connection, cache_limit_mb: u64) -> Self {
+        Self {
+            connection: Mutex::new(connection),
             cache_limit_bytes: AtomicU64::new(cache_limit_mb.saturating_mul(1024 * 1024)),
-        })
+        }
+    }
+
+    #[cfg(test)]
+    fn in_memory(cache_limit_mb: u64) -> Result<Self, String> {
+        let mut connection = Connection::open_in_memory().map_err(|e| e.to_string())?;
+        prepare_connection(&mut connection)?;
+        Ok(Self::from_connection(connection, cache_limit_mb))
     }
 
     pub fn cache_stats(&self) -> Result<CacheStats, String> {
@@ -367,7 +380,12 @@ impl ContentRepository {
                  VALUES(?1,?2,?3,?4,?5,?6,?7,CURRENT_TIMESTAMP)
                  ON CONFLICT(service, creator_id, post_id) DO UPDATE SET
                     title=excluded.title, content=excluded.content, published_at=excluded.published_at,
-                    snapshot_json=excluded.snapshot_json, remote_state='active',
+                    snapshot_json=CASE
+                        WHEN json_extract(posts.snapshot_json, '$.detail_fetched') = 1 AND (json_extract(excluded.snapshot_json, '$.detail_fetched') IS NULL OR json_extract(excluded.snapshot_json, '$.detail_fetched') = 0)
+                        THEN posts.snapshot_json
+                        ELSE excluded.snapshot_json
+                    END,
+                    remote_state='active',
                     cached_at=CURRENT_TIMESTAMP, last_checked_at=CURRENT_TIMESTAMP",
                 params![clean_post.service, clean_post.user, clean_post.id, clean_post.title, clean_post.content, clean_post.published, snapshot],
             ).map_err(|e| e.to_string())?;
@@ -648,7 +666,7 @@ impl ContentRepository {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT revision_id, snapshot_json FROM post_revisions
+                "SELECT revision_id, snapshot_json, provider_id FROM post_revisions
                  WHERE service=?1 AND creator_id=?2 AND post_id=?3
                  ORDER BY revision_id DESC",
             )
@@ -657,7 +675,8 @@ impl ContentRepository {
             .query_map(params![service, creator_id, post_id], |row| {
                 let revision_id: i64 = row.get(0)?;
                 let json: String = row.get(1)?;
-                let post: Post = Post::from_json_str(&json).unwrap_or_else(|_| Post {
+                let provider_id: Option<String> = row.get(2).ok();
+                let mut post: Post = Post::from_json_str(&json).unwrap_or_else(|_| Post {
                     id: post_id.to_string(),
                     user: creator_id.to_string(),
                     service: service.to_string(),
@@ -684,6 +703,11 @@ impl ContentRepository {
                     attachment_count: None,
                     extra: Default::default(),
                 });
+                if let Some(pid) = provider_id {
+                    post.extra
+                        .entry("provider_id".to_string())
+                        .or_insert_with(|| serde_json::Value::String(pid));
+                }
                 Ok(PostRevision { revision_id, post })
             })
             .map_err(|e| e.to_string())?;
@@ -696,31 +720,57 @@ impl ContentRepository {
     }
 
     pub fn save_creators(&self, creators: &[Creator]) -> Result<(), String> {
-        for creator in creators {
-            self.save_creator_json(&creator.service, &creator.id, &creator.name, creator)?;
+        let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO creators(service,creator_id,name,snapshot_json,last_checked_at)
+                     VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
+                     ON CONFLICT(service,creator_id) DO UPDATE SET name=excluded.name,
+                       snapshot_json=excluded.snapshot_json,cached_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP",
+                )
+                .map_err(|e| e.to_string())?;
+
+            for creator in creators {
+                let snapshot = serde_json::to_string(creator).map_err(|e| e.to_string())?;
+                stmt.execute(params![
+                    &creator.service,
+                    &creator.id,
+                    &creator.name,
+                    &snapshot
+                ])
+                .map_err(|e| e.to_string())?;
+            }
         }
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn list_creators(&self) -> Result<Vec<Creator>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let mut statement = connection
-            .prepare("SELECT creator_id,name,service FROM creators ORDER BY name COLLATE NOCASE")
+            .prepare("SELECT snapshot_json, creator_id, name, service FROM creators ORDER BY name COLLATE NOCASE")
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |r| {
-                Ok(Creator {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    service: r.get(2)?,
-                    public_id: None,
-                    relation_id: None,
-                    indexed: None,
-                    updated: None,
-                    favorited: None,
-                    ever_imported: None,
-                    extra: Default::default(),
-                })
+                let json_str: String = r.get(0)?;
+                if let Ok(creator) = serde_json::from_str::<Creator>(&json_str) {
+                    Ok(creator)
+                } else {
+                    Ok(Creator {
+                        id: r.get(1)?,
+                        name: r.get(2)?,
+                        service: r.get(3)?,
+                        public_id: None,
+                        relation_id: None,
+                        indexed: None,
+                        updated: None,
+                        favorited: None,
+                        ever_imported: None,
+                        extra: Default::default(),
+                    })
+                }
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -1191,7 +1241,7 @@ mod tests {
 
     #[test]
     fn test_list_favorites_attaches_faved_at() {
-        let repo = ContentRepository::new(512).unwrap();
+        let repo = ContentRepository::in_memory(512).unwrap();
         let post: Post = serde_json::from_str(
             r#"{
                 "id": "100",
@@ -1214,7 +1264,7 @@ mod tests {
 
     #[test]
     fn test_list_favorites_isolates_accounts_and_cleans_pins() {
-        let repo = ContentRepository::new(512).unwrap();
+        let repo = ContentRepository::in_memory(512).unwrap();
         let creator_a = CreatorProfile {
             id: "creator_a_test".into(),
             name: "Creator A".into(),

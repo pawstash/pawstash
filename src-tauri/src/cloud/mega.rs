@@ -257,7 +257,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                         for k_part in &candidate_keys {
                             if let Ok(k_bytes) = mega_base64_decode(k_part) {
                                 if k_bytes.len() >= 16 {
-                                    // 1. Try AES-128-ECB decryption (Standard MEGA folder share node key encryption)
+                                    // Try AES-128-ECB decryption (Standard MEGA folder share node key encryption)
                                     if let Ok(dec_k) = decrypt_aes_ecb(&folder_key, k_bytes.clone())
                                     {
                                         if dec_k.len() >= 16 {
@@ -299,7 +299,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                                         }
                                     }
 
-                                    // 2. Try AES-128-CBC fallback
+                                    // Try AES-128-CBC fallback
                                     if let Ok(dec_k) = decrypt_aes_cbc_zeros(&folder_key, k_bytes) {
                                         if dec_k.len() >= 16 {
                                             let mut test_key = [0u8; 16];
@@ -327,7 +327,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                             }
                         }
 
-                        // 3. Fallback: Try decrypting attributes with folder_key directly
+                        // Fallback: Try decrypting attributes with folder_key directly
                         if decrypted_name.is_none() {
                             if let Ok(dec_attr) =
                                 decrypt_aes_cbc_zeros(&folder_key, a_bytes.clone())

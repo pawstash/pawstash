@@ -16,7 +16,6 @@ pub async fn resolve_iframely(client: &Client, url_str: &str) -> Result<CloudFol
 
     let mut candidate_url: Option<String> = None;
 
-    // 1. Look for linkUri in Javascript payload: "linkUri":"https://..."
     if let Some(pos) = html.find("\"linkUri\":\"") {
         let after = &html[pos + 11..];
         if let Some(end) = after.find('"') {
@@ -30,7 +29,6 @@ pub async fn resolve_iframely(client: &Client, url_str: &str) -> Result<CloudFol
         }
     }
 
-    // 2. Look for redirect in Javascript payload: "redirect":"https://..."
     if candidate_url.is_none() {
         if let Some(pos) = html.find("\"redirect\":\"") {
             let after = &html[pos + 12..];
@@ -46,7 +44,6 @@ pub async fn resolve_iframely(client: &Client, url_str: &str) -> Result<CloudFol
         }
     }
 
-    // 3. Search for known cloud links in raw HTML
     if candidate_url.is_none() {
         for prefix in &[
             "https://mega.nz/",

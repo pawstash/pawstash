@@ -126,17 +126,29 @@ export class ContentState {
     if (!force && ((entry.loaded && entry.post?.detail_fetched) || entry.loading || entry.error)) return;
     if (entry.loading) return;
 
-    if (!entry.post) {
+    if (!entry.post || !entry.post.detail_fetched) {
       try {
         const cached = await apiGetCachedPost(String(service), String(creatorId), String(postId));
-        if (cached) {
+        if (cached && cached.detail_fetched) {
+          this.posts[key] = {
+            post: {
+              ...(entry.post || {}),
+              ...cached,
+              detail_fetched: true
+            },
+            loading: false,
+            loaded: true,
+            error: null
+          };
+          logger.debug(`[Content] Hydrated post ${service}:${creatorId}:${postId} from local cache`);
+          return;
+        } else if (cached && !entry.post) {
           this.posts[key] = {
             post: cached,
             loading: false,
             loaded: cached.detail_fetched === true,
             error: null
           };
-          logger.debug(`[Content] Hydrated post ${service}:${creatorId}:${postId} from local cache`);
         }
       } catch {
         // ignore fast-path probe failure
@@ -181,6 +193,58 @@ export class ContentState {
           loading: false
         };
       }
+    }
+  }
+
+  private prefetchQueue: Array<{ service: string; creatorId: string; postId: string }> = [];
+  private prefetchRunning = 0;
+  private maxPrefetchConcurrency = 2;
+  private queuedKeys = new Set<string>();
+
+  enqueueDetailPrefetch(service: string, creatorId: string | number, rawPostId: unknown) {
+    const postId = normalizePostId(rawPostId);
+    if (!postId || !service || !creatorId) return;
+    const key = postCacheKey(service, creatorId, postId);
+
+    const entry = this.posts[key];
+    if (entry?.loaded && entry.post?.detail_fetched) return;
+    if (entry?.loading) return;
+    if (this.queuedKeys.has(key)) return;
+
+    this.queuedKeys.add(key);
+    this.prefetchQueue.push({ service: String(service), creatorId: String(creatorId), postId });
+    this.processPrefetchQueue();
+  }
+
+  cancelPrefetch(service: string, creatorId: string | number, rawPostId: unknown) {
+    const postId = normalizePostId(rawPostId);
+    if (!postId) return;
+    const key = postCacheKey(service, creatorId, postId);
+    this.queuedKeys.delete(key);
+    this.prefetchQueue = this.prefetchQueue.filter(
+      (item) => !(item.service === service && item.creatorId === String(creatorId) && item.postId === postId)
+    );
+  }
+
+  private async processPrefetchQueue() {
+    while (this.prefetchRunning < this.maxPrefetchConcurrency && this.prefetchQueue.length > 0) {
+      const item = this.prefetchQueue.shift();
+      if (!item) break;
+      const key = postCacheKey(item.service, item.creatorId, item.postId);
+      this.queuedKeys.delete(key);
+
+      const entry = this.posts[key];
+      if (entry?.loaded && entry.post?.detail_fetched) continue;
+
+      this.prefetchRunning++;
+      void (async () => {
+        try {
+          await this.loadPost(item.service, item.creatorId, item.postId);
+        } catch {} finally {
+          this.prefetchRunning--;
+          setTimeout(() => this.processPrefetchQueue(), 50);
+        }
+      })();
     }
   }
 
@@ -270,7 +334,7 @@ export class ContentState {
         profile: finalProfile,
         posts,
         offset: PAGE_SIZE,
-        hasMore: posts.length === PAGE_SIZE,
+        hasMore: posts.length >= PAGE_SIZE,
         loaded: true,
         loading: false,
         error: null
@@ -344,7 +408,7 @@ export class ContentState {
         profile: finalProfile,
         posts,
         offset: PAGE_SIZE,
-        hasMore: posts.length === PAGE_SIZE,
+        hasMore: posts.length >= PAGE_SIZE,
         loaded: true,
         loading: false,
         error: null
@@ -413,7 +477,7 @@ export class ContentState {
 
         consecutiveErrors = 0;
         const cur = this.creators[key] ?? curEntry;
-        const hasMore = posts.length === PAGE_SIZE;
+        const hasMore = posts.length >= PAGE_SIZE;
 
         const existingIds = new Set(cur.posts.map((p) => p.id));
         const newPosts = posts.filter((p) => !existingIds.has(p.id));
@@ -466,7 +530,7 @@ export class ContentState {
         ...cur,
         posts: [...cur.posts, ...posts],
         offset: cur.offset + PAGE_SIZE,
-        hasMore: posts.length === PAGE_SIZE,
+        hasMore: posts.length >= PAGE_SIZE,
         loadingMore: false
       };
     } catch (error) {

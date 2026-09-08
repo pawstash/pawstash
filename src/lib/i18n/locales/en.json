@@ -169,6 +169,7 @@
   },
   "feed": {
     "ai_generated": "AI Generated",
+    "all": "All Time",
     "all_platforms": "All",
     "archives": "archives",
     "attachment": "1 attachment",
@@ -238,6 +239,7 @@
     "with_attachments_desc": "Show only posts containing media files",
     "without_attachments": "Without Attachments",
     "without_attachments_desc": "Show only text posts without attachments",
+    "unarchived_badge": "Haven't archived this post yet",
     "yesterday": "Yesterday"
   },
   "library": {

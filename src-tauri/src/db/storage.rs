@@ -4,7 +4,9 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-// Pawstash single version-one schema.
+const CURRENT_SCHEMA_VERSION: i64 = 2;
+
+// New databases start from this schema; ordered migrations below upgrade existing databases.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
@@ -281,29 +283,56 @@ pub fn prepare_connection(connection: &mut Connection) -> Result<(), String> {
 }
 
 pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
-    connection
-        .execute_batch(SCHEMA)
+    let mut version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "Database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+        ));
+    }
 
-    let has_color: bool = connection
-        .prepare("PRAGMA table_info(collections)")
+    while version < CURRENT_SCHEMA_VERSION {
+        let next_version = version + 1;
+        let transaction = connection.transaction().map_err(|e| e.to_string())?;
+        match next_version {
+            1 => transaction
+                .execute_batch(SCHEMA)
+                .map_err(|e| e.to_string())?,
+            2 => {
+                if !column_exists(&transaction, "collections", "color")? {
+                    transaction
+                        .execute("ALTER TABLE collections ADD COLUMN color TEXT", [])
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            _ => return Err(format!("Missing database migration {next_version}")),
+        }
+        transaction
+            .pragma_update(None, "user_version", next_version)
+            .map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())?;
+        version = next_version;
+    }
+
+    Ok(())
+}
+
+fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let sql = format!("PRAGMA table_info({table})");
+    connection
+        .prepare(&sql)
         .and_then(|mut stmt| {
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
                 let name: String = row.get(1)?;
-                if name == "color" {
+                if name == column {
                     return Ok(true);
                 }
             }
             Ok(false)
         })
-        .unwrap_or(false);
-
-    if !has_color {
-        let _ = connection.execute("ALTER TABLE collections ADD COLUMN color TEXT", []);
-    }
-
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -314,9 +343,45 @@ mod tests {
         let mut connection = Connection::open_in_memory().unwrap();
         prepare_connection(&mut connection).unwrap();
         initialize_schema(&mut connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
         let count: i64 = connection
             .query_row("SELECT COUNT(*) FROM collections", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn legacy_schema_is_migrated_without_losing_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE collections (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    parent_id TEXT,
+                    name TEXT NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    is_system INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO collections (id, kind, name) VALUES ('legacy', 'stash', 'Legacy');",
+            )
+            .unwrap();
+
+        prepare_connection(&mut connection).unwrap();
+
+        assert!(column_exists(&connection, "collections", "color").unwrap());
+        let name: String = connection
+            .query_row(
+                "SELECT name FROM collections WHERE id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Legacy");
     }
 }

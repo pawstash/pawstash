@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
+  import { deriveCdnThumbnailUrl } from '$lib/utils/media';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -271,7 +272,7 @@
     if (item.status === 'completed' && item.final_path) {
       if (port > 0) {
         const path = item.final_path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-        return `http://127.0.0.1:${port}/media/${path}`;
+        return serverPortState.mediaUrl(`/media/${path}`);
       }
       return convertFileSrc(item.final_path);
     }
@@ -283,27 +284,9 @@
     const port = serverPortState.port || 0;
     if (port > 0) {
       const encoded = path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      return `http://127.0.0.1:${port}/media/${encoded}`;
+      return serverPortState.mediaUrl(`/media/${encoded}`);
     }
     return convertFileSrc(path);
-  }
-
-  function deriveCdnThumbnailUrl(url?: string): string | undefined {
-    if (!url) return undefined;
-    const cleanUrl = url.split(/[?#]/)[0];
-    if (/\.(m4v|mkv|mov|mp4|webm)$/i.test(cleanUrl)) return undefined;
-    if (cleanUrl.includes('/data/')) {
-      return cleanUrl
-        .replace('/data/', '/thumbnail/data/')
-        .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, '://img.');
-    }
-    if (cleanUrl.includes('cum.st') || cleanUrl.includes('onlyhaven')) {
-      const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
-      if (match) {
-        return `https://img.cum.st/thumbnail/${match[1]}/preview.webp`;
-      }
-    }
-    return undefined;
   }
 
   function itemThumbnailUrl(item: DownloadItem): string | undefined {

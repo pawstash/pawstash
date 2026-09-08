@@ -1,7 +1,9 @@
 use super::traits::{
-    AuthField, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+    AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema, ProviderCapabilities,
+    ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
+use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use async_trait::async_trait;
 use base64::prelude::*;
 use futures_util::future::join_all;
@@ -251,10 +253,11 @@ struct OnlyHavenPostRow {
         alias = "favoriteCount",
         alias = "favorite_count",
         alias = "bookmarks",
-        alias = "bookmark_count",
-        alias = "score"
+        alias = "bookmark_count"
     )]
     bookmarked: Option<u64>,
+    #[serde(default)]
+    score: Option<u64>,
     #[serde(default)]
     attachments: Option<Vec<OnlyHavenAttachment>>,
     #[serde(flatten)]
@@ -458,7 +461,7 @@ impl OnlyHavenPostRow {
             detail_fetched: Some(false),
             next: post_next,
             prev: post_prev,
-            favorite_count: self.bookmarked,
+            favorite_count: self.bookmarked.or(self.score),
             attachment_count: Some(att_count),
             extra,
         };
@@ -471,10 +474,51 @@ pub struct OnlyHavenProvider {
     config: Arc<RwLock<ProviderConfig>>,
     client: Client,
     current_mirror_idx: AtomicUsize,
+    queue: Arc<ProviderRequestQueue>,
 }
 
 impl OnlyHavenProvider {
+    pub fn default_services() -> Vec<String> {
+        vec!["onlyfans".into(), "fansly".into()]
+    }
+
+    pub fn default_queue_config() -> ProviderQueueConfig {
+        ProviderQueueConfig {
+            max_concurrent: 3,
+            min_interval: Duration::from_millis(100),
+            max_retries: 3,
+            default_retry_after: Duration::from_millis(1500),
+            max_cooldown: Duration::from_secs(10),
+        }
+    }
+
+    pub fn default_config() -> ProviderConfig {
+        ProviderConfig {
+            id: "onlyhaven".into(),
+            name: "OnlyHaven".into(),
+            enabled: false,
+            api_url: "https://cum.st".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://e1.cum.st".into()),
+            image_url: Some("https://img.cum.st".into()),
+            file_prefix: Some("e1".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: String::new(),
+            username: String::new(),
+            services: Self::default_services(),
+            is_custom: false,
+            priority: 3,
+        }
+    }
+
     pub fn new(config: ProviderConfig) -> Result<Self, String> {
+        Self::with_queue_config(config, Self::default_queue_config())
+    }
+
+    pub fn with_queue_config(
+        config: ProviderConfig,
+        queue_config: ProviderQueueConfig,
+    ) -> Result<Self, String> {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
@@ -488,11 +532,18 @@ impl OnlyHavenProvider {
             .build()
             .map_err(|e| format!("Failed to build HTTP client for OnlyHaven: {e}"))?;
 
+        let queue = Arc::new(ProviderRequestQueue::new("onlyhaven", queue_config));
+
         Ok(Self {
             config: Arc::new(RwLock::new(config)),
             client,
             current_mirror_idx: AtomicUsize::new(0),
+            queue,
         })
+    }
+
+    pub fn queue(&self) -> Arc<ProviderRequestQueue> {
+        Arc::clone(&self.queue)
     }
 
     fn get_endpoints(&self) -> Vec<String> {
@@ -532,27 +583,42 @@ impl OnlyHavenProvider {
             let base = &endpoints[idx];
             let url = format!("{base}{path}");
 
-            let mut req = self.client.get(&url);
-            if !cookie.trim().is_empty() {
-                let header_val = if cookie.contains('=') {
-                    cookie.clone()
-                } else {
-                    format!("__Secure-oh.session_token={cookie}")
-                };
-                if let Ok(val) = reqwest::header::HeaderValue::from_str(&header_val) {
-                    req = req.header(reqwest::header::COOKIE, val);
-                }
-            }
+            let client = self.client.clone();
+            let cookie_for_req = cookie.clone();
+            let url_for_req = url.clone();
 
-            match req.send().await {
+            let resp_result = self
+                .queue
+                .send_request(move || {
+                    let mut req = client.get(&url_for_req);
+                    if !cookie_for_req.trim().is_empty() {
+                        let header_val = if cookie_for_req.contains('=') {
+                            cookie_for_req.clone()
+                        } else {
+                            format!("__Secure-oh.session_token={cookie_for_req}")
+                        };
+                        if let Ok(val) = reqwest::header::HeaderValue::from_str(&header_val) {
+                            req = req.header(reqwest::header::COOKIE, val);
+                        }
+                    }
+                    req
+                })
+                .await;
+
+            match resp_result {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
                         self.current_mirror_idx.store(idx, Ordering::Relaxed);
-                        match resp.json::<T>().await {
-                            Ok(parsed) => return Ok(parsed),
+                        match resp.text().await {
+                            Ok(body_str) => match serde_json::from_str::<T>(&body_str) {
+                                Ok(parsed) => return Ok(parsed),
+                                Err(e) => {
+                                    last_err = format!("Failed to parse response from {url}: {e}");
+                                }
+                            },
                             Err(e) => {
-                                last_err = format!("Failed to parse response from {url}: {e}");
+                                last_err = format!("Failed to read response body from {url}: {e}");
                             }
                         }
                     } else if status.as_u16() == 404 {
@@ -600,6 +666,76 @@ impl SourceProvider for OnlyHavenProvider {
         endpoints[idx].clone()
     }
 
+    fn request_queue(&self) -> Option<Arc<ProviderRequestQueue>> {
+        Some(self.queue.clone())
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            provider_id: self.id().to_string(),
+            popular: PopularCapabilities {
+                supported: true,
+                periods: vec![
+                    PopularPeriodOption {
+                        id: "day".to_string(),
+                        label_key: "feed.day".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "week".to_string(),
+                        label_key: "feed.week".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "month".to_string(),
+                        label_key: "feed.month".to_string(),
+                    },
+                ],
+                default_period: Some("day".to_string()),
+                supports_date: true,
+            },
+            creator_sorts: vec![
+                SortOption {
+                    id: "favorited".to_string(),
+                    label_key: "creators.sort_favorited".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "updated".to_string(),
+                    label_key: "creators.sort_updated".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "indexed".to_string(),
+                    label_key: "creators.sort_indexed".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "name".to_string(),
+                    label_key: "creators.sort_name".to_string(),
+                    is_server_side: true,
+                },
+            ],
+            post_sorts: vec![
+                SortOption {
+                    id: "recent".to_string(),
+                    label_key: "feed.recent".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "popular".to_string(),
+                    label_key: "feed.popular".to_string(),
+                    is_server_side: true,
+                },
+            ],
+            supports_query_search: true,
+            supports_date_filter: false,
+            supports_hash_search: false,
+            supports_announcements: false,
+            supports_fancards: false,
+            supports_similar_creators: false,
+            supports_creator_tags: false,
+        }
+    }
+
     async fn test_connection(&self) -> Result<ProviderHealth, String> {
         let endpoint = self.get_active_endpoint();
         let start = Instant::now();
@@ -609,7 +745,13 @@ impl SourceProvider for OnlyHavenProvider {
             .map(|d| d.as_secs().to_string())
             .unwrap_or_default();
 
-        match self.client.get(&url).send().await {
+        let client = self.client.clone();
+        let url_clone = url.clone();
+        match self
+            .queue
+            .send_request(move || client.get(&url_clone))
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 Ok(ProviderHealth {
@@ -809,12 +951,39 @@ impl SourceProvider for OnlyHavenProvider {
 
     async fn fetch_popular_posts(
         &self,
-        _period: &str,
-        _date: Option<&str>,
+        period: &str,
+        date: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        let path = format!("/api/v1/posts?n=50&o={offset}&sort=popular");
-        let res: OnlyHavenListResponse<OnlyHavenPostRow> = self.request(&path).await?;
+        let mut params = vec![format!("n=50&o={offset}")];
+        let p_trimmed = period.trim();
+        if !p_trimmed.is_empty() && p_trimmed != "none" {
+            params.push(format!("period={p_trimmed}"));
+        }
+        if let Some(d) = date.map(str::trim).filter(|d| !d.is_empty()) {
+            let normalized_date = if d.len() == 7 && d.chars().nth(4) == Some('-') {
+                format!("{d}-01")
+            } else if d.len() == 6 && d.chars().all(|c| c.is_ascii_digit()) {
+                format!("{}-{}-01", &d[..4], &d[4..6])
+            } else {
+                d.to_string()
+            };
+            params.push(format!("date={normalized_date}"));
+        }
+        let query_str = params.join("&");
+        let path = format!("/api/v1/posts/popular?{query_str}");
+        let res: OnlyHavenListResponse<OnlyHavenPostRow> = match self.request(&path).await {
+            Ok(r) => r,
+            Err(err) => {
+                if err.contains("404") {
+                    tracing::warn!("OnlyHaven /posts/popular 404: {err}; falling back to /posts?sort=popular");
+                    let fallback_path = format!("/api/v1/posts?n=50&o={offset}&sort=popular");
+                    self.request(&fallback_path).await?
+                } else {
+                    return Err(err);
+                }
+            }
+        };
         let rows = res.posts.unwrap_or_default();
         let provider_id = self.id().to_string();
         Ok(rows
@@ -905,6 +1074,23 @@ impl SourceProvider for OnlyHavenProvider {
         format!("{base}/thumbnail/{key}/preview.webp")
     }
 
+    fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        let s = urlencoding::encode(service);
+        let c = urlencoding::encode(creator_id);
+        let p = urlencoding::encode(post_id);
+        format!("{base}/creators/{s}/{c}/post/{p}")
+    }
+
+    fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        let s = urlencoding::encode(service);
+        let c = urlencoding::encode(creator_id);
+        format!("{base}/creators/{s}/{c}")
+    }
+
     async fn fetch_creator_artwork_data_url(
         &self,
         service: &str,
@@ -931,11 +1117,17 @@ impl SourceProvider for OnlyHavenProvider {
         )];
 
         for url in candidate_urls {
-            let req = self
-                .client
-                .get(&url)
-                .header(USER_AGENT, crate::downloader::PAWSTASH_USER_AGENT);
-            if let Ok(resp) = req.send().await {
+            let client = self.client.clone();
+            let u = url.clone();
+            if let Ok(resp) = self
+                .queue
+                .send_request(move || {
+                    client
+                        .get(&u)
+                        .header(USER_AGENT, crate::downloader::PAWSTASH_USER_AGENT)
+                })
+                .await
+            {
                 if resp.status().is_success() {
                     let content_type = resp
                         .headers()
@@ -1046,14 +1238,21 @@ impl SourceProvider for OnlyHavenProvider {
             format!("https://{clean_base}")
         };
 
+        let client = self.client.clone();
+        let u = url.clone();
+        let p = payload.clone();
+        let o = origin.clone();
+        let r = format!("{origin}/auth/signin");
         let resp = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Origin", &origin)
-            .header("Referer", format!("{origin}/auth/signin"))
-            .json(&payload)
-            .send()
+            .queue
+            .send_request(move || {
+                client
+                    .post(&u)
+                    .header("Content-Type", "application/json")
+                    .header("Origin", &o)
+                    .header("Referer", &r)
+                    .json(&p)
+            })
             .await
             .map_err(|e| format!("Network error connecting to OnlyHaven auth: {e}"))?;
 
@@ -1127,16 +1326,25 @@ impl SourceProvider for OnlyHavenProvider {
             } else {
                 format!("https://{clean_base}")
             };
-            let mut req = self
-                .client
-                .post(&url)
-                .header("Origin", &origin)
-                .header("Referer", format!("{origin}/"))
-                .json(&serde_json::json!({}));
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&cookie) {
-                req = req.header(reqwest::header::COOKIE, val);
-            }
-            let _ = req.send().await;
+            let client = self.client.clone();
+            let u = url.clone();
+            let o = origin.clone();
+            let r = format!("{origin}/");
+            let c = cookie.clone();
+            let _ = self
+                .queue
+                .send_request(move || {
+                    let mut req = client
+                        .post(&u)
+                        .header("Origin", &o)
+                        .header("Referer", &r)
+                        .json(&serde_json::json!({}));
+                    if let Ok(val) = reqwest::header::HeaderValue::from_str(&c) {
+                        req = req.header(reqwest::header::COOKIE, val);
+                    }
+                    req
+                })
+                .await;
         }
 
         {
@@ -1185,6 +1393,7 @@ impl SourceProvider for OnlyHavenProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::providers::traits::SourceProvider;
 
     #[test]
     fn test_clean_onlyhaven_title() {
@@ -1275,6 +1484,229 @@ mod tests {
         let att = &attachments[0];
         assert_eq!(att.extra.get("locked").and_then(Value::as_bool), Some(true));
         assert_eq!(att.extra.get("kind").and_then(Value::as_str), Some("audio"));
+        assert!(post.file.is_some());
+    }
+
+    fn test_oh_config(api_url: String) -> ProviderConfig {
+        ProviderConfig {
+            id: "onlyhaven".to_string(),
+            name: "OnlyHaven".to_string(),
+            enabled: true,
+            priority: 1,
+            api_url,
+            file_url: Some("https://e1.cum.st".to_string()),
+            image_url: Some("https://img.cum.st".to_string()),
+            fallback_urls: vec![],
+            session_cookie: "".to_string(),
+            username: "".to_string(),
+            services: vec!["fansly".to_string(), "onlyfans".to_string()],
+            file_prefix: None,
+            image_prefix: None,
+            is_custom: false,
+        }
+    }
+
+    #[test]
+    fn test_onlyhaven_auth_schema() {
+        let conf = test_oh_config("https://cum.st".into());
+        let provider = OnlyHavenProvider::new(conf).unwrap();
+        let schema = provider.auth_schema();
+        assert_eq!(schema.provider_id, "onlyhaven");
+        assert!(schema.supports_auth);
+        assert!(!schema.supports_remote_favorites);
+        assert!(!schema.supports_push_favorites);
+    }
+
+    #[tokio::test]
+    async fn live_onlyhaven_public_contracts() {
+        let conf = ProviderConfig {
+            id: "onlyhaven".into(),
+            name: "OnlyHaven".into(),
+            enabled: true,
+            api_url: "https://cum.st".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://e1.cum.st".into()),
+            image_url: Some("https://img.cum.st".into()),
+            file_prefix: None,
+            image_prefix: None,
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["onlyfans".into(), "fansly".into()],
+            is_custom: false,
+            priority: 1,
+        };
+        let provider = OnlyHavenProvider::new(conf).expect("create OnlyHavenProvider");
+
+        let health = provider.test_connection().await.expect("test_connection");
+        assert!(
+            health.is_healthy,
+            "OnlyHaven health check failed: {:?}",
+            health.error
+        );
+
+        let creators = provider.fetch_creators().await.expect("fetch_creators");
+        assert!(
+            !creators.is_empty(),
+            "OnlyHaven fetch_creators returned 0 creators"
+        );
+
+        let profile = provider
+            .fetch_creator_profile("onlyfans", "30340311")
+            .await
+            .expect("fetch_creator_profile");
+        assert_eq!(profile.id, "30340311");
+
+        let recent = provider
+            .fetch_recent_posts(None, 0)
+            .await
+            .expect("fetch_recent_posts");
+        assert!(!recent.is_empty(), "OnlyHaven recent feed returned 0 posts");
+
+        let paged = provider
+            .fetch_recent_posts(None, 50)
+            .await
+            .expect("fetch_recent_posts paged");
+        assert!(!paged.is_empty(), "OnlyHaven offset 50 returned 0 posts");
+
+        let searched = provider
+            .fetch_recent_posts(Some("cat"), 0)
+            .await
+            .expect("fetch_recent_posts query");
+        assert!(!searched.is_empty(), "OnlyHaven search returned 0 posts");
+
+        let popular = provider
+            .fetch_popular_posts("day", None, 0)
+            .await
+            .expect("fetch_popular_posts day");
+        assert!(
+            !popular.is_empty(),
+            "OnlyHaven popular feed returned 0 posts"
+        );
+
+        let popular_month = provider
+            .fetch_popular_posts("month", None, 0)
+            .await
+            .expect("fetch_popular_posts month");
+        assert!(
+            !popular_month.is_empty(),
+            "OnlyHaven popular month returned 0 posts"
+        );
+
+        let posts = provider
+            .fetch_posts("onlyfans", "30340311", 0, None)
+            .await
+            .expect("fetch_posts");
+        assert!(
+            !posts.is_empty(),
+            "OnlyHaven creator posts returned 0 posts"
+        );
+
+        let filtered_posts = provider
+            .fetch_posts("onlyfans", "30340311", 0, Some("test"))
+            .await
+            .expect("fetch_posts with query");
+        assert!(
+            !filtered_posts.is_empty(),
+            "OnlyHaven creator posts with query returned 0 posts"
+        );
+
+        let single = provider
+            .fetch_post("onlyfans", "30340311", "2642729960")
+            .await
+            .expect("fetch_post");
+        assert!(single.is_some(), "OnlyHaven post 2642729960 returned None");
+        let post = single.unwrap();
+        assert_eq!(post.id, "2642729960");
+
+        let non_existent = provider
+            .fetch_post("onlyfans", "30340311", "999999999999999")
+            .await
+            .expect("fetch non-existent post");
+        assert!(non_existent.is_none(), "Non-existent post returned Some");
+
+        let revisions = provider
+            .fetch_post_revisions("onlyfans", "30340311", "2642729960")
+            .await
+            .expect("fetch_post_revisions");
+        let _ = revisions;
+
+        let comments = provider
+            .fetch_post_comments("onlyfans", "30340311", "2642729960")
+            .await
+            .expect("fetch_post_comments");
+        let _ = comments;
+
+        let sample_hash = "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2";
+        let media_url = provider.resolve_media_url(sample_hash, None);
+        assert!(media_url.starts_with("https://e1.cum.st/media/"));
+        let thumb_url = provider.resolve_thumbnail_url(sample_hash);
+        assert!(thumb_url.starts_with("https://img.cum.st/thumbnail/"));
+
+        assert_eq!(provider.id(), "onlyhaven");
+        assert_eq!(provider.name(), "OnlyHaven");
+        assert!(provider.supports_service("onlyfans"));
+        assert!(provider.logout().await.is_ok());
+        assert!(provider.search_hash(sample_hash).await.is_err());
+        assert!(provider
+            .fetch_fancards("onlyfans", "30340311")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(!provider
+            .is_post_flagged("onlyfans", "30340311", "2642729960")
+            .await
+            .unwrap());
+        assert!(provider
+            .login("bad_user_9999", "bad_pass_9999")
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn test_deserialize_popular_response() {
+        let sample = r#"{
+            "total": 500,
+            "uncapped": 500,
+            "period": "day",
+            "date": "2026-09-07",
+            "posts": [
+                {
+                    "id": "1329029322",
+                    "service": "onlyfans",
+                    "creatorId": "307380936",
+                    "creatorName": "dutifuldolly",
+                    "captionHtml": "<p>hello</p>",
+                    "added": 1788670357,
+                    "published": 1729288830,
+                    "bookmarked": 9,
+                    "score": 9,
+                    "attachments": [
+                        {
+                            "locked": false,
+                            "position": 0,
+                            "id": "7b6fac0f-7c44-4dfb-a0fe-444fd292833e",
+                            "sha256": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
+                            "kind": "video",
+                            "mimeType": "video/mp4",
+                            "bytes": 131191210,
+                            "storageKey": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
+                            "previewThumbhash": "2JcGHAYMYNkpmCZ4mnd/pIaQhg=="
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let parsed: Result<OnlyHavenListResponse<OnlyHavenPostRow>, _> = serde_json::from_str(sample);
+        assert!(parsed.is_ok(), "Failed to deserialize popular response: {:?}", parsed.err());
+        let res = parsed.unwrap();
+        let posts = res.posts.unwrap();
+        assert_eq!(posts.len(), 1);
+        let first = &posts[0];
+        let post = first.clone().into_post("", "onlyhaven");
+        assert_eq!(post.id, "1329029322");
+        assert_eq!(post.user, "307380936");
+        assert_eq!(post.service, "onlyfans");
+        assert_eq!(post.favorite_count, Some(9));
         assert!(post.file.is_some());
     }
 }

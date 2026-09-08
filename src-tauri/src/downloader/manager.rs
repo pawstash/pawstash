@@ -187,6 +187,7 @@ impl DownloadManager {
                 content: None,
                 tags: None,
                 origin_url: None,
+                source_url: None,
             };
             let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
         }
@@ -316,14 +317,17 @@ impl DownloadManager {
         Ok(job)
     }
 
-    pub fn remove(&self, id: &str) -> Result<bool, String> {
-        let control = self
+    pub async fn remove(&self, id: &str) -> Result<bool, String> {
+        let active_ctrl = self
             .active
             .lock()
             .map_err(|error| error.to_string())?
-            .remove(id);
-        if let Some(ctrl) = control {
+            .get(id)
+            .cloned();
+        if let Some(ctrl) = active_ctrl {
             ctrl.cancel();
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(5), ctrl.wait_finished()).await;
         }
 
         let job = match self.repository.get(id)? {
@@ -457,6 +461,29 @@ impl DownloadManager {
         control: Arc<DownloadControl>,
         app_handle: tauri::AppHandle,
     ) {
+        struct RunGuard {
+            manager: Arc<DownloadManager>,
+            id: String,
+            control: Arc<DownloadControl>,
+        }
+        impl Drop for RunGuard {
+            fn drop(&mut self) {
+                self.control.mark_finished();
+                if let Ok(mut active) = self.manager.active.lock() {
+                    active.remove(&self.id);
+                    if active.is_empty() {
+                        crate::downloader::notifications::stop_download_service();
+                    }
+                }
+                self.manager.notify.notify_waiters();
+            }
+        }
+        let _guard = RunGuard {
+            manager: self.clone(),
+            id: id.clone(),
+            control: control.clone(),
+        };
+
         match self.run_inner(&id, settings, control, &app_handle).await {
             Err(DownloadRunError::Failed(message)) => {
                 tracing::error!(id = %id, error = %message, "Download job failed");
@@ -478,13 +505,6 @@ impl DownloadManager {
             }
             Ok(()) => {}
         }
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(&id);
-            if active.is_empty() {
-                crate::downloader::notifications::stop_download_service();
-            }
-        }
-        self.notify.notify_waiters();
     }
 
     async fn run_inner(
@@ -615,23 +635,37 @@ impl DownloadManager {
 
         let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
         #[cfg(not(target_os = "android"))]
+        let mut blob_stored = false;
+        #[cfg(not(target_os = "android"))]
         {
             if let Ok(root) = Self::ensure_download_root(&settings.download_dir) {
                 let blob_path = root.join(&relative_blob);
                 if let Some(parent) = blob_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                if !blob_path.exists() {
-                    let _ = tokio::fs::hard_link(final_path, &blob_path).await;
+                if blob_path.exists()
+                    || tokio::fs::hard_link(final_path, &blob_path).await.is_ok()
+                    || tokio::fs::copy(final_path, &blob_path).await.is_ok()
+                {
+                    blob_stored = true;
                 }
             }
         }
         if let Some(interruption) = control.interruption() {
             return Err(DownloadRunError::Interrupted(interruption));
         }
+        #[cfg(not(target_os = "android"))]
+        let blob_arg = if blob_stored {
+            Some(relative_blob.to_string_lossy())
+        } else {
+            None
+        };
+        #[cfg(target_os = "android")]
+        let blob_arg: Option<std::borrow::Cow<'_, str>> = None;
+
         let completed = self
             .repository
-            .mark_completed(id, &sha256, measured_size, &relative_blob.to_string_lossy())
+            .mark_completed(id, &sha256, measured_size, blob_arg.as_deref())
             .map_err(DownloadRunError::Failed)?;
         Self::notify_system_media_scan(&job.final_path);
         let _ = app_handle.emit("download-job-updated", completed.clone());

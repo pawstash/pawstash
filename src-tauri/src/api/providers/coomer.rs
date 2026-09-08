@@ -1,5 +1,7 @@
+use super::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use super::traits::{
-    AuthField, ProviderAuthSchema, ProviderConfig, ProviderHealth, SourceProvider,
+    AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema, ProviderCapabilities,
+    ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
 use async_trait::async_trait;
@@ -15,10 +17,51 @@ pub struct CoomerProvider {
     name: String,
     config: Arc<RwLock<ProviderConfig>>,
     client: Arc<RwLock<Client>>,
+    queue: Arc<ProviderRequestQueue>,
 }
 
 impl CoomerProvider {
+    pub fn default_services() -> Vec<String> {
+        vec!["onlyfans".into(), "fansly".into(), "candfans".into()]
+    }
+
+    pub fn default_queue_config() -> ProviderQueueConfig {
+        ProviderQueueConfig {
+            max_concurrent: 2,
+            min_interval: std::time::Duration::from_millis(200),
+            max_retries: 4,
+            default_retry_after: std::time::Duration::from_millis(1500),
+            max_cooldown: std::time::Duration::from_secs(15),
+        }
+    }
+
+    pub fn default_config() -> ProviderConfig {
+        ProviderConfig {
+            id: "coomer".into(),
+            name: "Coomer".into(),
+            enabled: false,
+            api_url: "https://coomer.st".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://c1.coomer.st".into()),
+            image_url: Some("https://img.coomer.st".into()),
+            file_prefix: Some("c1".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: String::new(),
+            username: String::new(),
+            services: Self::default_services(),
+            is_custom: false,
+            priority: 2,
+        }
+    }
+
     pub fn new(config: ProviderConfig) -> Result<Self, String> {
+        Self::with_queue_config(config, Self::default_queue_config())
+    }
+
+    pub fn with_queue_config(
+        config: ProviderConfig,
+        queue_config: ProviderQueueConfig,
+    ) -> Result<Self, String> {
         let id = if config.id.trim().is_empty() {
             "coomer".to_string()
         } else {
@@ -31,15 +74,21 @@ impl CoomerProvider {
         };
 
         let client = Self::build_client(&config)?;
+        let queue = Arc::new(ProviderRequestQueue::new(id.clone(), queue_config));
         Ok(Self {
             id,
             name,
             config: Arc::new(RwLock::new(config)),
             client: Arc::new(RwLock::new(client)),
+            queue,
         })
     }
 
-    fn build_headers(config: &ProviderConfig) -> HeaderMap {
+    pub fn queue(&self) -> &Arc<ProviderRequestQueue> {
+        &self.queue
+    }
+
+    pub fn build_headers(config: &ProviderConfig) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
@@ -107,35 +156,46 @@ impl CoomerProvider {
         let mut last_error = String::new();
         for base in candidate_urls {
             let url = format!("{base}{path}");
-            let req = client.get(&url).query(params);
-            match req.send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status == reqwest::StatusCode::NOT_FOUND {
-                        return Err("Coomer API HTTP 404: Not Found".to_string());
-                    }
-                    if !status.is_success() {
-                        let body = resp.text().await.unwrap_or_default();
-                        last_error = format!("Coomer API HTTP {status}: {}", body.trim());
-                        continue;
-                    }
-                    let body = match resp.text().await {
-                        Ok(b) => b,
-                        Err(e) => {
-                            last_error = e.to_string();
-                            continue;
-                        }
-                    };
-                    match serde_json::from_str::<T>(&body) {
-                        Ok(data) => return Ok(data),
-                        Err(e) => {
-                            last_error = format!("Failed to parse Coomer response: {e}");
-                            continue;
-                        }
-                    }
+            let params_vec = params.to_vec();
+            let c = client.clone();
+            let u = url.clone();
+
+            let resp = match self
+                .queue
+                .send(move || {
+                    let req = c.get(&u).query(&params_vec);
+                    async move { req.send().await }
+                })
+                .await
+            {
+                Ok(r) => r,
+                Err(err) => {
+                    last_error = err;
+                    continue;
                 }
+            };
+
+            let status = resp.status();
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err("Coomer API HTTP 404: Not Found".to_string());
+            }
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                last_error = format!("Coomer API HTTP {status}: {}", body.trim());
+                continue;
+            }
+            let body = match resp.text().await {
+                Ok(b) => b,
                 Err(e) => {
                     last_error = e.to_string();
+                    continue;
+                }
+            };
+            match serde_json::from_str::<T>(&body) {
+                Ok(data) => return Ok(data),
+                Err(e) => {
+                    last_error = format!("Failed to parse Coomer response: {e}");
+                    continue;
                 }
             }
         }
@@ -145,6 +205,37 @@ impl CoomerProvider {
         } else {
             last_error
         })
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum CoomerSinglePostResponse {
+    Wrapped {
+        post: Post,
+        #[serde(default)]
+        attachments: Option<Vec<Attachment>>,
+    },
+    Array(Vec<Post>),
+    Direct(Post),
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum CoomerPostsResponse {
+    Wrapped {
+        #[serde(default)]
+        posts: Vec<Post>,
+    },
+    Direct(Vec<Post>),
+}
+
+impl CoomerPostsResponse {
+    fn into_posts(self) -> Vec<Post> {
+        match self {
+            Self::Wrapped { posts } => posts,
+            Self::Direct(posts) => posts,
+        }
     }
 }
 
@@ -173,6 +264,80 @@ impl SourceProvider for CoomerProvider {
         self.config.read().unwrap().api_url.clone()
     }
 
+    fn request_queue(&self) -> Option<Arc<ProviderRequestQueue>> {
+        Some(self.queue.clone())
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            provider_id: self.id.clone(),
+            popular: PopularCapabilities {
+                supported: true,
+                periods: vec![
+                    PopularPeriodOption {
+                        id: "day".to_string(),
+                        label_key: "feed.day".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "week".to_string(),
+                        label_key: "feed.week".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "month".to_string(),
+                        label_key: "feed.month".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "recent".to_string(),
+                        label_key: "feed.recent".to_string(),
+                    },
+                ],
+                default_period: Some("day".to_string()),
+                supports_date: true,
+            },
+            creator_sorts: vec![
+                SortOption {
+                    id: "favorited".to_string(),
+                    label_key: "creators.sort_favorited".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "updated".to_string(),
+                    label_key: "creators.sort_updated".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "indexed".to_string(),
+                    label_key: "creators.sort_indexed".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "name".to_string(),
+                    label_key: "creators.sort_name".to_string(),
+                    is_server_side: false,
+                },
+            ],
+            post_sorts: vec![
+                SortOption {
+                    id: "recent".to_string(),
+                    label_key: "feed.recent".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "popular".to_string(),
+                    label_key: "feed.popular".to_string(),
+                    is_server_side: true,
+                },
+            ],
+            supports_query_search: true,
+            supports_date_filter: true,
+            supports_hash_search: true,
+            supports_announcements: false,
+            supports_fancards: false,
+            supports_similar_creators: false,
+            supports_creator_tags: true,
+        }
+    }
+
     fn auth_schema(&self) -> ProviderAuthSchema {
         ProviderAuthSchema {
             provider_id: self.id.clone(),
@@ -187,7 +352,15 @@ impl SourceProvider for CoomerProvider {
                 help_text_key: Some("settings.providers.cookie_help".to_string()),
                 required: false,
             }],
-            help_url: Some("https://coomer.st".to_string()),
+            help_url: {
+                let base = self.get_active_endpoint();
+                let clean = base.trim_end_matches('/');
+                if clean.is_empty() {
+                    None
+                } else {
+                    Some(clean.to_string())
+                }
+            },
         }
     }
 
@@ -349,7 +522,8 @@ impl SourceProvider for CoomerProvider {
             params.push(("q", q.to_string()));
         }
 
-        let mut posts: Vec<Post> = self.get_json(&path, &params).await?;
+        let resp: CoomerPostsResponse = self.get_json(&path, &params).await?;
+        let mut posts = resp.into_posts();
         let prov_id = self.id.clone();
         for p in &mut posts {
             p.extra.insert(
@@ -372,13 +546,40 @@ impl SourceProvider for CoomerProvider {
             Self::segment(creator_id),
             Self::segment(post_id)
         );
-        match self.get_json::<Post>(&path, &[]).await {
-            Ok(mut p) => {
-                p.extra.insert(
+        match self.get_json::<CoomerSinglePostResponse>(&path, &[]).await {
+            Ok(CoomerSinglePostResponse::Wrapped {
+                mut post,
+                attachments,
+            }) => {
+                if (post.attachments.is_none()
+                    || post.attachments.as_ref().is_some_and(|a| a.is_empty()))
+                    && attachments.is_some()
+                {
+                    post.attachments = attachments;
+                }
+                post.extra.insert(
                     "provider_id".to_string(),
                     serde_json::Value::String(self.id.clone()),
                 );
-                Ok(Some(p))
+                Ok(Some(post))
+            }
+            Ok(CoomerSinglePostResponse::Direct(mut post)) => {
+                post.extra.insert(
+                    "provider_id".to_string(),
+                    serde_json::Value::String(self.id.clone()),
+                );
+                Ok(Some(post))
+            }
+            Ok(CoomerSinglePostResponse::Array(posts)) => {
+                if let Some(mut post) = posts.into_iter().next() {
+                    post.extra.insert(
+                        "provider_id".to_string(),
+                        serde_json::Value::String(self.id.clone()),
+                    );
+                    Ok(Some(post))
+                } else {
+                    Ok(None)
+                }
             }
             Err(e) if e.contains("404") => Ok(None),
             Err(e) => Err(e),
@@ -409,7 +610,8 @@ impl SourceProvider for CoomerProvider {
         if let Some(q) = query.map(str::trim).filter(|q| !q.is_empty()) {
             params.push(("q", q.to_string()));
         }
-        let mut posts: Vec<Post> = self.get_json("/posts", &params).await?;
+        let resp: CoomerPostsResponse = self.get_json("/posts", &params).await?;
+        let mut posts = resp.into_posts();
         let prov_id = self.id.clone();
         for p in &mut posts {
             p.extra.insert(
@@ -422,15 +624,27 @@ impl SourceProvider for CoomerProvider {
 
     async fn fetch_popular_posts(
         &self,
-        _period: &str,
-        _date: Option<&str>,
+        period: &str,
+        date: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        let params = vec![("o", offset.to_string())];
-        let res = self.get_json("/posts/popular", &params).await;
-        let mut posts: Vec<Post> = match res {
-            Ok(p) => p,
-            Err(_) => self.get_json("/popular", &params).await?,
+        let mut params = vec![("o", offset.to_string())];
+        let p_trimmed = period.trim();
+        if !p_trimmed.is_empty() && p_trimmed != "none" {
+            params.push(("period", p_trimmed.to_string()));
+        }
+        if let Some(d) = date.map(str::trim).filter(|d| !d.is_empty()) {
+            params.push(("date", d.to_string()));
+        }
+        let res = self
+            .get_json::<CoomerPostsResponse>("/posts/popular", &params)
+            .await;
+        let mut posts = match res {
+            Ok(p) => p.into_posts(),
+            Err(_) => self
+                .get_json::<CoomerPostsResponse>("/popular", &params)
+                .await?
+                .into_posts(),
         };
         let prov_id = self.id.clone();
         for p in &mut posts {
@@ -563,6 +777,27 @@ impl SourceProvider for CoomerProvider {
         format!("{base}/thumbnail/data/{clean}")
     }
 
+    fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/{}/user/{}/post/{}",
+            Self::segment(service),
+            Self::segment(creator_id),
+            Self::segment(post_id)
+        )
+    }
+
+    fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/{}/user/{}",
+            Self::segment(service),
+            Self::segment(creator_id)
+        )
+    }
+
     async fn fetch_creator_artwork_data_url(
         &self,
         _service: &str,
@@ -621,7 +856,14 @@ impl SourceProvider for CoomerProvider {
             let c = self.client.read().unwrap().clone();
             (format!("{}/app_version", Self::base_url(&conf.api_url)), c)
         };
-        let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let resp = self
+            .queue
+            .send(move || {
+                let c = client.clone();
+                let u = url.clone();
+                async move { c.get(&u).send().await }
+            })
+            .await?;
         if resp.status().is_success() {
             resp.text().await.map_err(|e| e.to_string())
         } else {
@@ -639,5 +881,250 @@ impl SourceProvider for CoomerProvider {
 
     async fn expand_short_link(&self, _raw_url: &str) -> Result<Option<String>, String> {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::providers::traits::SourceProvider;
+
+    fn test_config(api_url: String) -> ProviderConfig {
+        ProviderConfig {
+            id: "coomer".into(),
+            name: "Coomer".into(),
+            enabled: true,
+            api_url,
+            fallback_urls: vec![],
+            file_url: Some("https://c1.coomer.st".into()),
+            image_url: Some("https://img.coomer.st".into()),
+            file_prefix: Some("c1".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: "my_session_cookie".into(),
+            username: "".into(),
+            services: vec!["onlyfans".into(), "fansly".into()],
+            is_custom: false,
+            priority: 2,
+        }
+    }
+
+    #[test]
+    fn test_coomer_build_headers_ddg_accept_and_cookie() {
+        let conf = test_config("https://coomer.st".into());
+        let headers = CoomerProvider::build_headers(&conf);
+        assert_eq!(headers.get(ACCEPT).unwrap(), "text/css");
+        assert_eq!(
+            headers.get(USER_AGENT).unwrap(),
+            crate::downloader::PAWSTASH_USER_AGENT
+        );
+        assert_eq!(headers.get(COOKIE).unwrap(), "session=my_session_cookie");
+    }
+
+    #[test]
+    fn test_coomer_url_resolution() {
+        let conf = test_config("https://coomer.st".into());
+        let provider = CoomerProvider::new(conf).unwrap();
+        assert_eq!(
+            provider.resolve_media_url("/data/aa/bb/video.mp4", None),
+            "https://c1.coomer.st/data/aa/bb/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_media_url("aa/bb/video.mp4", None),
+            "https://c1.coomer.st/data/aa/bb/video.mp4"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("/data/aa/bb/thumb.jpg"),
+            "https://img.coomer.st/thumbnail/data/aa/bb/thumb.jpg"
+        );
+        assert_eq!(
+            provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2")),
+            "https://c2.coomer.st/data/aa/bb/video.mp4"
+        );
+    }
+
+    #[test]
+    fn test_coomer_auth_schema_and_rejections() {
+        let conf = test_config("https://coomer.st".into());
+        let provider = CoomerProvider::new(conf).unwrap();
+        let schema = provider.auth_schema();
+        assert_eq!(schema.provider_id, "coomer");
+        assert!(schema.supports_auth);
+        assert!(!schema.supports_remote_favorites);
+        assert!(!schema.supports_push_favorites);
+    }
+
+    #[tokio::test]
+    async fn live_coomer_public_contracts() {
+        let conf = ProviderConfig {
+            id: "coomer".into(),
+            name: "Coomer".into(),
+            enabled: true,
+            api_url: "https://coomer.st".into(),
+            fallback_urls: vec![],
+            file_url: Some("https://c1.coomer.st".into()),
+            image_url: Some("https://img.coomer.st".into()),
+            file_prefix: Some("c1".into()),
+            image_prefix: Some("img".into()),
+            session_cookie: "".into(),
+            username: "".into(),
+            services: vec!["onlyfans".into(), "fansly".into()],
+            is_custom: false,
+            priority: 2,
+        };
+        let provider = CoomerProvider::new(conf).expect("create CoomerProvider");
+
+        let version = provider.app_version().await.expect("app_version");
+        assert!(!version.trim().is_empty(), "Coomer app_version is empty");
+
+        let health = provider.test_connection().await.expect("test_connection");
+        assert!(
+            health.is_healthy,
+            "Coomer health check failed: {:?}",
+            health.error
+        );
+
+        let creators = provider.fetch_creators().await.expect("fetch_creators");
+        assert!(
+            !creators.is_empty(),
+            "Coomer creators list returned 0 creators"
+        );
+
+        let recent = provider
+            .fetch_recent_posts(None, 0)
+            .await
+            .expect("fetch_recent_posts");
+        assert!(!recent.is_empty(), "Coomer recent feed returned 0 posts");
+        assert_eq!(
+            recent[0].extra.get("provider_id").and_then(|v| v.as_str()),
+            Some("coomer")
+        );
+
+        let paged = provider
+            .fetch_recent_posts(None, 50)
+            .await
+            .expect("fetch_recent_posts paged");
+        assert!(!paged.is_empty(), "Coomer offset 50 returned 0 posts");
+
+        let searched = provider
+            .fetch_recent_posts(Some("slut"), 0)
+            .await
+            .expect("fetch_recent_posts query");
+        assert!(!searched.is_empty(), "Coomer search returned 0 posts");
+
+        for period in ["day", "week", "month"] {
+            let popular = provider
+                .fetch_popular_posts(period, None, 0)
+                .await
+                .expect("fetch_popular_posts");
+            assert!(
+                !popular.is_empty(),
+                "Coomer popular feed ({period}) returned 0 posts"
+            );
+        }
+
+        let profile = provider
+            .fetch_creator_profile("onlyfans", "prettykitttt")
+            .await
+            .expect("fetch_creator_profile");
+        assert_eq!(profile.id, "prettykitttt");
+        assert_eq!(profile.service, "onlyfans");
+
+        let links = provider
+            .fetch_creator_links("onlyfans", "prettykitttt")
+            .await
+            .expect("fetch_creator_links");
+        let _ = links;
+
+        let tags = provider
+            .fetch_creator_tags("onlyfans", "prettykitttt")
+            .await
+            .expect("fetch_creator_tags");
+        let _ = tags;
+
+        let posts = provider
+            .fetch_posts("onlyfans", "prettykitttt", 0, None)
+            .await
+            .expect("fetch_posts");
+        assert!(!posts.is_empty(), "Coomer creator posts returned 0 posts");
+
+        let paged_creator_posts = provider
+            .fetch_posts("onlyfans", "prettykitttt", 50, None)
+            .await
+            .expect("fetch_posts paged");
+        assert!(
+            !paged_creator_posts.is_empty(),
+            "Coomer creator offset 50 returned 0 posts"
+        );
+
+        let filtered_posts = provider
+            .fetch_posts("onlyfans", "prettykitttt", 0, Some("slut"))
+            .await
+            .expect("fetch_posts with query");
+        assert!(
+            !filtered_posts.is_empty(),
+            "Coomer creator posts with query returned 0 posts"
+        );
+
+        let single_post = provider
+            .fetch_post("onlyfans", "prettykitttt", "366178580")
+            .await
+            .expect("fetch_post");
+        assert!(single_post.is_some(), "Coomer post 366178580 returned None");
+        let post = single_post.unwrap();
+        assert_eq!(post.id, "366178580");
+        assert_eq!(post.user, "prettykitttt");
+        assert_eq!(post.service, "onlyfans");
+        assert!(
+            post.file.is_some() || post.attachments.as_ref().map_or(false, |a| !a.is_empty()),
+            "Coomer post has neither file nor attachments"
+        );
+
+        let non_existent = provider
+            .fetch_post("onlyfans", "prettykitttt", "999999999999999")
+            .await
+            .expect("fetch non-existent post");
+        assert!(non_existent.is_none(), "Non-existent post returned Some");
+
+        let revisions = provider
+            .fetch_post_revisions("onlyfans", "prettykitttt", "366178580")
+            .await
+            .expect("fetch_post_revisions");
+        let _ = revisions;
+
+        let comments = provider
+            .fetch_post_comments("onlyfans", "prettykitttt", "366178580")
+            .await
+            .expect("fetch_post_comments");
+        let _ = comments;
+
+        if let Some(file) = &post.file {
+            if let Some(path) = &file.path {
+                let media_url = provider.resolve_media_url(path, None);
+                assert!(media_url.starts_with("https://c1.coomer.st/data/"));
+                let thumb_url = provider.resolve_thumbnail_url(path);
+                assert!(thumb_url.starts_with("https://img.coomer.st/thumbnail/data/"));
+            }
+        }
+        let custom_srv_url = provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2"));
+        assert_eq!(custom_srv_url, "https://c2.coomer.st/data/aa/bb/video.mp4");
+        assert_eq!(provider.id(), "coomer");
+        assert_eq!(provider.name(), "Coomer");
+        assert!(provider.supports_service("onlyfans"));
+        assert!(provider.logout().await.is_ok());
+        assert!(provider.get_account_session().await.is_err());
+        assert!(provider
+            .fetch_fancards("onlyfans", "prettykitttt")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(provider.login("dummy", "secret").await.is_err());
+        assert!(provider
+            .set_creator_favorite("onlyfans", "prettykitttt", true)
+            .await
+            .is_err());
+        assert!(provider
+            .set_post_favorite("onlyfans", "prettykitttt", "366178580", true)
+            .await
+            .is_err());
     }
 }

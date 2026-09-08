@@ -117,6 +117,12 @@ fn derive_key(password: &str, envelope: &KdfEnvelope) -> Result<[u8; KEY_BYTES],
     if envelope.algorithm != "argon2id" || envelope.version != 19 {
         return Err("Unsupported key derivation parameters".to_string());
     }
+    if !(1024..=128 * 1024).contains(&envelope.memory_kib)
+        || !(1..=10).contains(&envelope.iterations)
+        || !(1..=8).contains(&envelope.parallelism)
+    {
+        return Err("Key derivation parameters outside safe bounds".to_string());
+    }
     let params = Params::new(
         envelope.memory_kib,
         envelope.iterations,
@@ -226,5 +232,15 @@ mod tests {
             b"snapshot"
         );
         assert!(decrypt_record(&key, "record-2", &record.ciphertext, &record.nonce).is_err());
+    }
+
+    #[test]
+    fn kdf_rejects_out_of_bounds_parameters() {
+        let bad_kdf = KdfEnvelope {
+            memory_kib: 1024 * 1024, // 1 GB
+            ..KdfEnvelope::generate()
+        };
+        let secrets = VaultSecrets::generate();
+        assert!(wrap_vault("correct horse battery", &bad_kdf, &secrets).is_err());
     }
 }

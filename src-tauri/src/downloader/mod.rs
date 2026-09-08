@@ -7,7 +7,7 @@ pub mod template;
 
 use crate::config::settings::ProxyMode;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
@@ -46,12 +46,16 @@ impl From<String> for DownloadRunError {
 
 pub struct DownloadControl {
     request: AtomicU8,
+    finished: AtomicBool,
+    notify: tokio::sync::Notify,
 }
 
 impl DownloadControl {
     pub fn new() -> Self {
         Self {
             request: AtomicU8::new(0),
+            finished: AtomicBool::new(false),
+            notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -69,6 +73,18 @@ impl DownloadControl {
             2 => Some(Interruption::Cancel),
             _ => None,
         }
+    }
+
+    pub fn mark_finished(&self) {
+        self.finished.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    pub async fn wait_finished(&self) {
+        if self.finished.load(Ordering::Acquire) {
+            return;
+        }
+        self.notify.notified().await;
     }
 }
 

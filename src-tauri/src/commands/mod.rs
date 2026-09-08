@@ -4,7 +4,7 @@ pub mod window_effects;
 use crate::api::models::*;
 use crate::api::pawchive::PawchiveClient;
 use crate::api::provider::{
-    FavoritesSyncResult, ProviderAuthSchema, ProviderConfig, ProviderHealth,
+    FavoritesSyncResult, ProviderAuthSchema, ProviderCapabilities, ProviderConfig, ProviderHealth,
 };
 use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
@@ -42,6 +42,7 @@ pub struct ResolvedPostLink {
 
 pub struct AppState {
     pub axum_port: Arc<AtomicU16>,
+    pub axum_token: String,
     pub provider_manager: Arc<ProviderManager>,
     pub pawchive_client: Arc<PawchiveClient>,
     pub content: Arc<ContentRepository>,
@@ -50,6 +51,12 @@ pub struct AppState {
     pub subscription_manager: Arc<SubscriptionManager>,
     pub sync_manager: Arc<SyncManager>,
     pub config_manager: Arc<ConfigManager>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MediaServerInfo {
+    pub port: u16,
+    pub token: String,
 }
 
 #[tauri::command]
@@ -164,8 +171,11 @@ fn remove_custom_background_files(directory: &std::path::Path, kind: &str) -> Re
 }
 
 #[tauri::command]
-pub fn get_axum_port(state: State<'_, AppState>) -> u16 {
-    state.axum_port.load(Ordering::Acquire)
+pub fn get_axum_port(state: State<'_, AppState>) -> MediaServerInfo {
+    MediaServerInfo {
+        port: state.axum_port.load(Ordering::Acquire),
+        token: state.axum_token.clone(),
+    }
 }
 
 #[tauri::command]
@@ -183,6 +193,7 @@ pub async fn probe_download_size(
         return Err("Only HTTP and HTTPS media probes are supported".to_string());
     }
     let settings = state.config_manager.load()?;
+    let session_cookie = settings.resolve_cookie_for_url(&url);
     let task = DownloadTask {
         id: "size-probe".to_string(),
         url,
@@ -190,7 +201,7 @@ pub async fn probe_download_size(
         temp_path: String::new(),
         final_path: String::new(),
         filename: String::new(),
-        session_cookie: (!settings.session_cookie.is_empty()).then_some(settings.session_cookie),
+        session_cookie,
         proxy_mode: settings.proxy_mode,
         proxy_url: settings.proxy_url,
         proxy_username: settings.proxy_username,
@@ -240,6 +251,9 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, Str
     let mut settings = state.config_manager.load()?;
     settings.session_cookie.clear();
     settings.proxy_password.clear();
+    for provider in &mut settings.providers {
+        provider.session_cookie.clear();
+    }
     Ok(settings)
 }
 
@@ -283,26 +297,51 @@ pub async fn save_settings(
     if settings.proxy_password.is_empty() {
         settings.proxy_password = previous.proxy_password.clone();
     }
+    for provider in &mut settings.providers {
+        if provider.session_cookie.is_empty() {
+            if let Some(previous_provider) = previous.providers.iter().find(|p| p.id == provider.id)
+            {
+                provider.session_cookie = previous_provider.session_cookie.clone();
+            }
+        }
+    }
+    ProviderManager::validate_configs(&settings.providers)?;
     state
         .pawchive_client
         .update_settings(settings.clone())
         .await?;
-    let _ = state
-        .provider_manager
-        .update_providers(settings.providers.clone())
-        .await;
     if let Err(error) = state.config_manager.save(&settings) {
-        let _ = state.pawchive_client.update_settings(previous).await;
+        state.pawchive_client.update_settings(previous).await?;
         return Err(error);
     }
-    let _ = state.content.set_cache_limit_mb(settings.cache_max_mb);
+    if let Err(error) = state
+        .provider_manager
+        .update_providers(settings.providers.clone())
+        .await
+    {
+        state.config_manager.save(&previous)?;
+        state
+            .pawchive_client
+            .update_settings(previous.clone())
+            .await?;
+        state
+            .provider_manager
+            .update_providers(previous.providers)
+            .await?;
+        return Err(error);
+    }
+    state.content.set_cache_limit_mb(settings.cache_max_mb)?;
     state.download_manager.notify_scheduler();
     Ok(())
 }
 
 #[tauri::command]
 pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderConfig>, String> {
-    Ok(state.provider_manager.get_provider_configs().await)
+    let mut providers = state.provider_manager.get_provider_configs().await;
+    for provider in &mut providers {
+        provider.session_cookie.clear();
+    }
+    Ok(providers)
 }
 
 #[tauri::command]
@@ -310,10 +349,31 @@ pub async fn save_providers(
     providers: Vec<ProviderConfig>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut settings = state.config_manager.load()?;
-    settings.providers = providers.clone();
-    state.provider_manager.update_providers(providers).await?;
+    let previous = state.config_manager.load()?;
+    let mut settings = previous.clone();
+    settings.providers = providers;
+    for provider in &mut settings.providers {
+        if provider.session_cookie.is_empty() {
+            if let Some(previous_provider) = previous.providers.iter().find(|p| p.id == provider.id)
+            {
+                provider.session_cookie = previous_provider.session_cookie.clone();
+            }
+        }
+    }
+    ProviderManager::validate_configs(&settings.providers)?;
     state.config_manager.save(&settings)?;
+    if let Err(error) = state
+        .provider_manager
+        .update_providers(settings.providers.clone())
+        .await
+    {
+        state.config_manager.save(&previous)?;
+        state
+            .provider_manager
+            .update_providers(previous.providers)
+            .await?;
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -365,12 +425,27 @@ pub async fn get_provider_auth_schema(
 }
 
 #[tauri::command]
+pub async fn get_provider_capabilities(
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, ProviderCapabilities>, String> {
+    Ok(state.provider_manager.get_provider_capabilities().await)
+}
+
+#[tauri::command]
+pub async fn get_active_capabilities(
+    state: State<'_, AppState>,
+) -> Result<ProviderCapabilities, String> {
+    Ok(state.provider_manager.get_active_capabilities().await)
+}
+
+#[tauri::command]
 pub async fn save_provider_session(
     provider_id: String,
     cookie: String,
     username: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
+    let previous_providers = state.provider_manager.get_provider_configs().await;
     state
         .provider_manager
         .save_provider_session(&provider_id, &cookie, username.as_deref())
@@ -383,7 +458,13 @@ pub async fn save_provider_session(
             p.username = u.trim().to_string();
         }
     }
-    let _ = state.config_manager.save(&settings);
+    if let Err(error) = state.config_manager.save(&settings) {
+        state
+            .provider_manager
+            .update_providers(previous_providers)
+            .await?;
+        return Err(error);
+    }
 
     Ok(AccountSession {
         authenticated: true,
@@ -401,6 +482,7 @@ pub async fn login_provider(
     credentials: HashMap<String, String>,
     state: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
+    let previous_providers = state.provider_manager.get_provider_configs().await;
     let username = state
         .provider_manager
         .login_provider_with_credentials(&provider_id, &credentials)
@@ -417,7 +499,13 @@ pub async fn login_provider(
             p.username = prov.config().username;
         }
     }
-    let _ = state.config_manager.save(&settings);
+    if let Err(error) = state.config_manager.save(&settings) {
+        state
+            .provider_manager
+            .update_providers(previous_providers)
+            .await?;
+        return Err(error);
+    }
 
     Ok(AccountSession {
         authenticated: true,
@@ -445,7 +533,8 @@ pub async fn logout_provider_session(
         p.session_cookie.clear();
         p.username.clear();
     }
-    let _ = state.config_manager.save(&settings);
+    state.config_manager.clear_provider_session(&provider_id)?;
+    state.config_manager.save(&settings)?;
 
     Ok(AccountSession {
         authenticated: false,
@@ -572,6 +661,11 @@ pub async fn fetch_popular_posts(
     {
         Ok(posts) => {
             state.content.save_post_list(&list_key, offset, &posts)?;
+            if let Ok(cached) = state.content.load_post_list(&list_key, offset) {
+                if cached.len() == posts.len() {
+                    return Ok(cached);
+                }
+            }
             Ok(posts)
         }
         Err(error) => {
@@ -798,17 +892,27 @@ pub async fn fetch_post(
                 .content
                 .save_posts(std::slice::from_ref(&reconciled.post))?;
             if !reconciled.revisions.is_empty() {
-                let _ = state.content.save_post_revisions(
-                    &service,
-                    &creator_id,
-                    &post_id,
-                    reconciled
-                        .available_providers
-                        .first()
-                        .map(String::as_str)
-                        .unwrap_or("unknown"),
-                    &reconciled.revisions,
-                );
+                for rev in &reconciled.revisions {
+                    let provider_id = rev
+                        .post
+                        .extra
+                        .get("provider_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_else(|| {
+                            reconciled
+                                .available_providers
+                                .first()
+                                .map(String::as_str)
+                                .unwrap_or("unknown")
+                        });
+                    let _ = state.content.save_post_revisions(
+                        &service,
+                        &creator_id,
+                        &post_id,
+                        provider_id,
+                        std::slice::from_ref(rev),
+                    );
+                }
             }
             Ok(reconciled.post)
         }
@@ -1457,20 +1561,21 @@ pub async fn fetch_post_revisions(
         .await
     {
         Ok(items) if !items.is_empty() => {
-            let provider_id = state
-                .provider_manager
-                .get_providers_for_service(&service)
-                .await
-                .first()
-                .map(|p| p.id().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let _ = state.content.save_post_revisions(
-                &service,
-                &creator_id,
-                &post_id,
-                &provider_id,
-                &items,
-            );
+            for item in &items {
+                let provider_id = item
+                    .post
+                    .extra
+                    .get("provider_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let _ = state.content.save_post_revisions(
+                    &service,
+                    &creator_id,
+                    &post_id,
+                    provider_id,
+                    std::slice::from_ref(item),
+                );
+            }
             Ok(items)
         }
         _ => {
@@ -1730,17 +1835,13 @@ pub async fn start_download(
         })
         .and_then(|file| file.path.as_deref())
     {
-        let base = if settings.image_domain.starts_with("http") {
-            settings.image_domain.clone()
-        } else {
-            format!("https://{}", settings.image_domain)
-        };
+        let preview_url = state
+            .provider_manager
+            .resolve_thumbnail_url(&post.service, file)
+            .await;
         let _ = state
             .content
-            .cache_post_preview(
-                &post,
-                &format!("{}/thumbnail/data{}", base.trim_end_matches('/'), file),
-            )
+            .cache_post_preview(&post, &preview_url)
             .await;
     }
     let creator_name = state
@@ -1827,7 +1928,11 @@ pub async fn start_download(
                 target_dir = target_dir.join(post_folder);
             }
         }
-        let _ = std::fs::create_dir_all(&target_dir);
+        std::fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        let source_url = state
+            .provider_manager
+            .resolve_post_url(&post.service, &post.user, &post.id, None)
+            .await;
         let meta = crate::downloader::metadata::PostMetadataExport {
             service: &post.service,
             creator_id: &post.user,
@@ -1838,13 +1943,18 @@ pub async fn start_download(
             content: post.content.as_deref(),
             tags: tags_vec.as_deref(),
             origin_url: post.origin.clone(),
+            source_url: Some(source_url),
         };
-        let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
+        crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings)?;
     }
 
     let port = state.axum_port.load(Ordering::Acquire);
     let download_url = if (url.starts_with("/cloud_stream/") || url.starts_with('/')) && port > 0 {
-        format!("http://127.0.0.1:{port}{url}")
+        let separator = if url.contains('?') { '&' } else { '?' };
+        format!(
+            "http://127.0.0.1:{port}{url}{separator}token={}",
+            state.axum_token
+        )
     } else {
         url
     };
@@ -1864,14 +1974,8 @@ pub async fn start_download(
 }
 
 #[tauri::command]
-pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, String> {
+pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, String> {
     let mut jobs = state.download_manager.list()?;
-    let settings = state.config_manager.load()?;
-    let image_base = if settings.image_domain.starts_with("http") {
-        settings.image_domain
-    } else {
-        format!("https://{}", settings.image_domain)
-    };
     for job in &mut jobs {
         let post = match state
             .content
@@ -1891,11 +1995,7 @@ pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, St
             })
             .and_then(|file| file.path.as_deref());
         if let Some(path) = path {
-            job.post_preview_url = Some(format!(
-                "{}/thumbnail/data{}",
-                image_base.trim_end_matches('/'),
-                path
-            ));
+            job.post_preview_url = Some(state.provider_manager.resolve_thumbnail_url(&job.service, path).await);
         }
     }
     Ok(jobs)
@@ -1934,8 +2034,11 @@ pub fn retry_download(
 }
 
 #[tauri::command]
-pub fn remove_download(download_id: String, state: State<'_, AppState>) -> Result<bool, String> {
-    state.download_manager.remove(&download_id)
+pub async fn remove_download(
+    download_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    state.download_manager.remove(&download_id).await
 }
 
 #[tauri::command]

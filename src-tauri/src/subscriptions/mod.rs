@@ -80,8 +80,24 @@ impl SubscriptionManager {
                     .ok_or_else(|| "Subscription not found".to_string());
             }
         }
+
+        struct RunningGuard<'a> {
+            running: &'a Mutex<HashSet<String>>,
+            id: String,
+        }
+        impl<'a> Drop for RunningGuard<'a> {
+            fn drop(&mut self) {
+                if let Ok(mut set) = self.running.lock() {
+                    set.remove(&self.id);
+                }
+            }
+        }
+        let _guard = RunningGuard {
+            running: &self.running,
+            id: id.clone(),
+        };
+
         let result = self.refresh_inner(&id, initial, &app_handle).await;
-        self.running.lock().map_err(|e| e.to_string())?.remove(&id);
         match result {
             Ok(updated) => {
                 let _ = app_handle.emit("subscription-updated", &updated);

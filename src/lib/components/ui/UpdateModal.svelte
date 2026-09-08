@@ -166,7 +166,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 0 4px 8px 4px;
+    padding: 0;
   }
 
   .update-modal-body {

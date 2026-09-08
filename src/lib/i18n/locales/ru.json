@@ -169,6 +169,7 @@
   },
   "feed": {
     "ai_generated": "AI Генерации",
+    "all": "За всё время",
     "all_platforms": "Все",
     "archives": "архивов",
     "attachment": "1 вложение",
@@ -238,6 +239,7 @@
     "with_attachments_desc": "Показывать только посты с медиафайлами",
     "without_attachments": "Без вложений",
     "without_attachments_desc": "Показывать только текстовые посты без файлов",
+    "unarchived_badge": "Этот пост ещё не архивирован",
     "yesterday": "Вчера"
   },
   "library": {

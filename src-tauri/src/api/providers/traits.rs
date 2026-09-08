@@ -18,7 +18,7 @@ pub struct ProviderConfig {
     pub file_prefix: Option<String>,
     #[serde(default)]
     pub image_prefix: Option<String>,
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_redacted_secret")]
     pub session_cookie: String,
     #[serde(default)]
     pub username: String,
@@ -30,6 +30,13 @@ pub struct ProviderConfig {
     pub priority: u32,
 }
 
+fn serialize_redacted_secret<S>(_: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str("")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealth {
     pub provider_id: String,
@@ -38,18 +45,6 @@ pub struct ProviderHealth {
     pub latency_ms: u64,
     pub error: Option<String>,
     pub last_checked_at: String,
-}
-
-pub fn default_pawchive_services() -> Vec<String> {
-    vec!["patreon".into(), "fanbox".into(), "discord".into()]
-}
-
-pub fn default_onlyhaven_services() -> Vec<String> {
-    vec!["onlyfans".into(), "fansly".into()]
-}
-
-pub fn default_coomer_services() -> Vec<String> {
-    vec!["onlyfans".into(), "fansly".into(), "candfans".into()]
 }
 
 pub fn derive_subdomain_url(base_url: &str, prefix: &str) -> String {
@@ -95,6 +90,42 @@ pub struct ProviderAuthSchema {
     pub help_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PopularPeriodOption {
+    pub id: String,
+    pub label_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PopularCapabilities {
+    pub supported: bool,
+    pub periods: Vec<PopularPeriodOption>,
+    pub default_period: Option<String>,
+    pub supports_date: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SortOption {
+    pub id: String,
+    pub label_key: String,
+    pub is_server_side: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub provider_id: String,
+    pub popular: PopularCapabilities,
+    pub creator_sorts: Vec<SortOption>,
+    pub post_sorts: Vec<SortOption>,
+    pub supports_query_search: bool,
+    pub supports_date_filter: bool,
+    pub supports_hash_search: bool,
+    pub supports_announcements: bool,
+    pub supports_fancards: bool,
+    pub supports_similar_creators: bool,
+    pub supports_creator_tags: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoritesSyncResult {
     pub provider_id: String,
@@ -110,6 +141,76 @@ pub trait SourceProvider: Send + Sync {
     fn config(&self) -> ProviderConfig;
     fn supports_service(&self, service: &str) -> bool;
     fn get_active_endpoint(&self) -> String;
+
+    fn request_queue(&self) -> Option<std::sync::Arc<crate::api::providers::queue::ProviderRequestQueue>> {
+        None
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            provider_id: self.id().to_string(),
+            popular: PopularCapabilities {
+                supported: true,
+                periods: vec![
+                    PopularPeriodOption {
+                        id: "day".to_string(),
+                        label_key: "feed.day".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "week".to_string(),
+                        label_key: "feed.week".to_string(),
+                    },
+                    PopularPeriodOption {
+                        id: "month".to_string(),
+                        label_key: "feed.month".to_string(),
+                    },
+                ],
+                default_period: Some("day".to_string()),
+                supports_date: true,
+            },
+            creator_sorts: vec![
+                SortOption {
+                    id: "favorited".to_string(),
+                    label_key: "creators.sort_favorited".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "updated".to_string(),
+                    label_key: "creators.sort_updated".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "indexed".to_string(),
+                    label_key: "creators.sort_indexed".to_string(),
+                    is_server_side: false,
+                },
+                SortOption {
+                    id: "name".to_string(),
+                    label_key: "creators.sort_name".to_string(),
+                    is_server_side: false,
+                },
+            ],
+            post_sorts: vec![
+                SortOption {
+                    id: "recent".to_string(),
+                    label_key: "feed.recent".to_string(),
+                    is_server_side: true,
+                },
+                SortOption {
+                    id: "popular".to_string(),
+                    label_key: "feed.popular".to_string(),
+                    is_server_side: true,
+                },
+            ],
+            supports_query_search: true,
+            supports_date_filter: true,
+            supports_hash_search: false,
+            supports_announcements: false,
+            supports_fancards: false,
+            supports_similar_creators: false,
+            supports_creator_tags: false,
+        }
+    }
 
     fn auth_schema(&self) -> ProviderAuthSchema {
         ProviderAuthSchema {
@@ -141,21 +242,30 @@ pub trait SourceProvider: Send + Sync {
         _service: &str,
         _creator_id: &str,
     ) -> Result<Vec<CreatorProfile>, String> {
-        Ok(Vec::new())
+        Err(format!(
+            "Provider '{}' does not support similar creators",
+            self.id()
+        ))
     }
     async fn fetch_creator_tags(
         &self,
         _service: &str,
         _creator_id: &str,
     ) -> Result<Vec<String>, String> {
-        Ok(Vec::new())
+        Err(format!(
+            "Provider '{}' does not support creator tags",
+            self.id()
+        ))
     }
     async fn fetch_announcements(
         &self,
         _service: &str,
         _creator_id: &str,
     ) -> Result<Vec<Announcement>, String> {
-        Ok(Vec::new())
+        Err(format!(
+            "Provider '{}' does not support announcements",
+            self.id()
+        ))
     }
     async fn fetch_posts(
         &self,
@@ -214,6 +324,8 @@ pub trait SourceProvider: Send + Sync {
 
     fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String;
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String;
+    fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String;
+    fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String;
     async fn fetch_creator_artwork_data_url(
         &self,
         service: &str,
