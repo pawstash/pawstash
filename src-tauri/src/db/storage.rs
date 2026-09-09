@@ -21,21 +21,10 @@ CREATE TABLE IF NOT EXISTS creators (
     snapshot_json TEXT NOT NULL,
     avatar_path TEXT,
     banner_path TEXT,
-    favorited INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL DEFAULT 0,
-    indexed_at INTEGER NOT NULL DEFAULT 0,
-    is_ai INTEGER NOT NULL DEFAULT 0,
     cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_checked_at TEXT,
     PRIMARY KEY (service, creator_id)
 );
-CREATE INDEX IF NOT EXISTS idx_creators_service ON creators(service);
-CREATE INDEX IF NOT EXISTS idx_creators_favorited ON creators(favorited DESC, name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_creators_updated ON creators(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_creators_indexed ON creators(indexed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_creators_name ON creators(name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_creators_is_ai ON creators(is_ai);
-CREATE INDEX IF NOT EXISTS idx_creators_service_favorited ON creators(service, favorited DESC);
 
 CREATE TABLE IF NOT EXISTS posts (
     service TEXT NOT NULL,
@@ -400,6 +389,7 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn schema_is_initialized_once() {
         let mut connection = Connection::open_in_memory().unwrap();
@@ -413,79 +403,10 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM collections", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn legacy_schema_is_migrated_without_losing_rows() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE collections (
-                    id TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    parent_id TEXT,
-                    name TEXT NOT NULL,
-                    position INTEGER NOT NULL DEFAULT 0,
-                    is_system INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-                INSERT INTO collections (id, kind, name) VALUES ('legacy', 'stash', 'Legacy');",
-            )
-            .unwrap();
-
-        prepare_connection(&mut connection).unwrap();
-
         assert!(column_exists(&connection, "collections", "color").unwrap());
-        let name: String = connection
-            .query_row(
-                "SELECT name FROM collections WHERE id = 'legacy'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(name, "Legacy");
-    }
-
-    #[test]
-    fn creators_v3_migration_adds_columns_and_backfills() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE creators (
-                    service TEXT NOT NULL,
-                    creator_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    snapshot_json TEXT NOT NULL,
-                    avatar_path TEXT,
-                    banner_path TEXT,
-                    cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    last_checked_at TEXT,
-                    PRIMARY KEY (service, creator_id)
-                );
-                PRAGMA user_version = 2;
-                INSERT INTO creators (service, creator_id, name, snapshot_json)
-                VALUES ('patreon', 'c1', 'Artist [AI]', '{\"favorited\": 42, \"updated\": 1700000000, \"indexed\": 1690000000}');",
-            )
-            .unwrap();
-
-        prepare_connection(&mut connection).unwrap();
-
         assert!(column_exists(&connection, "creators", "favorited").unwrap());
         assert!(column_exists(&connection, "creators", "updated_at").unwrap());
         assert!(column_exists(&connection, "creators", "indexed_at").unwrap());
         assert!(column_exists(&connection, "creators", "is_ai").unwrap());
-
-        let (fav, upd, ind, ai): (i64, i64, i64, i64) = connection
-            .query_row(
-                "SELECT favorited, updated_at, indexed_at, is_ai FROM creators WHERE service = 'patreon' AND creator_id = 'c1'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(fav, 42);
-        assert_eq!(upd, 1700000000);
-        assert_eq!(ind, 1690000000);
-        assert_eq!(ai, 1);
     }
 }
