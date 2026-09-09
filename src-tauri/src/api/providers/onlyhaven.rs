@@ -141,7 +141,10 @@ impl From<OnlyHavenCreatorRow> for Creator {
             Value::String("onlyhaven".to_string()),
         );
 
-        let name = c.display_name.unwrap_or(c.name);
+        let name = c.display_name.clone().unwrap_or_else(|| c.name.clone());
+        if !c.name.trim().is_empty() {
+            extra.insert("username".to_string(), Value::String(c.name.clone()));
+        }
         Creator {
             id: c.id,
             name,
@@ -152,6 +155,11 @@ impl From<OnlyHavenCreatorRow> for Creator {
             updated: c.updated,
             favorited: c.bookmarked,
             ever_imported: Some(true),
+            avatar_url: None,
+            avatar_path: None,
+            banner_url: None,
+            banner_path: None,
+            page_url: None,
             extra,
         }
     }
@@ -343,6 +351,8 @@ impl OnlyHavenPostRow {
                     path: clean_path,
                     server: None,
                     size: a.bytes,
+                    url: None,
+                    thumbnail_url: None,
                     extra,
                 }
             })
@@ -463,6 +473,9 @@ impl OnlyHavenPostRow {
             prev: post_prev,
             favorite_count: self.bookmarked.or(self.score),
             attachment_count: Some(att_count),
+            thumbnail_url: None,
+            page_url: None,
+            preview_path: None,
             extra,
         };
         post.clean_extra();
@@ -475,6 +488,7 @@ pub struct OnlyHavenProvider {
     client: Client,
     current_mirror_idx: AtomicUsize,
     queue: Arc<ProviderRequestQueue>,
+    resolved_ids: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl OnlyHavenProvider {
@@ -539,6 +553,7 @@ impl OnlyHavenProvider {
             client,
             current_mirror_idx: AtomicUsize::new(0),
             queue,
+            resolved_ids: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -636,6 +651,63 @@ impl OnlyHavenProvider {
         Err(format!(
             "OnlyHaven provider failed across all mirrors. Last error: {last_err}"
         ))
+    }
+
+    pub async fn resolve_creator_id(&self, service: &str, creator_id: &str) -> String {
+        let trimmed = creator_id.trim();
+        if trimmed.is_empty() || trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return trimmed.to_string();
+        }
+
+        let key = format!(
+            "{}:{}",
+            service.to_ascii_lowercase(),
+            trimmed.to_ascii_lowercase()
+        );
+        if let Ok(guard) = self.resolved_ids.read() {
+            if let Some(id) = guard.get(&key) {
+                return id.clone();
+            }
+        }
+
+        let path = format!("/api/v1/creators?q={}", urlencoding::encode(trimmed));
+        if let Ok(res) = self
+            .request::<OnlyHavenListResponse<OnlyHavenCreatorRow>>(&path)
+            .await
+        {
+            if let Some(creators) = res.creators {
+                for c in &creators {
+                    if c.service.eq_ignore_ascii_case(service)
+                        && (c.name.eq_ignore_ascii_case(trimmed)
+                            || c.display_name
+                                .as_deref()
+                                .map(|d| d.eq_ignore_ascii_case(trimmed))
+                                .unwrap_or(false)
+                            || c.id == trimmed)
+                    {
+                        if let Ok(mut guard) = self.resolved_ids.write() {
+                            guard.insert(key, c.id.clone());
+                        }
+                        return c.id.clone();
+                    }
+                }
+                for c in creators {
+                    if c.name.eq_ignore_ascii_case(trimmed)
+                        || c.display_name
+                            .as_deref()
+                            .map(|d| d.eq_ignore_ascii_case(trimmed))
+                            .unwrap_or(false)
+                    {
+                        if let Ok(mut guard) = self.resolved_ids.write() {
+                            guard.insert(key, c.id.clone());
+                        }
+                        return c.id;
+                    }
+                }
+            }
+        }
+
+        trimmed.to_string()
     }
 }
 
@@ -833,6 +905,16 @@ impl SourceProvider for OnlyHavenProvider {
         for row in all_rows {
             let key = format!("{}:{}", row.service.to_lowercase(), row.id.to_lowercase());
             if seen.insert(key) {
+                if !row.name.trim().is_empty() {
+                    let name_key = format!(
+                        "{}:{}",
+                        row.service.to_lowercase(),
+                        row.name.trim().to_lowercase()
+                    );
+                    if let Ok(mut guard) = self.resolved_ids.write() {
+                        guard.insert(name_key, row.id.clone());
+                    }
+                }
                 creators.push(Creator::from(row));
             }
         }
@@ -844,13 +926,47 @@ impl SourceProvider for OnlyHavenProvider {
         service: &str,
         creator_id: &str,
     ) -> Result<Creator, String> {
+        let resolved_id = self.resolve_creator_id(service, creator_id).await;
         let path = format!(
             "/api/v1/{}/user/{}/profile",
             urlencoding::encode(service),
-            urlencoding::encode(creator_id)
+            urlencoding::encode(&resolved_id)
         );
         let row: OnlyHavenCreatorRow = self.request(&path).await?;
-        Ok(Creator::from(row))
+        let numeric_id = row.id.clone();
+        let mut creator = Creator::from(row);
+        let effective_id = if !numeric_id.trim().is_empty() {
+            numeric_id.clone()
+        } else if !resolved_id.trim().is_empty() {
+            resolved_id.clone()
+        } else {
+            creator_id.to_string()
+        };
+        if creator.avatar_url.is_none() {
+            let av = self.resolve_avatar_url(service, &effective_id);
+            if !av.is_empty() {
+                creator.avatar_url = Some(av);
+            }
+        }
+        if creator.banner_url.is_none() {
+            let bn = self.resolve_banner_url(service, &effective_id);
+            if !bn.is_empty() {
+                creator.banner_url = Some(bn);
+            }
+        }
+        if creator.id.is_empty() {
+            creator.id = creator_id.to_string();
+        }
+        if creator.service.is_empty() {
+            creator.service = service.to_string();
+        }
+        if creator.id != creator_id && !creator_id.chars().all(|c| c.is_ascii_digit()) {
+            creator.extra.insert(
+                "username".to_string(),
+                Value::String(creator_id.to_string()),
+            );
+        }
+        Ok(creator)
     }
 
     async fn fetch_creator_links(
@@ -868,10 +984,11 @@ impl SourceProvider for OnlyHavenProvider {
         offset: u32,
         query: Option<&str>,
     ) -> Result<Vec<Post>, String> {
+        let resolved_id = self.resolve_creator_id(service, creator_id).await;
         let mut path = format!(
             "/api/v1/{}/user/{}/posts?n=50&o={offset}",
             urlencoding::encode(service),
-            urlencoding::encode(creator_id)
+            urlencoding::encode(&resolved_id)
         );
         if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
             path.push_str(&format!("&q={}", urlencoding::encode(q.trim())));
@@ -892,10 +1009,11 @@ impl SourceProvider for OnlyHavenProvider {
         creator_id: &str,
         post_id: &str,
     ) -> Result<Option<Post>, String> {
+        let resolved_id = self.resolve_creator_id(service, creator_id).await;
         let path = format!(
             "/api/v1/{}/user/{}/post/{}",
             urlencoding::encode(service),
-            urlencoding::encode(creator_id),
+            urlencoding::encode(&resolved_id),
             urlencoding::encode(post_id)
         );
 
@@ -976,7 +1094,9 @@ impl SourceProvider for OnlyHavenProvider {
             Ok(r) => r,
             Err(err) => {
                 if err.contains("404") {
-                    tracing::warn!("OnlyHaven /posts/popular 404: {err}; falling back to /posts?sort=popular");
+                    tracing::warn!(
+                        "OnlyHaven /posts/popular 404: {err}; falling back to /posts?sort=popular"
+                    );
                     let fallback_path = format!("/api/v1/posts?n=50&o={offset}&sort=popular");
                     self.request(&fallback_path).await?
                 } else {
@@ -1078,7 +1198,18 @@ impl SourceProvider for OnlyHavenProvider {
         let endpoint = self.get_active_endpoint();
         let base = endpoint.trim_end_matches('/');
         let s = urlencoding::encode(service);
-        let c = urlencoding::encode(creator_id);
+        let key = format!(
+            "{}:{}",
+            service.to_ascii_lowercase(),
+            creator_id.trim().to_ascii_lowercase()
+        );
+        let effective_id = self
+            .resolved_ids
+            .read()
+            .ok()
+            .and_then(|g| g.get(&key).cloned())
+            .unwrap_or_else(|| creator_id.to_string());
+        let c = urlencoding::encode(&effective_id);
         let p = urlencoding::encode(post_id);
         format!("{base}/creators/{s}/{c}/post/{p}")
     }
@@ -1087,8 +1218,104 @@ impl SourceProvider for OnlyHavenProvider {
         let endpoint = self.get_active_endpoint();
         let base = endpoint.trim_end_matches('/');
         let s = urlencoding::encode(service);
-        let c = urlencoding::encode(creator_id);
+        let key = format!(
+            "{}:{}",
+            service.to_ascii_lowercase(),
+            creator_id.trim().to_ascii_lowercase()
+        );
+        let effective_id = self
+            .resolved_ids
+            .read()
+            .ok()
+            .and_then(|g| g.get(&key).cloned())
+            .unwrap_or_else(|| creator_id.to_string());
+        let c = urlencoding::encode(&effective_id);
         format!("{base}/creators/{s}/{c}")
+    }
+
+    fn resolve_avatar_url(&self, service: &str, creator_id: &str) -> String {
+        let conf = self.config.read().unwrap();
+        let img_base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
+        let s = urlencoding::encode(service);
+        let key = format!(
+            "{}:{}",
+            service.to_ascii_lowercase(),
+            creator_id.trim().to_ascii_lowercase()
+        );
+        let effective_id = self
+            .resolved_ids
+            .read()
+            .ok()
+            .and_then(|g| g.get(&key).cloned())
+            .unwrap_or_else(|| creator_id.to_string());
+        let c = urlencoding::encode(&effective_id);
+        format!("{img_base}/creator/{s}/{c}/avatar.webp")
+    }
+
+    fn resolve_banner_url(&self, service: &str, creator_id: &str) -> String {
+        let conf = self.config.read().unwrap();
+        let img_base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
+        let s = urlencoding::encode(service);
+        let key = format!(
+            "{}:{}",
+            service.to_ascii_lowercase(),
+            creator_id.trim().to_ascii_lowercase()
+        );
+        let effective_id = self
+            .resolved_ids
+            .read()
+            .ok()
+            .and_then(|g| g.get(&key).cloned())
+            .unwrap_or_else(|| creator_id.to_string());
+        let c = urlencoding::encode(&effective_id);
+        format!("{img_base}/creator/{s}/{c}/header.webp")
+    }
+
+    fn resolve_fancard_media_url(&self, _service: &str, hash: &str, ext: &str) -> String {
+        if hash.len() < 4 {
+            return String::new();
+        }
+        let sub1 = &hash[0..2];
+        let sub2 = &hash[2..4];
+        let ext = if ext.is_empty() {
+            "jpg"
+        } else {
+            ext.trim_start_matches('.')
+        };
+        let conf = self.config.read().unwrap();
+        let file_base = conf
+            .file_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "e1"));
+        format!("{file_base}/media/{sub1}/{sub2}/{hash}/original.{ext}")
+    }
+
+    fn resolve_fancard_thumbnail_url(&self, _service: &str, hash: &str, _ext: &str) -> String {
+        if hash.len() < 4 {
+            return String::new();
+        }
+        let sub1 = &hash[0..2];
+        let sub2 = &hash[2..4];
+        let conf = self.config.read().unwrap();
+        let img_base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
+        format!("{img_base}/thumbnail/{sub1}/{sub2}/{hash}/preview.webp")
     }
 
     async fn fetch_creator_artwork_data_url(
@@ -1112,9 +1339,16 @@ impl SourceProvider for OnlyHavenProvider {
                 .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"))
         };
 
-        let candidate_urls = vec![format!(
+        let resolved_id = self.resolve_creator_id(service, creator_id).await;
+        let mut candidate_urls = Vec::new();
+        if resolved_id != creator_id {
+            candidate_urls.push(format!(
+                "{img_base}/creator/{service}/{resolved_id}/{file_name}"
+            ));
+        }
+        candidate_urls.push(format!(
             "{img_base}/creator/{service}/{creator_id}/{file_name}"
-        )];
+        ));
 
         for url in candidate_urls {
             let client = self.client.clone();
@@ -1696,8 +1930,13 @@ mod tests {
                 }
             ]
         }"#;
-        let parsed: Result<OnlyHavenListResponse<OnlyHavenPostRow>, _> = serde_json::from_str(sample);
-        assert!(parsed.is_ok(), "Failed to deserialize popular response: {:?}", parsed.err());
+        let parsed: Result<OnlyHavenListResponse<OnlyHavenPostRow>, _> =
+            serde_json::from_str(sample);
+        assert!(
+            parsed.is_ok(),
+            "Failed to deserialize popular response: {:?}",
+            parsed.err()
+        );
         let res = parsed.unwrap();
         let posts = res.posts.unwrap();
         assert_eq!(posts.len(), 1);

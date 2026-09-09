@@ -482,10 +482,7 @@ impl AppSettings {
                 "notifications_show_preview",
                 self.notifications_show_preview.to_string(),
             ),
-            (
-                "notifications_sound",
-                self.notifications_sound.to_string(),
-            ),
+            ("notifications_sound", self.notifications_sound.to_string()),
         ])
     }
 
@@ -665,12 +662,25 @@ impl AppSettings {
         }
         let default_configs = crate::api::provider_manager::ProviderManager::default_configs();
         for p in &mut self.providers {
-            if let Some(def) = default_configs.iter().find(|d| d.id.eq_ignore_ascii_case(&p.id)) {
+            if let Some(def) = default_configs
+                .iter()
+                .find(|d| d.id.eq_ignore_ascii_case(&p.id))
+            {
                 if p.name.trim().is_empty() {
                     p.name = def.name.clone();
                 }
                 if p.services.is_empty() {
                     p.services = def.services.clone();
+                } else {
+                    for s in &def.services {
+                        if !p
+                            .services
+                            .iter()
+                            .any(|existing| existing.eq_ignore_ascii_case(s))
+                        {
+                            p.services.push(s.clone());
+                        }
+                    }
                 }
                 if p.file_prefix.is_none() {
                     p.file_prefix = def.file_prefix.clone();
@@ -681,7 +691,11 @@ impl AppSettings {
             }
         }
         for def in default_configs {
-            if !self.providers.iter().any(|p| p.id.eq_ignore_ascii_case(&def.id)) {
+            if !self
+                .providers
+                .iter()
+                .any(|p| p.id.eq_ignore_ascii_case(&def.id))
+            {
                 self.providers.push(def);
             }
         }
@@ -888,8 +902,17 @@ mod tests {
         let mut settings = AppSettings::default();
         settings.normalize();
 
-        assert!(settings.providers.iter().any(|p| p.id == "pawchive" && p.file_prefix.as_deref() == Some("file")));
-        assert!(settings.providers.iter().any(|p| p.id == "coomer" && p.file_prefix.as_deref() == Some("c1")));
-        assert!(settings.providers.iter().any(|p| p.id == "onlyhaven" && p.file_prefix.as_deref() == Some("e1")));
+        assert!(settings
+            .providers
+            .iter()
+            .any(|p| p.id == "pawchive" && p.file_prefix.as_deref() == Some("file")));
+        assert!(settings
+            .providers
+            .iter()
+            .any(|p| p.id == "coomer" && p.file_prefix.as_deref() == Some("c1")));
+        assert!(settings
+            .providers
+            .iter()
+            .any(|p| p.id == "onlyhaven" && p.file_prefix.as_deref() == Some("e1")));
     }
 }

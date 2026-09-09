@@ -10,9 +10,7 @@ pub use manager::ProviderManager;
 pub use onlyhaven::OnlyHavenProvider;
 pub use pawchive::{PawchiveClient, PawchiveProvider};
 pub use queue::{ProviderQueueConfig, ProviderRequestQueue};
-pub use traits::{
-    derive_subdomain_url, ProviderConfig, ProviderHealth, SourceProvider,
-};
+pub use traits::{derive_subdomain_url, ProviderConfig, ProviderHealth, SourceProvider};
 
 pub fn default_pawchive_services() -> Vec<String> {
     PawchiveProvider::default_services()
@@ -25,4 +23,3 @@ pub fn default_onlyhaven_services() -> Vec<String> {
 pub fn default_coomer_services() -> Vec<String> {
     CoomerProvider::default_services()
 }
-

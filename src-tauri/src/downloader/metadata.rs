@@ -131,12 +131,15 @@ mod tests {
 
     #[test]
     fn test_save_post_metadata_urls() {
-        let mut settings = AppSettings::default();
-        settings.download_save_metadata = true;
-        settings.download_metadata_format = "both".to_string();
+        let mut settings = AppSettings {
+            download_save_metadata: true,
+            download_metadata_format: "both".to_string(),
+            ..Default::default()
+        };
         settings.normalize();
 
-        let temp_dir = std::env::temp_dir().join(format!("pawstash_test_meta_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("pawstash_test_meta_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let meta_oh = PostMetadataExport {

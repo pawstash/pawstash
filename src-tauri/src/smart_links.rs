@@ -573,7 +573,11 @@ fn find_provider_for_service(
             let defaults = crate::api::providers::manager::ProviderManager::default_configs();
             defaults
                 .iter()
-                .find(|p| p.services.iter().any(|s| s.eq_ignore_ascii_case(&srv_clean)))
+                .find(|p| {
+                    p.services
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(&srv_clean))
+                })
                 .map(|p| p.id.clone())
                 .unwrap_or_else(|| "pawchive".to_string())
         })

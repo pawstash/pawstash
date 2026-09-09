@@ -8,11 +8,15 @@ pub struct Attachment {
     pub path: Option<String>,
     pub server: Option<String>,
     pub size: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Post {
     #[serde(deserialize_with = "deserialize_flexible_id")]
     pub id: String,
@@ -56,6 +60,12 @@ pub struct Post {
     pub favorite_count: Option<u64>,
     #[serde(default)]
     pub attachment_count: Option<u64>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
+    #[serde(default)]
+    pub page_url: Option<String>,
+    #[serde(default)]
+    pub preview_path: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
@@ -117,6 +127,8 @@ impl Post {
                         path: a.path.clone(),
                         server: a.server.clone(),
                         size: a.size,
+                        url: a.url.clone(),
+                        thumbnail_url: a.thumbnail_url.clone(),
                         extra: HashMap::new(),
                     })
                     .collect()
@@ -126,6 +138,8 @@ impl Post {
                 path: f.path.clone(),
                 server: f.server.clone(),
                 size: f.size,
+                url: f.url.clone(),
+                thumbnail_url: f.thumbnail_url.clone(),
                 extra: HashMap::new(),
             }),
             poll: None,
@@ -139,6 +153,9 @@ impl Post {
             prev: None,
             favorite_count: self.favorite_count,
             attachment_count: self.attachment_count,
+            thumbnail_url: self.thumbnail_url.clone(),
+            page_url: self.page_url.clone(),
+            preview_path: self.preview_path.clone(),
             extra: HashMap::new(),
         }
     }
@@ -327,6 +344,9 @@ impl Post {
                         prev,
                         favorite_count,
                         attachment_count,
+                        thumbnail_url: None,
+                        page_url: None,
+                        preview_path: None,
                         extra,
                     })
                 } else {
@@ -336,27 +356,39 @@ impl Post {
         }
     }
 
-    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+    pub fn source_url(
+        &self,
+        provider: &dyn crate::api::providers::traits::SourceProvider,
+    ) -> String {
         provider.resolve_post_url(&self.service, &self.user, &self.id)
     }
 }
 
 impl Creator {
-    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+    pub fn source_url(
+        &self,
+        provider: &dyn crate::api::providers::traits::SourceProvider,
+    ) -> String {
         provider.resolve_creator_url(&self.service, &self.id)
     }
 }
 
 impl CreatorProfile {
-    pub fn source_url(&self, provider: &dyn crate::api::providers::traits::SourceProvider) -> String {
+    pub fn source_url(
+        &self,
+        provider: &dyn crate::api::providers::traits::SourceProvider,
+    ) -> String {
         provider.resolve_creator_url(&self.service, &self.id)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Creator {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub service: String,
     pub public_id: Option<Value>,
     pub relation_id: Option<Value>,
@@ -364,14 +396,27 @@ pub struct Creator {
     pub updated: Option<i64>,
     pub favorited: Option<u64>,
     pub ever_imported: Option<bool>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub avatar_path: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
+    #[serde(default)]
+    pub banner_path: Option<String>,
+    #[serde(default)]
+    pub page_url: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreatorProfile {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub service: String,
     pub public_id: Option<Value>,
     pub relation_id: Option<Value>,
@@ -379,8 +424,50 @@ pub struct CreatorProfile {
     pub updated: Option<Value>,
     pub favorited: Option<u64>,
     pub ever_imported: Option<bool>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub avatar_path: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
+    #[serde(default)]
+    pub banner_path: Option<String>,
+    #[serde(default)]
+    pub page_url: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+pub fn parse_timestamp_value(val: Option<&Value>) -> Option<i64> {
+    let v = val?;
+    if let Some(n) = v.as_i64() {
+        return Some(if n > 10_000_000_000 { n / 1000 } else { n });
+    }
+    if let Some(s) = v.as_str() {
+        let clean = s.trim().trim_matches('"');
+        if clean.is_empty() {
+            return None;
+        }
+        if let Ok(n) = clean.parse::<i64>() {
+            return Some(if n > 10_000_000_000 { n / 1000 } else { n });
+        }
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(clean) {
+            return Some(dt.timestamp());
+        }
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(clean, "%Y-%m-%dT%H:%M:%S%.f") {
+            return Some(dt.and_utc().timestamp());
+        }
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(clean, "%Y-%m-%dT%H:%M:%S") {
+            return Some(dt.and_utc().timestamp());
+        }
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(clean, "%Y-%m-%d %H:%M:%S") {
+            return Some(dt.and_utc().timestamp());
+        }
+        if let Ok(d) = chrono::NaiveDate::parse_from_str(clean, "%Y-%m-%d") {
+            return d.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc().timestamp());
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,6 +492,10 @@ pub struct Fancard {
     pub added: String,
     pub size: u64,
     pub ihash: Option<String>,
+    #[serde(default)]
+    pub media_url: Option<String>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -863,5 +954,29 @@ mod tests {
         assert_eq!(prof.id, "28009976");
         assert_eq!(prof.name, "Eros");
         assert_eq!(prof.service, "fanbox");
+        assert!(super::parse_timestamp_value(prof.indexed.as_ref()).is_some());
+        assert!(super::parse_timestamp_value(prof.updated.as_ref()).is_some());
+    }
+
+    #[test]
+    fn test_parse_timestamp_value_formats() {
+        use super::parse_timestamp_value;
+        use serde_json::json;
+
+        assert_eq!(
+            parse_timestamp_value(Some(&json!(1781121600))),
+            Some(1781121600)
+        );
+        assert_eq!(
+            parse_timestamp_value(Some(&json!("1781121600"))),
+            Some(1781121600)
+        );
+        assert_eq!(
+            parse_timestamp_value(Some(&json!("2026-06-10T20:00:00"))),
+            Some(1781121600)
+        );
+        assert!(parse_timestamp_value(Some(&json!("2026-08-15T03:53:20.229981"))).is_some());
+        assert_eq!(parse_timestamp_value(None), None);
+        assert_eq!(parse_timestamp_value(Some(&json!(""))), None);
     }
 }

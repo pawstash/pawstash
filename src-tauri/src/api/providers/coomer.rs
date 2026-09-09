@@ -5,6 +5,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use async_trait::async_trait;
+use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, COOKIE, USER_AGENT};
 use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
@@ -372,7 +373,7 @@ impl SourceProvider for CoomerProvider {
             .map(|d| d.as_secs().to_string())
             .unwrap_or_default();
 
-        match self.fetch_creators().await {
+        match self.app_version().await {
             Ok(_) => Ok(ProviderHealth {
                 provider_id: self.id.clone(),
                 active_endpoint: endpoint,
@@ -423,21 +424,63 @@ impl SourceProvider for CoomerProvider {
         );
         match self.get_json::<CreatorProfile>(&path, &[]).await {
             Ok(prof) => {
+                let id = if prof.id.trim().is_empty() {
+                    creator_id.to_string()
+                } else {
+                    prof.id
+                };
+                let service = if prof.service.trim().is_empty() {
+                    service.to_string()
+                } else {
+                    prof.service
+                };
+                let name = if prof.name.trim().is_empty() {
+                    creator_id.to_string()
+                } else {
+                    prof.name
+                };
                 let mut extra = prof.extra;
                 extra.insert(
                     "provider_id".to_string(),
                     serde_json::Value::String(self.id.clone()),
                 );
+                let avatar_url = prof
+                    .avatar_url
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        let av = self.resolve_avatar_url(&service, &id);
+                        if av.is_empty() {
+                            None
+                        } else {
+                            Some(av)
+                        }
+                    });
+                let banner_url = prof
+                    .banner_url
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        let bn = self.resolve_banner_url(&service, &id);
+                        if bn.is_empty() {
+                            None
+                        } else {
+                            Some(bn)
+                        }
+                    });
                 Ok(Creator {
-                    id: prof.id,
-                    name: prof.name,
-                    service: prof.service,
+                    id,
+                    name,
+                    service,
                     public_id: prof.public_id,
                     relation_id: prof.relation_id,
-                    indexed: prof.indexed.and_then(|v| v.as_i64()),
-                    updated: prof.updated.and_then(|v| v.as_i64()),
+                    indexed: parse_timestamp_value(prof.indexed.as_ref()),
+                    updated: parse_timestamp_value(prof.updated.as_ref()),
                     favorited: prof.favorited,
                     ever_imported: prof.ever_imported,
+                    avatar_url,
+                    avatar_path: prof.avatar_path,
+                    banner_url,
+                    banner_path: prof.banner_path,
+                    page_url: prof.page_url,
                     extra,
                 })
             }
@@ -447,6 +490,8 @@ impl SourceProvider for CoomerProvider {
                     "provider_id".to_string(),
                     serde_json::Value::String(self.id.clone()),
                 );
+                let av = self.resolve_avatar_url(service, creator_id);
+                let avatar_url = if av.is_empty() { None } else { Some(av) };
                 Ok(Creator {
                     id: creator_id.to_string(),
                     name: creator_id.to_string(),
@@ -457,6 +502,11 @@ impl SourceProvider for CoomerProvider {
                     updated: None,
                     favorited: None,
                     ever_imported: None,
+                    avatar_url,
+                    avatar_path: None,
+                    banner_url: None,
+                    banner_path: None,
+                    page_url: None,
                     extra,
                 })
             }
@@ -798,13 +848,67 @@ impl SourceProvider for CoomerProvider {
         )
     }
 
+    fn resolve_avatar_url(&self, service: &str, creator_id: &str) -> String {
+        let conf = self.config.read().unwrap();
+        let base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
+        format!(
+            "{base}/icons/{}/{}",
+            Self::segment(service),
+            Self::segment(creator_id)
+        )
+    }
+
+    fn resolve_banner_url(&self, service: &str, creator_id: &str) -> String {
+        let conf = self.config.read().unwrap();
+        let base = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
+        format!(
+            "{base}/banners/{}/{}",
+            Self::segment(service),
+            Self::segment(creator_id)
+        )
+    }
+
     async fn fetch_creator_artwork_data_url(
         &self,
-        _service: &str,
-        _creator_id: &str,
-        _artwork_type: &str,
+        service: &str,
+        creator_id: &str,
+        artwork_type: &str,
     ) -> Result<String, String> {
-        Err("Coomer creator artwork is not supported".to_string())
+        let url = if artwork_type == "banner" {
+            self.resolve_banner_url(service, creator_id)
+        } else {
+            self.resolve_avatar_url(service, creator_id)
+        };
+        let client = self.client.read().unwrap().clone();
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch Coomer artwork: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Coomer artwork HTTP {}", resp.status()));
+        }
+        let mime = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        Ok(format!(
+            "data:{mime};base64,{}",
+            base64::prelude::BASE64_STANDARD.encode(bytes)
+        ))
     }
 
     async fn search_hash(&self, file_hash: &str) -> Result<FileSearchResult, String> {
@@ -1075,7 +1179,7 @@ mod tests {
         assert_eq!(post.user, "prettykitttt");
         assert_eq!(post.service, "onlyfans");
         assert!(
-            post.file.is_some() || post.attachments.as_ref().map_or(false, |a| !a.is_empty()),
+            post.file.is_some() || post.attachments.as_ref().is_some_and(|a| !a.is_empty()),
             "Coomer post has neither file nor attachments"
         );
 

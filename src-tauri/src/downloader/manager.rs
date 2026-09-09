@@ -308,7 +308,10 @@ impl DownloadManager {
         }
         self.notify.notify_waiters();
         let paused_count = updated.len() as i32;
-        crate::downloader::notifications::update_download_paused_notification(paused_count, Some(app_handle));
+        crate::downloader::notifications::update_download_paused_notification(
+            paused_count,
+            Some(app_handle),
+        );
         Ok(())
     }
 
@@ -528,7 +531,9 @@ impl DownloadManager {
                                 return;
                             }
                         }
-                        crate::downloader::notifications::stop_download_service(Some(&self.app_handle));
+                        crate::downloader::notifications::stop_download_service(Some(
+                            &self.app_handle,
+                        ));
                     }
                 }
                 self.manager.notify.notify_waiters();
@@ -728,9 +733,7 @@ impl DownloadManager {
         Self::notify_system_media_scan(&job.final_path);
         let _ = app_handle.emit("download-job-updated", completed.clone());
         crate::downloader::notifications::notify_download_completed(
-            app_handle,
-            &settings,
-            &completed,
+            app_handle, &settings, &completed,
         );
         Ok(())
     }

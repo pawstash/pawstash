@@ -7,8 +7,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import { apiSaveSettings } from '$lib/utils/ipc';
-  import { creatorAvatarUrl } from '$lib/utils/media';
-  import { thumbHashToUrl } from '$lib/utils/thumbhash';
+  import { creatorAvatarSrc, creatorPlaceholderUrl } from '$lib/utils/media';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Creator, Favorite, Post } from '$lib/types/content';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -350,9 +349,6 @@
     };
   }
 
-  $effect(() => {
-    void creatorsState.load();
-  });
 
   function favoriteOrder(item: Post | Creator) {
     const favedAt = (item as any).faved_at || (item as any).created_at || (item as any).faved_date;
@@ -624,20 +620,6 @@
     searchQuery = '';
   }
 
-  function getAvatarUrl(creator: Creator) {
-    const avatarThumb = (creator.extra as any)?.avatar_thumbhash;
-    const headerThumb = (creator.extra as any)?.header_thumbhash;
-    if (avatarThumb) {
-      const url = thumbHashToUrl(avatarThumb);
-      if (url) return url;
-    }
-    if (headerThumb) {
-      const url = thumbHashToUrl(headerThumb);
-      if (url) return url;
-    }
-    return creatorAvatarUrl(creator.service, creator.id);
-  }
-
   function formatDate(value: unknown) {
     if (!value) return '';
     const numeric = Number(value);
@@ -897,6 +879,8 @@
       {#each visibleCreators as creator (creator.service + ':' + creator.id)}
         {@const creatorKey = `${creator.service}:${creator.id}`}
         {@const isSelected = isSelectionActive && selectionState.isSelected(creatorKey)}
+        {@const placeholder = creatorPlaceholderUrl(creator)}
+        {@const avatarSrc = creatorAvatarSrc(creator)}
         <article
           class="grid-tile"
           class:selected={isSelected}
@@ -926,7 +910,12 @@
           {/if}
 
           <div class="grid-tile-placeholder"><span class="fallback-initials">{creator.name.slice(0, 2).toUpperCase()}</span></div>
-          <img class="grid-tile-media" src={getAvatarUrl(creator)} alt="" loading="lazy" decoding="async" onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = 'none')} />
+          {#if placeholder}
+            <img class="grid-tile-media placeholder-blur" src={placeholder} alt="" aria-hidden="true" />
+          {/if}
+          {#if avatarSrc}
+            <img class="grid-tile-media" src={avatarSrc} alt="" loading="lazy" decoding="async" onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = 'none')} />
+          {/if}
           <div class="grid-tile-shade"></div>
           <div class="grid-tile-footer">
             <div class="grid-tile-author">

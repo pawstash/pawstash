@@ -5,12 +5,32 @@ use crate::db::storage::{content_cache_path, open_database};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CreatorsQuery {
+    pub query: Option<String>,
+    pub services: Option<Vec<String>>,
+    pub providers: Option<Vec<String>>,
+    pub sort_by: Option<String>,
+    pub sort_order: Option<String>,
+    pub subscribed_only: Option<bool>,
+    pub hide_ai: Option<bool>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatorsPageResult {
+    pub items: Vec<Creator>,
+    pub total: u64,
+    pub has_more: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CacheStats {
@@ -21,6 +41,7 @@ pub struct CacheStats {
     pub preview_bytes: u64,
     pub avatar_bytes: u64,
     pub banner_bytes: u64,
+    pub thumbnail_bytes: u64,
     pub other_bytes: u64,
     pub file_count: u64,
 }
@@ -701,6 +722,9 @@ impl ContentRepository {
                     prev: None,
                     favorite_count: None,
                     attachment_count: None,
+                    thumbnail_url: None,
+                    page_url: None,
+                    preview_path: None,
                     extra: Default::default(),
                 });
                 if let Some(pid) = provider_id {
@@ -719,26 +743,121 @@ impl ContentRepository {
         self.save_creator_json(&creator.service, &creator.id, &creator.name, creator)
     }
 
+    fn extract_creator_favorited(creator: &Creator) -> i64 {
+        if let Some(f) = creator.favorited {
+            return f as i64;
+        }
+        if let Some(v) = creator
+            .extra
+            .get("favorited")
+            .or_else(|| creator.extra.get("kemono_favorited"))
+            .or_else(|| creator.extra.get("favorite_count"))
+        {
+            if let Some(num) = v.as_i64() {
+                return num;
+            }
+            if let Some(num) = v.as_u64() {
+                return num as i64;
+            }
+            if let Some(s) = v.as_str() {
+                if let Ok(num) = s.parse::<i64>() {
+                    return num;
+                }
+            }
+        }
+        0
+    }
+
+    fn extract_creator_timestamp(t: Option<i64>) -> i64 {
+        match t {
+            Some(val) if val > 10_000_000_000 => val / 1000,
+            Some(val) => val,
+            None => 0,
+        }
+    }
+
+    fn is_ai_creator(creator: &Creator) -> bool {
+        let lower_name = creator.name.to_lowercase();
+        if lower_name.contains("[ai]") || lower_name.contains("(ai)") {
+            return true;
+        }
+        if let Some(serde_json::Value::Array(tags)) = creator.extra.get("tags") {
+            for t in tags {
+                if let Some(s) = t.as_str() {
+                    let l = s.to_lowercase();
+                    if l == "ai"
+                        || l.contains("ai generated")
+                        || l.contains("artificial intelligence")
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn save_creators(&self, creators: &[Creator]) -> Result<(), String> {
+        struct PreparedCreator {
+            service: String,
+            id: String,
+            name: String,
+            snapshot: String,
+            favorited: i64,
+            updated_at: i64,
+            indexed_at: i64,
+            is_ai: i64,
+        }
+
+        let mut prepared = Vec::with_capacity(creators.len());
+        for c in creators {
+            let snapshot = serde_json::to_string(c).map_err(|e| e.to_string())?;
+            let favorited = Self::extract_creator_favorited(c);
+            let updated_at = Self::extract_creator_timestamp(c.updated);
+            let indexed_at = Self::extract_creator_timestamp(c.indexed);
+            let is_ai = if Self::is_ai_creator(c) { 1 } else { 0 };
+
+            prepared.push(PreparedCreator {
+                service: c.service.clone(),
+                id: c.id.clone(),
+                name: c.name.clone(),
+                snapshot,
+                favorited,
+                updated_at,
+                indexed_at,
+                is_ai,
+            });
+        }
+
         let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
         let tx = connection.transaction().map_err(|e| e.to_string())?;
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO creators(service,creator_id,name,snapshot_json,last_checked_at)
-                     VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
-                     ON CONFLICT(service,creator_id) DO UPDATE SET name=excluded.name,
-                       snapshot_json=excluded.snapshot_json,cached_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP",
+                    "INSERT INTO creators(service, creator_id, name, snapshot_json, favorited, updated_at, indexed_at, is_ai, last_checked_at)
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+                     ON CONFLICT(service, creator_id) DO UPDATE SET
+                       name = excluded.name,
+                       snapshot_json = excluded.snapshot_json,
+                       favorited = excluded.favorited,
+                       updated_at = excluded.updated_at,
+                       indexed_at = excluded.indexed_at,
+                       is_ai = excluded.is_ai,
+                       cached_at = CURRENT_TIMESTAMP,
+                       last_checked_at = CURRENT_TIMESTAMP",
                 )
                 .map_err(|e| e.to_string())?;
 
-            for creator in creators {
-                let snapshot = serde_json::to_string(creator).map_err(|e| e.to_string())?;
+            for p in &prepared {
                 stmt.execute(params![
-                    &creator.service,
-                    &creator.id,
-                    &creator.name,
-                    &snapshot
+                    &p.service,
+                    &p.id,
+                    &p.name,
+                    &p.snapshot,
+                    p.favorited,
+                    p.updated_at,
+                    p.indexed_at,
+                    p.is_ai,
                 ])
                 .map_err(|e| e.to_string())?;
             }
@@ -768,6 +887,11 @@ impl ContentRepository {
                         updated: None,
                         favorited: None,
                         ever_imported: None,
+                        avatar_url: None,
+                        avatar_path: None,
+                        banner_url: None,
+                        banner_path: None,
+                        page_url: None,
                         extra: Default::default(),
                     })
                 }
@@ -775,6 +899,211 @@ impl ContentRepository {
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
+    }
+
+    pub fn query_creators(&self, query: &CreatorsQuery) -> Result<CreatorsPageResult, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+
+        let is_subscribed = query.subscribed_only.unwrap_or(false);
+        let from_clause = if is_subscribed {
+            "FROM creators c INNER JOIN subscriptions s ON s.service = c.service AND s.creator_id = c.creator_id"
+        } else {
+            "FROM creators c"
+        };
+
+        let mut where_conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(services) = &query.services {
+            let active_services: Vec<&String> =
+                services.iter().filter(|s| !s.trim().is_empty()).collect();
+            if !active_services.is_empty() {
+                let placeholders = active_services
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                where_conditions.push(format!("c.service IN ({placeholders})"));
+                for s in active_services {
+                    params.push(Box::new(s.to_lowercase()));
+                }
+            }
+        }
+
+        if let Some(providers) = &query.providers {
+            let active_providers: Vec<&String> =
+                providers.iter().filter(|p| !p.trim().is_empty()).collect();
+            if !active_providers.is_empty() {
+                let placeholders = active_providers
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                where_conditions.push(format!(
+                    "COALESCE(json_extract(c.snapshot_json, '$.provider_id'), json_extract(c.snapshot_json, '$.extra.provider_id'), 'pawchive') IN ({placeholders})"
+                ));
+                for p in active_providers {
+                    params.push(Box::new(p.to_lowercase()));
+                }
+            }
+        }
+
+        if let Some(q) = &query.query {
+            let trimmed = q.trim();
+            if !trimmed.is_empty() {
+                where_conditions.push("(c.name LIKE ? OR c.creator_id LIKE ?)".to_string());
+                let pattern = format!("%{trimmed}%");
+                params.push(Box::new(pattern.clone()));
+                params.push(Box::new(pattern));
+            }
+        }
+
+        if query.hide_ai.unwrap_or(false) {
+            where_conditions.push("c.is_ai = 0".to_string());
+        }
+
+        let where_clause = if where_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_conditions.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) {from_clause} {where_clause}");
+        let count_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let total: u64 = connection
+            .query_row(&count_sql, count_params.as_slice(), |r| r.get(0))
+            .unwrap_or(0);
+
+        let sort_by = query.sort_by.as_deref().unwrap_or("favorited");
+        let sort_order = query.sort_order.as_deref().unwrap_or("desc").to_lowercase();
+        let order_dir = if sort_order == "asc" { "ASC" } else { "DESC" };
+
+        let order_clause = match sort_by {
+            "name" => format!("ORDER BY c.name COLLATE NOCASE {order_dir}"),
+            "updated" => format!("ORDER BY c.updated_at {order_dir}, c.name COLLATE NOCASE ASC"),
+            "indexed" => format!("ORDER BY c.indexed_at {order_dir}, c.name COLLATE NOCASE ASC"),
+            _ => format!(
+                "ORDER BY c.favorited {order_dir}, c.updated_at DESC, c.name COLLATE NOCASE ASC"
+            ),
+        };
+
+        let limit = query.limit.unwrap_or(80).clamp(1, 200);
+        let offset = query.offset.unwrap_or(0);
+
+        let select_sql = format!(
+            "SELECT c.snapshot_json, c.creator_id, c.name, c.service, c.avatar_path, c.banner_path {from_clause} {where_clause} {order_clause} LIMIT ? OFFSET ?"
+        );
+
+        let mut query_params: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        query_params.push(&limit);
+        query_params.push(&offset);
+
+        let mut stmt = connection.prepare(&select_sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(query_params.as_slice(), |r| {
+                let json_str: String = r.get(0)?;
+                let raw_avatar_path: Option<String> = r.get(4)?;
+                let raw_banner_path: Option<String> = r.get(5)?;
+
+                let mut creator = if let Ok(c) = serde_json::from_str::<Creator>(&json_str) {
+                    c
+                } else {
+                    Creator {
+                        id: r.get(1)?,
+                        name: r.get(2)?,
+                        service: r.get(3)?,
+                        public_id: None,
+                        relation_id: None,
+                        indexed: None,
+                        updated: None,
+                        favorited: None,
+                        ever_imported: None,
+                        avatar_url: None,
+                        avatar_path: None,
+                        banner_url: None,
+                        banner_path: None,
+                        page_url: None,
+                        extra: Default::default(),
+                    }
+                };
+
+                if let Some(path_str) = raw_avatar_path {
+                    if std::path::Path::new(&path_str).is_file() {
+                        creator.avatar_path = Some(path_str);
+                    }
+                }
+                if let Some(path_str) = raw_banner_path {
+                    if std::path::Path::new(&path_str).is_file() {
+                        creator.banner_path = Some(path_str);
+                    }
+                }
+
+                Ok(creator)
+            })
+            .map_err(|e| e.to_string())?;
+
+        let items: Vec<_> = rows.flatten().collect();
+
+        let has_more = (offset as u64 + items.len() as u64) < total;
+
+        Ok(CreatorsPageResult {
+            items,
+            total,
+            has_more,
+        })
+    }
+
+    pub fn list_creator_services(&self) -> Result<Vec<String>, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT DISTINCT service FROM creators WHERE service != '' ORDER BY service ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let services: Vec<String> = rows.flatten().collect();
+        Ok(services)
+    }
+
+    pub fn list_creator_names(&self) -> Result<HashMap<String, String>, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let mut stmt = connection
+            .prepare("SELECT service, creator_id, name FROM creators")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                let service: String = r.get(0)?;
+                let id: String = r.get(1)?;
+                let name: String = r.get(2)?;
+                Ok((
+                    format!("{}:{}", service.to_lowercase(), id.to_lowercase()),
+                    name,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+
+        let map: HashMap<String, String> = rows.flatten().collect();
+        Ok(map)
+    }
+
+    pub fn get_creator_name(
+        &self,
+        service: &str,
+        creator_id: &str,
+    ) -> Result<Option<String>, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let name: Option<String> = connection
+            .query_row(
+                "SELECT name FROM creators WHERE service = ?1 AND creator_id = ?2",
+                params![service, creator_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        Ok(name)
     }
 
     fn save_creator_json<T: serde::Serialize>(
@@ -802,16 +1131,32 @@ impl ContentRepository {
         creator_id: &str,
     ) -> Result<Option<CreatorProfile>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let json: Option<String> = connection
+        let row: Option<(String, Option<String>, Option<String>)> = connection
             .query_row(
-                "SELECT snapshot_json FROM creators WHERE service=?1 AND creator_id=?2",
+                "SELECT snapshot_json, avatar_path, banner_path FROM creators WHERE service=?1 AND creator_id=?2",
                 params![service, creator_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        json.map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
-            .transpose()
+
+        if let Some((json, avatar_path, banner_path)) = row {
+            let mut profile: CreatorProfile =
+                serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            if let Some(path_str) = avatar_path {
+                if std::path::Path::new(&path_str).is_file() {
+                    profile.avatar_path = Some(path_str);
+                }
+            }
+            if let Some(path_str) = banner_path {
+                if std::path::Path::new(&path_str).is_file() {
+                    profile.banner_path = Some(path_str);
+                }
+            }
+            Ok(Some(profile))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn pin_post(&self, post: &Post, reason: &str, account_id: &str) -> Result<(), String> {
@@ -1094,6 +1439,119 @@ impl ContentRepository {
         self.enforce_cache_limit();
         Ok(path)
     }
+
+    pub async fn revalidate_creator_artwork(
+        &self,
+        service: &str,
+        creator_id: &str,
+        kind: &str,
+        url: &str,
+        provider_id: Option<&str>,
+        client: &reqwest::Client,
+    ) -> Result<Option<PathBuf>, String> {
+        let is_specific = provider_id.is_some_and(|pid| pid != "auto" && !pid.trim().is_empty());
+        let dir = content_cache_path().join(if kind == "banner" {
+            "banners"
+        } else {
+            "avatars"
+        });
+        let s_san = sanitize(service);
+        let id_san = sanitize(creator_id);
+
+        let existing = if is_specific {
+            let pid = provider_id.unwrap();
+            let p_san = sanitize(pid);
+            let mut found = None;
+            for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                let p = dir.join(format!("{s_san}_{id_san}_{p_san}_{kind}.{ext}"));
+                if p.is_file() {
+                    found = Some(p.to_string_lossy().into_owned());
+                    break;
+                }
+            }
+            found
+        } else {
+            self.artwork_path(service, creator_id, kind)?
+        };
+
+        let mut req = client.get(url);
+        if let Some(ref path_str) = existing {
+            let path = PathBuf::from(path_str);
+            if path.is_file() {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    if let Ok(mtime) = metadata.modified() {
+                        let dt = chrono::DateTime::<chrono::Utc>::from(mtime);
+                        req = req.header(reqwest::header::IF_MODIFIED_SINCE, dt.to_rfc2822());
+                    }
+                }
+            }
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("Artwork revalidation error: {e}"))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+            let c = self.connection.lock().map_err(|e| e.to_string())?;
+            let _ = c.execute(
+                "UPDATE creators SET last_checked_at=CURRENT_TIMESTAMP WHERE service=?1 AND creator_id=?2",
+                params![service, creator_id],
+            );
+            return Ok(existing.map(PathBuf::from));
+        }
+
+        if !resp.status().is_success() {
+            return Ok(existing.map(PathBuf::from));
+        }
+
+        let mime = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+
+        let ext = if mime.contains("png") {
+            "png"
+        } else if mime.contains("webp") {
+            "webp"
+        } else if mime.contains("gif") {
+            "gif"
+        } else {
+            "jpg"
+        };
+
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let safe = if is_specific {
+            let p_san = sanitize(provider_id.unwrap());
+            format!("{s_san}_{id_san}_{p_san}_{kind}.{ext}")
+        } else {
+            format!("{s_san}_{id_san}_{kind}.{ext}")
+        };
+        let path = dir.join(safe);
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+
+        if !is_specific {
+            let column = if kind == "banner" {
+                "banner_path"
+            } else {
+                "avatar_path"
+            };
+            let connection = self.connection.lock().map_err(|e| e.to_string())?;
+            connection
+                .execute(
+                    &format!("UPDATE creators SET {column}=?3, last_checked_at=CURRENT_TIMESTAMP WHERE service=?1 AND creator_id=?2"),
+                    params![service, creator_id, path.to_string_lossy()],
+                )
+                .map_err(|e| e.to_string())?;
+            drop(connection);
+        }
+
+        self.enforce_cache_limit();
+        Ok(Some(path))
+    }
 }
 
 fn scan_cache_files(root: &Path, protected: &HashSet<PathBuf>) -> Result<Vec<CacheFile>, String> {
@@ -1151,6 +1609,7 @@ fn cache_stats_from_files(files: &[CacheFile]) -> CacheStats {
     let preview_bytes = bytes_for("previews");
     let avatar_bytes = bytes_for("avatars");
     let banner_bytes = bytes_for("banners");
+    let thumbnail_bytes = bytes_for("thumbnails");
     CacheStats {
         total_bytes,
         metadata_bytes: 0,
@@ -1159,10 +1618,12 @@ fn cache_stats_from_files(files: &[CacheFile]) -> CacheStats {
         preview_bytes,
         avatar_bytes,
         banner_bytes,
+        thumbnail_bytes,
         other_bytes: total_bytes
             .saturating_sub(preview_bytes)
             .saturating_sub(avatar_bytes)
-            .saturating_sub(banner_bytes),
+            .saturating_sub(banner_bytes)
+            .saturating_sub(thumbnail_bytes),
         file_count: files.len() as u64,
     }
 }
@@ -1233,6 +1694,7 @@ mod tests {
         assert_eq!(stats.preview_bytes, 18);
         assert_eq!(stats.avatar_bytes, 0);
         assert_eq!(stats.banner_bytes, 0);
+        assert_eq!(stats.thumbnail_bytes, 0);
         assert_eq!(stats.other_bytes, 0);
         assert_eq!(stats.file_count, 2);
 
@@ -1275,6 +1737,11 @@ mod tests {
             updated: None,
             favorited: None,
             ever_imported: None,
+            avatar_url: None,
+            avatar_path: None,
+            banner_url: None,
+            banner_path: None,
+            page_url: None,
             extra: Default::default(),
         };
         let creator_guest = CreatorProfile {
@@ -1287,6 +1754,11 @@ mod tests {
             updated: None,
             favorited: None,
             ever_imported: None,
+            avatar_url: None,
+            avatar_path: None,
+            banner_url: None,
+            banner_path: None,
+            page_url: None,
             extra: Default::default(),
         };
         repo.save_creator(&creator_a).unwrap();
@@ -1350,5 +1822,139 @@ mod tests {
             false,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn test_creators_query_pagination_and_lookup() {
+        let repo = ContentRepository::in_memory(512).unwrap();
+        let creators = vec![
+            Creator {
+                id: "c1".to_string(),
+                name: "Alpha Artist".to_string(),
+                service: "patreon".to_string(),
+                public_id: None,
+                relation_id: None,
+                indexed: Some(100),
+                updated: Some(200),
+                favorited: Some(50),
+                ever_imported: None,
+                avatar_url: None,
+                avatar_path: None,
+                banner_url: None,
+                banner_path: None,
+                page_url: None,
+                extra: Default::default(),
+            },
+            Creator {
+                id: "c2".to_string(),
+                name: "Beta Generator [AI]".to_string(),
+                service: "fanbox".to_string(),
+                public_id: None,
+                relation_id: None,
+                indexed: Some(300),
+                updated: Some(400),
+                favorited: Some(100),
+                ever_imported: None,
+                avatar_url: None,
+                avatar_path: None,
+                banner_url: None,
+                banner_path: None,
+                page_url: None,
+                extra: Default::default(),
+            },
+            Creator {
+                id: "c3".to_string(),
+                name: "Gamma Creator".to_string(),
+                service: "patreon".to_string(),
+                public_id: None,
+                relation_id: None,
+                indexed: Some(500),
+                updated: Some(600),
+                favorited: Some(20),
+                ever_imported: None,
+                avatar_url: None,
+                avatar_path: None,
+                banner_url: None,
+                banner_path: None,
+                page_url: None,
+                extra: Default::default(),
+            },
+        ];
+
+        repo.save_creators(&creators).unwrap();
+
+        let services = repo.list_creator_services().unwrap();
+        assert_eq!(services, vec!["fanbox", "patreon"]);
+
+        let names = repo.list_creator_names().unwrap();
+        assert_eq!(
+            names.get("patreon:c1").map(|s| s.as_str()),
+            Some("Alpha Artist")
+        );
+        assert_eq!(
+            names.get("fanbox:c2").map(|s| s.as_str()),
+            Some("Beta Generator [AI]")
+        );
+
+        let single_name = repo.get_creator_name("patreon", "c1").unwrap();
+        assert_eq!(single_name, Some("Alpha Artist".to_string()));
+
+        let page = repo
+            .query_creators(&CreatorsQuery {
+                sort_by: Some("favorited".to_string()),
+                sort_order: Some("desc".to_string()),
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].id, "c2");
+        assert_eq!(page.items[1].id, "c1");
+        assert!(page.has_more);
+
+        let page_no_ai = repo
+            .query_creators(&CreatorsQuery {
+                hide_ai: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page_no_ai.total, 2);
+        assert!(!page_no_ai.items.iter().any(|c| c.id == "c2"));
+
+        let page_service = repo
+            .query_creators(&CreatorsQuery {
+                services: Some(vec!["fanbox".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page_service.total, 1);
+        assert_eq!(page_service.items[0].id, "c2");
+
+        let page_search = repo
+            .query_creators(&CreatorsQuery {
+                query: Some("Gamma".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page_search.total, 1);
+        assert_eq!(page_search.items[0].id, "c3");
+
+        let page_prov = repo
+            .query_creators(&CreatorsQuery {
+                providers: Some(vec!["pawchive".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page_prov.total, 3);
+
+        let page_nonexistent = repo
+            .query_creators(&CreatorsQuery {
+                providers: Some(vec!["onlyhaven".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page_nonexistent.total, 0);
     }
 }

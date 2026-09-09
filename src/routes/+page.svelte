@@ -122,7 +122,7 @@
     void accountState.refresh().catch((error) => console.warn('Failed to check Pawchive session', error));
     void syncState.init().catch((error) => console.warn('Failed to initialize encrypted sync', error));
     void providerState.loadProviders().catch((error) => console.warn('Failed to load providers', error));
-    void creatorsState.load().catch((error) => console.warn('Failed to preload creators list', error));
+    void creatorsState.init().catch((error) => console.warn('Failed to initialize creators list', error));
 
     requestAnimationFrame(() => {
       void emit('frontend-ready');

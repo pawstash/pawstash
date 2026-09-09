@@ -42,16 +42,13 @@ pub fn update_download_notification(
 
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (
-            total_count,
-            speed_bytes_per_sec,
-            current_filename,
-        );
+        let _ = (total_count, speed_bytes_per_sec, current_filename);
         if let Some(app) = app_handle {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
                 let percent = if total_bytes > 0 {
-                    ((downloaded_bytes as f64 / total_bytes as f64) * 100.0).clamp(0.0, 100.0) as u64
+                    ((downloaded_bytes as f64 / total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+                        as u64
                 } else {
                     0
                 };
@@ -132,12 +129,16 @@ pub fn notify_download_completed(
         let _ = with_android_context(|env, context| {
             let service_jstr = env.new_string(&service_str).map_err(|e| e.to_string())?;
             let creator_jstr = env.new_string(&creator_str).map_err(|e| e.to_string())?;
-            let creator_name_jstr = env.new_string(&creator_name_str).map_err(|e| e.to_string())?;
+            let creator_name_jstr = env
+                .new_string(&creator_name_str)
+                .map_err(|e| e.to_string())?;
             let post_jstr = env.new_string(&post_str).map_err(|e| e.to_string())?;
             let filename_jstr = env.new_string(&filename_str).map_err(|e| e.to_string())?;
             let title_jstr = env.new_string(&title_str).map_err(|e| e.to_string())?;
             let final_path_jstr = env.new_string(&final_path_str).map_err(|e| e.to_string())?;
-            let preview_path_jstr = env.new_string(&preview_path_str).map_err(|e| e.to_string())?;
+            let preview_path_jstr = env
+                .new_string(&preview_path_str)
+                .map_err(|e| e.to_string())?;
             let class = env.get_object_class(context).map_err(|e| e.to_string())?;
 
             env.call_static_method(
@@ -173,7 +174,9 @@ pub fn notify_download_completed(
             let is_visible = window.is_visible().unwrap_or(true);
 
             if is_focused && !is_minimized && is_visible {
-                tracing::info!("Main window is focused and visible; suppressing desktop OS notification");
+                tracing::info!(
+                    "Main window is focused and visible; suppressing desktop OS notification"
+                );
                 return;
             }
         }
@@ -281,4 +284,3 @@ pub fn get_pending_deep_link() -> Option<String> {
         None
     }
 }
-

@@ -3,6 +3,8 @@ export interface Attachment {
   path?: string;
   server?: string;
   size?: number;
+  url?: string;
+  thumbnail_url?: string;
   [key: string]: unknown;
 }
 
@@ -32,6 +34,9 @@ export interface Post {
   prev?: string;
   favorite_count?: number;
   attachment_count?: number;
+  thumbnail_url?: string;
+  page_url?: string;
+  preview_path?: string;
   [key: string]: unknown;
 }
 
@@ -54,12 +59,20 @@ export interface Creator {
   indexed?: number;
   favorited?: number;
   ever_imported?: boolean;
+  avatar_url?: string;
+  avatar_path?: string;
+  banner_url?: string;
+  banner_path?: string;
+  page_url?: string;
+  extra?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface CreatorProfile extends Omit<Creator, 'updated' | 'indexed'> {
   updated?: string;
   indexed?: string;
+  page_url?: string;
+  extra?: Record<string, unknown>;
 }
 
 export interface Announcement {
@@ -82,6 +95,8 @@ export interface Fancard {
   added: string;
   size: number;
   ihash?: string;
+  media_url?: string;
+  thumbnail_url?: string;
 }
 
 export interface Favorite {

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 // New databases start from this schema; ordered migrations below upgrade existing databases.
 const SCHEMA: &str = r#"
@@ -21,10 +21,21 @@ CREATE TABLE IF NOT EXISTS creators (
     snapshot_json TEXT NOT NULL,
     avatar_path TEXT,
     banner_path TEXT,
+    favorited INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    indexed_at INTEGER NOT NULL DEFAULT 0,
+    is_ai INTEGER NOT NULL DEFAULT 0,
     cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_checked_at TEXT,
     PRIMARY KEY (service, creator_id)
 );
+CREATE INDEX IF NOT EXISTS idx_creators_service ON creators(service);
+CREATE INDEX IF NOT EXISTS idx_creators_favorited ON creators(favorited DESC, name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_creators_updated ON creators(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creators_indexed ON creators(indexed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creators_name ON creators(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_creators_is_ai ON creators(is_ai);
+CREATE INDEX IF NOT EXISTS idx_creators_service_favorited ON creators(service, favorited DESC);
 
 CREATE TABLE IF NOT EXISTS posts (
     service TEXT NOT NULL,
@@ -306,6 +317,57 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                         .map_err(|e| e.to_string())?;
                 }
             }
+            3 => {
+                if !column_exists(&transaction, "creators", "favorited")? {
+                    transaction
+                        .execute(
+                            "ALTER TABLE creators ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0",
+                            [],
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                if !column_exists(&transaction, "creators", "updated_at")? {
+                    transaction
+                        .execute(
+                            "ALTER TABLE creators ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+                            [],
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                if !column_exists(&transaction, "creators", "indexed_at")? {
+                    transaction
+                        .execute(
+                            "ALTER TABLE creators ADD COLUMN indexed_at INTEGER NOT NULL DEFAULT 0",
+                            [],
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                if !column_exists(&transaction, "creators", "is_ai")? {
+                    transaction
+                        .execute(
+                            "ALTER TABLE creators ADD COLUMN is_ai INTEGER NOT NULL DEFAULT 0",
+                            [],
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                transaction
+                    .execute_batch(
+                        "CREATE INDEX IF NOT EXISTS idx_creators_service ON creators(service);
+                         CREATE INDEX IF NOT EXISTS idx_creators_favorited ON creators(favorited DESC, name COLLATE NOCASE);
+                         CREATE INDEX IF NOT EXISTS idx_creators_updated ON creators(updated_at DESC);
+                         CREATE INDEX IF NOT EXISTS idx_creators_indexed ON creators(indexed_at DESC);
+                         CREATE INDEX IF NOT EXISTS idx_creators_name ON creators(name COLLATE NOCASE);
+                         CREATE INDEX IF NOT EXISTS idx_creators_is_ai ON creators(is_ai);
+                         CREATE INDEX IF NOT EXISTS idx_creators_service_favorited ON creators(service, favorited DESC);
+                         UPDATE creators SET
+                             favorited = coalesce(json_extract(snapshot_json, '$.favorited'), 0),
+                             updated_at = coalesce(json_extract(snapshot_json, '$.updated'), 0),
+                             indexed_at = coalesce(json_extract(snapshot_json, '$.indexed'), 0)
+                         WHERE favorited = 0 AND updated_at = 0 AND indexed_at = 0;
+                         UPDATE creators SET is_ai = 1 WHERE lower(name) LIKE '%[ai]%' OR lower(name) LIKE '%(ai)%';"
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -383,5 +445,47 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Legacy");
+    }
+
+    #[test]
+    fn creators_v3_migration_adds_columns_and_backfills() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE creators (
+                    service TEXT NOT NULL,
+                    creator_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    avatar_path TEXT,
+                    banner_path TEXT,
+                    cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_checked_at TEXT,
+                    PRIMARY KEY (service, creator_id)
+                );
+                PRAGMA user_version = 2;
+                INSERT INTO creators (service, creator_id, name, snapshot_json)
+                VALUES ('patreon', 'c1', 'Artist [AI]', '{\"favorited\": 42, \"updated\": 1700000000, \"indexed\": 1690000000}');",
+            )
+            .unwrap();
+
+        prepare_connection(&mut connection).unwrap();
+
+        assert!(column_exists(&connection, "creators", "favorited").unwrap());
+        assert!(column_exists(&connection, "creators", "updated_at").unwrap());
+        assert!(column_exists(&connection, "creators", "indexed_at").unwrap());
+        assert!(column_exists(&connection, "creators", "is_ai").unwrap());
+
+        let (fav, upd, ind, ai): (i64, i64, i64, i64) = connection
+            .query_row(
+                "SELECT favorited, updated_at, indexed_at, is_ai FROM creators WHERE service = 'patreon' AND creator_id = 'c1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(fav, 42);
+        assert_eq!(upd, 1700000000);
+        assert_eq!(ind, 1690000000);
+        assert_eq!(ai, 1);
     }
 }

@@ -288,8 +288,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_queues_are_completely_isolated() {
-        let q_coomer = ProviderRequestQueue::new("coomer", crate::api::providers::CoomerProvider::default_queue_config());
-        let q_pawchive = ProviderRequestQueue::new("pawchive", crate::api::providers::PawchiveProvider::default_queue_config());
+        let q_coomer = ProviderRequestQueue::new(
+            "coomer",
+            crate::api::providers::CoomerProvider::default_queue_config(),
+        );
+        let q_pawchive = ProviderRequestQueue::new(
+            "pawchive",
+            crate::api::providers::PawchiveProvider::default_queue_config(),
+        );
 
         q_coomer.set_cooldown(Duration::from_secs(5)).await;
 

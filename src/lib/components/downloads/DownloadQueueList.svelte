@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
-  import { deriveCdnThumbnailUrl } from '$lib/utils/media';
+  import { deriveCdnThumbnailUrl, resolveLocalMediaUrl } from '$lib/utils/media';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -279,13 +279,7 @@
   }
 
   function localPathUrl(path?: string) {
-    if (!path) return undefined;
-    const port = serverPortState.port || 0;
-    if (port > 0) {
-      const encoded = path.replace(/\\/g, '/').split('/').map((part) => encodeURIComponent(part)).join('/');
-      return serverPortState.mediaUrl(`/media/${encoded}`);
-    }
-    return convertFileSrc(path);
+    return resolveLocalMediaUrl(path);
   }
 
   function itemThumbnailUrl(item: DownloadItem): string | undefined {

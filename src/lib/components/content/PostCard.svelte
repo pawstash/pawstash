@@ -12,7 +12,7 @@
   import { tooltip, ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, postMediaUrl, postThumbnailUrl, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
+  import { isVideoUrl, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -68,7 +68,7 @@
   });
 
   let mediaUrl = $derived(postMediaUrl(effectivePost));
-  let thumbnailUrl = $derived(postThumbnailUrl(effectivePost));
+  let thumbnailUrl = $derived(postThumbnailSrc(effectivePost));
   let placeholderUrl = $derived(postPlaceholderUrl(effectivePost));
   let video = $derived(isVideoUrl(mediaUrl));
 

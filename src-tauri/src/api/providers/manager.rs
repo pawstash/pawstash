@@ -8,6 +8,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
+use crate::db::storage::content_cache_path;
 use futures_util::future::join_all;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -22,6 +23,19 @@ fn provider_errors(operation: &str, errors: Vec<String>) -> String {
             errors.join("; ")
         )
     }
+}
+
+fn sanitize_cache_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, String> {
@@ -215,13 +229,19 @@ impl ProviderManager {
                                 (None, Some(b)) => Some(b),
                                 (None, None) => None,
                             };
-                            let mut provider_ids: Vec<String> = match existing.extra.get("provider_ids") {
-                                Some(serde_json::Value::Array(arr)) => {
-                                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-                                }
+                            let mut provider_ids: Vec<String> = match existing
+                                .extra
+                                .get("provider_ids")
+                            {
+                                Some(serde_json::Value::Array(arr)) => arr
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect(),
                                 _ => {
                                     let mut pids = Vec::new();
-                                    if let Some(pid) = existing.extra.get("provider_id").and_then(|v| v.as_str()) {
+                                    if let Some(pid) =
+                                        existing.extra.get("provider_id").and_then(|v| v.as_str())
+                                    {
                                         pids.push(pid.to_string());
                                     }
                                     pids
@@ -238,13 +258,18 @@ impl ProviderManager {
                             existing.extra.insert(
                                 "provider_ids".to_string(),
                                 serde_json::Value::Array(
-                                    provider_ids.into_iter().map(serde_json::Value::String).collect(),
+                                    provider_ids
+                                        .into_iter()
+                                        .map(serde_json::Value::String)
+                                        .collect(),
                                 ),
                             );
                         } else {
                             c.extra.insert(
                                 "provider_ids".to_string(),
-                                serde_json::Value::Array(vec![serde_json::Value::String(prov_id.clone())]),
+                                serde_json::Value::Array(vec![serde_json::Value::String(
+                                    prov_id.clone(),
+                                )]),
                             );
                             creators_map.insert(key, c);
                         }
@@ -267,28 +292,107 @@ impl ProviderManager {
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Creator, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_creator_profile(service, creator_id).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         if candidates.is_empty() {
             return Err(format!("No provider configured for service '{service}'"));
         }
 
+        let mut profiles: Vec<Creator> = Vec::new();
         let mut last_error = String::new();
-        for provider in candidates {
+        for provider in &candidates {
             match provider.fetch_creator_profile(service, creator_id).await {
-                Ok(profile) => return Ok(profile),
+                Ok(profile) => profiles.push(profile),
                 Err(e) => last_error = e,
             }
         }
 
-        Err(last_error)
+        if profiles.is_empty() {
+            return Err(last_error);
+        }
+
+        let mut base = profiles.remove(0);
+        let mut candidate_avatars: Vec<String> = Vec::new();
+        if let Some(ref av) = base.avatar_url {
+            if !av.trim().is_empty() {
+                candidate_avatars.push(av.clone());
+            }
+        }
+        for other in profiles {
+            if let Some(ref av) = other.avatar_url {
+                if !av.trim().is_empty() && !candidate_avatars.contains(av) {
+                    candidate_avatars.push(av.clone());
+                }
+            }
+            if base.avatar_url.as_deref().unwrap_or("").trim().is_empty() {
+                if let Some(av) = other.avatar_url.filter(|s| !s.trim().is_empty()) {
+                    base.avatar_url = Some(av);
+                }
+            }
+            if base.banner_url.as_deref().unwrap_or("").trim().is_empty() {
+                if let Some(bn) = other.banner_url.filter(|s| !s.trim().is_empty()) {
+                    base.banner_url = Some(bn);
+                }
+            }
+            if (base.name.trim().is_empty() || base.name == creator_id)
+                && !other.name.trim().is_empty()
+                && other.name != creator_id
+            {
+                base.name = other.name;
+            }
+            if let Some(other_idx) = other.indexed {
+                base.indexed = Some(base.indexed.map_or(other_idx, |b| b.min(other_idx)));
+            }
+            if let Some(other_upd) = other.updated {
+                base.updated = Some(base.updated.map_or(other_upd, |b| b.max(other_upd)));
+            }
+            for (k, v) in other.extra {
+                base.extra.entry(k).or_insert(v);
+            }
+        }
+
+        if !candidate_avatars.is_empty() {
+            base.extra.insert(
+                "candidate_avatar_urls".to_string(),
+                serde_json::Value::Array(
+                    candidate_avatars
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+
+        Ok(base)
     }
 
     pub async fn fetch_creator_links(
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Vec<CreatorProfile>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_creator_links(service, creator_id).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         let mut had_success = false;
         let mut errors = Vec::new();
@@ -314,7 +418,18 @@ impl ProviderManager {
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Vec<CreatorProfile>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_similar_creators(service, creator_id).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         let mut had_success = false;
         let mut errors = Vec::new();
@@ -340,7 +455,18 @@ impl ProviderManager {
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Vec<String>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_creator_tags(service, creator_id).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         let mut had_success = false;
         let mut errors = Vec::new();
@@ -366,7 +492,18 @@ impl ProviderManager {
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Vec<Announcement>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_announcements(service, creator_id).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         let mut had_success = false;
         let mut errors = Vec::new();
@@ -394,24 +531,45 @@ impl ProviderManager {
         creator_id: &str,
         offset: u32,
         query: Option<&str>,
+        provider_id: Option<&str>,
     ) -> Result<Vec<Post>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    return p.fetch_posts(service, creator_id, offset, query).await;
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         if candidates.is_empty() {
             return Err(format!("No provider configured for service '{service}'"));
         }
 
+        let mut had_empty_success = false;
         let mut last_error = String::new();
         for provider in candidates {
             match provider
                 .fetch_posts(service, creator_id, offset, query)
                 .await
             {
-                Ok(posts) => return Ok(posts),
+                Ok(posts) => {
+                    if !posts.is_empty() {
+                        return Ok(posts);
+                    }
+                    had_empty_success = true;
+                }
                 Err(e) => last_error = e,
             }
         }
 
-        Err(last_error)
+        if had_empty_success {
+            Ok(Vec::new())
+        } else {
+            Err(last_error)
+        }
     }
 
     pub async fn fetch_post(
@@ -419,7 +577,34 @@ impl ProviderManager {
         service: &str,
         creator_id: &str,
         post_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Option<ReconciledPost>, String> {
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    let post_opt = p
+                        .fetch_post(service, creator_id, post_id)
+                        .await
+                        .map_err(|e| format!("Provider '{pid}' error: {e}"))?;
+                    if let Some(mut post) = post_opt {
+                        post.extra
+                            .entry("provider_id".to_string())
+                            .or_insert_with(|| serde_json::Value::String(pid.to_string()));
+                        return Ok(Some(ReconciledPost {
+                            post: post.clone(),
+                            revisions: vec![],
+                            available_providers: vec![pid.to_string()],
+                            attachment_sources: std::collections::HashMap::new(),
+                        }));
+                    } else {
+                        return Ok(None);
+                    }
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         if candidates.is_empty() {
             return Err(format!("No provider configured for service '{service}'"));
@@ -436,7 +621,12 @@ impl ProviderManager {
                         .await
                         .ok()
                         .flatten();
-                    post_opt.map(|post| (conf.id.clone(), post))
+                    post_opt.map(|mut post| {
+                        post.extra
+                            .entry("provider_id".to_string())
+                            .or_insert_with(|| serde_json::Value::String(conf.id.clone()));
+                        (conf.id.clone(), post)
+                    })
                 }
             })
             .collect();
@@ -448,7 +638,20 @@ impl ProviderManager {
             return Ok(None);
         }
 
-        Ok(reconcile_post_snapshots(snapshots))
+        let mut reconciled = reconcile_post_snapshots(snapshots);
+        if let Some(ref mut r) = reconciled {
+            r.post.extra.insert(
+                "available_providers".to_string(),
+                serde_json::Value::Array(
+                    r.available_providers
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        Ok(reconciled)
     }
 
     pub async fn fetch_post_revisions(
@@ -1134,9 +1337,19 @@ impl ProviderManager {
         }
     }
 
-    pub async fn resolve_thumbnail_url(&self, service: &str, thumb_path: &str) -> String {
+    pub async fn resolve_thumbnail_url(
+        &self,
+        service: &str,
+        thumb_path: &str,
+        provider_id: Option<&str>,
+    ) -> String {
         if thumb_path.starts_with("http://") || thumb_path.starts_with("https://") {
             return thumb_path.to_string();
+        }
+        if let Some(id) = provider_id {
+            if let Some(p) = self.get_provider_by_id(id).await {
+                return p.resolve_thumbnail_url(thumb_path);
+            }
         }
         let candidates = self.get_providers_for_service(service).await;
         if let Some(first) = candidates.first() {
@@ -1236,6 +1449,304 @@ impl ProviderManager {
         }
     }
 
+    pub async fn resolve_avatar_url(
+        &self,
+        service: &str,
+        creator_id: &str,
+        provider_id: Option<&str>,
+    ) -> String {
+        if let Some(id) = provider_id {
+            if let Some(p) = self.get_provider_by_id(id).await {
+                return p.resolve_avatar_url(service, creator_id);
+            }
+        }
+        let candidates = self.get_providers_for_service(service).await;
+        if let Some(first) = candidates.first() {
+            first.resolve_avatar_url(service, creator_id)
+        } else {
+            let enabled = self.get_all_enabled_providers().await;
+            if let Some(first) = enabled.first() {
+                first.resolve_avatar_url(service, creator_id)
+            } else if let Some(first) = self.providers.read().await.first() {
+                first.resolve_avatar_url(service, creator_id)
+            } else {
+                String::new()
+            }
+        }
+    }
+
+    pub async fn resolve_banner_url(
+        &self,
+        service: &str,
+        creator_id: &str,
+        provider_id: Option<&str>,
+    ) -> String {
+        if let Some(id) = provider_id {
+            if let Some(p) = self.get_provider_by_id(id).await {
+                return p.resolve_banner_url(service, creator_id);
+            }
+        }
+        let candidates = self.get_providers_for_service(service).await;
+        if let Some(first) = candidates.first() {
+            first.resolve_banner_url(service, creator_id)
+        } else {
+            let enabled = self.get_all_enabled_providers().await;
+            if let Some(first) = enabled.first() {
+                first.resolve_banner_url(service, creator_id)
+            } else if let Some(first) = self.providers.read().await.first() {
+                first.resolve_banner_url(service, creator_id)
+            } else {
+                String::new()
+            }
+        }
+    }
+
+    pub async fn enrich_creator(&self, creator: &mut Creator) {
+        let prov_id = creator
+            .extra
+            .get("provider_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if creator.avatar_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_avatar_url(&creator.service, &creator.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                creator.avatar_url = Some(url);
+            }
+        }
+
+        if creator.banner_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_banner_url(&creator.service, &creator.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                creator.banner_url = Some(url);
+            }
+        }
+
+        if creator.page_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_creator_url(&creator.service, &creator.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                creator.page_url = Some(url);
+            }
+        }
+
+        if creator.avatar_path.is_none() {
+            let dir = content_cache_path().join("avatars");
+            let s = sanitize_cache_key(&creator.service);
+            let id = sanitize_cache_key(&creator.id);
+            for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                let p = dir.join(format!("{s}_{id}_avatar.{ext}"));
+                if p.is_file() {
+                    creator.avatar_path = Some(p.to_string_lossy().into_owned());
+                    break;
+                }
+            }
+        }
+
+        if creator.banner_path.is_none() {
+            let dir = content_cache_path().join("banners");
+            let s = sanitize_cache_key(&creator.service);
+            let id = sanitize_cache_key(&creator.id);
+            for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                let p = dir.join(format!("{s}_{id}_banner.{ext}"));
+                if p.is_file() {
+                    creator.banner_path = Some(p.to_string_lossy().into_owned());
+                    break;
+                }
+            }
+        }
+    }
+
+    pub async fn enrich_creator_profile(&self, profile: &mut CreatorProfile) {
+        let prov_id = profile
+            .extra
+            .get("provider_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if profile.avatar_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_avatar_url(&profile.service, &profile.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                profile.avatar_url = Some(url);
+            }
+        }
+
+        if profile.banner_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_banner_url(&profile.service, &profile.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                profile.banner_url = Some(url);
+            }
+        }
+
+        if profile.page_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_creator_url(&profile.service, &profile.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                profile.page_url = Some(url);
+            }
+        }
+
+        if profile.avatar_path.is_none() {
+            let dir = content_cache_path().join("avatars");
+            let s = sanitize_cache_key(&profile.service);
+            let id = sanitize_cache_key(&profile.id);
+            if let Some(ref pid) = prov_id {
+                if pid != "auto" {
+                    let p_san = sanitize_cache_key(pid);
+                    for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                        let p = dir.join(format!("{s}_{id}_{p_san}_avatar.{ext}"));
+                        if p.is_file() {
+                            profile.avatar_path = Some(p.to_string_lossy().into_owned());
+                            break;
+                        }
+                    }
+                }
+            }
+            if profile.avatar_path.is_none()
+                && (prov_id.is_none() || prov_id.as_deref() == Some("auto"))
+            {
+                for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                    let p = dir.join(format!("{s}_{id}_avatar.{ext}"));
+                    if p.is_file() {
+                        profile.avatar_path = Some(p.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+            }
+        }
+
+        if profile.banner_path.is_none() {
+            let dir = content_cache_path().join("banners");
+            let s = sanitize_cache_key(&profile.service);
+            let id = sanitize_cache_key(&profile.id);
+            if let Some(ref pid) = prov_id {
+                if pid != "auto" {
+                    let p_san = sanitize_cache_key(pid);
+                    for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                        let p = dir.join(format!("{s}_{id}_{p_san}_banner.{ext}"));
+                        if p.is_file() {
+                            profile.banner_path = Some(p.to_string_lossy().into_owned());
+                            break;
+                        }
+                    }
+                }
+            }
+            if profile.banner_path.is_none()
+                && (prov_id.is_none() || prov_id.as_deref() == Some("auto"))
+            {
+                for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
+                    let p = dir.join(format!("{s}_{id}_banner.{ext}"));
+                    if p.is_file() {
+                        profile.banner_path = Some(p.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn enrich_post(&self, post: &mut Post) {
+        let prov_id = post
+            .extra
+            .get("provider_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if post.page_url.as_deref().unwrap_or("").is_empty() {
+            let url = self
+                .resolve_post_url(&post.service, &post.user, &post.id, prov_id.as_deref())
+                .await;
+            if !url.is_empty() {
+                post.page_url = Some(url);
+            }
+        }
+
+        if let Some(ref mut file) = post.file {
+            if let Some(ref path) = file.path {
+                if file.url.as_deref().unwrap_or("").is_empty() {
+                    file.url = Some(
+                        self.resolve_media_url(
+                            &post.service,
+                            path,
+                            file.server.as_deref(),
+                            prov_id.as_deref(),
+                        )
+                        .await,
+                    );
+                }
+                if file.thumbnail_url.as_deref().unwrap_or("").is_empty() {
+                    file.thumbnail_url = Some(
+                        self.resolve_thumbnail_url(&post.service, path, prov_id.as_deref())
+                            .await,
+                    );
+                }
+            }
+        }
+
+        if let Some(ref mut attachments) = post.attachments {
+            for att in attachments.iter_mut() {
+                if let Some(ref path) = att.path {
+                    if att.url.as_deref().unwrap_or("").is_empty() {
+                        att.url = Some(
+                            self.resolve_media_url(
+                                &post.service,
+                                path,
+                                att.server.as_deref(),
+                                prov_id.as_deref(),
+                            )
+                            .await,
+                        );
+                    }
+                    if att.thumbnail_url.as_deref().unwrap_or("").is_empty() {
+                        att.thumbnail_url = Some(
+                            self.resolve_thumbnail_url(&post.service, path, prov_id.as_deref())
+                                .await,
+                        );
+                    }
+                }
+            }
+        }
+
+        if post.thumbnail_url.as_deref().unwrap_or("").is_empty() {
+            if let Some(ref file) = post.file {
+                if let Some(ref t) = file.thumbnail_url {
+                    post.thumbnail_url = Some(t.clone());
+                }
+            }
+            if post.thumbnail_url.is_none() {
+                if let Some(ref attachments) = post.attachments {
+                    if let Some(first) = attachments.iter().find_map(|a| a.thumbnail_url.as_ref()) {
+                        post.thumbnail_url = Some(first.clone());
+                    }
+                }
+            }
+        }
+
+        if post.preview_path.is_none() {
+            let dir = content_cache_path().join("previews");
+            let s = sanitize_cache_key(&post.service);
+            let u = sanitize_cache_key(&post.user);
+            let id = sanitize_cache_key(&post.id);
+            for ext in &["jpg", "jpeg", "webp", "png", "gif", "mp4", "webm"] {
+                let p = dir.join(format!("{s}_{u}_{id}.{ext}"));
+                if p.is_file() {
+                    post.preview_path = Some(p.to_string_lossy().into_owned());
+                    break;
+                }
+            }
+        }
+    }
+
     pub async fn fetch_creator_artwork_data_url(
         &self,
         service: &str,
@@ -1264,15 +1775,86 @@ impl ProviderManager {
         Err("Hash search failed".to_string())
     }
 
+    pub async fn enrich_fancards(
+        &self,
+        service: &str,
+        cards: &mut [Fancard],
+        provider_id: Option<&str>,
+    ) {
+        let provider = if let Some(pid) = provider_id {
+            if pid != "auto" {
+                self.get_provider_by_id(pid).await
+            } else {
+                self.get_providers_for_service(service)
+                    .await
+                    .into_iter()
+                    .next()
+            }
+        } else {
+            self.get_providers_for_service(service)
+                .await
+                .into_iter()
+                .next()
+        };
+        if let Some(p) = provider {
+            for c in cards.iter_mut() {
+                if c.media_url.is_none() {
+                    let m = p.resolve_fancard_media_url(service, &c.hash, &c.ext);
+                    if !m.is_empty() {
+                        c.media_url = Some(m);
+                    }
+                }
+                if c.thumbnail_url.is_none() {
+                    let t = p.resolve_fancard_thumbnail_url(service, &c.hash, &c.ext);
+                    if !t.is_empty() {
+                        c.thumbnail_url = Some(t);
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn fetch_fancards(
         &self,
         service: &str,
         creator_id: &str,
+        provider_id: Option<&str>,
     ) -> Result<Vec<Fancard>, String> {
+        let enrich_cards =
+            |cards: &mut [Fancard], provider: &std::sync::Arc<dyn SourceProvider>| {
+                for c in cards.iter_mut() {
+                    if c.media_url.is_none() {
+                        let m = provider.resolve_fancard_media_url(service, &c.hash, &c.ext);
+                        if !m.is_empty() {
+                            c.media_url = Some(m);
+                        }
+                    }
+                    if c.thumbnail_url.is_none() {
+                        let t = provider.resolve_fancard_thumbnail_url(service, &c.hash, &c.ext);
+                        if !t.is_empty() {
+                            c.thumbnail_url = Some(t);
+                        }
+                    }
+                }
+            };
+
+        if let Some(pid) = provider_id {
+            if pid != "auto" {
+                if let Some(p) = self.get_provider_by_id(pid).await {
+                    let mut cards = p.fetch_fancards(service, creator_id).await?;
+                    enrich_cards(&mut cards, &p);
+                    return Ok(cards);
+                } else {
+                    return Err(format!("Provider '{pid}' not found"));
+                }
+            }
+        }
+
         let candidates = self.get_providers_for_service(service).await;
         for provider in candidates {
-            if let Ok(cards) = provider.fetch_fancards(service, creator_id).await {
+            if let Ok(mut cards) = provider.fetch_fancards(service, creator_id).await {
                 if !cards.is_empty() {
+                    enrich_cards(&mut cards, &provider);
                     return Ok(cards);
                 }
             }
@@ -1635,13 +2217,13 @@ mod tests {
         );
 
         let of_profile = manager
-            .fetch_creator_profile("onlyfans", "prettykitttt")
+            .fetch_creator_profile("onlyfans", "prettykitttt", None)
             .await
             .unwrap();
         assert_eq!(of_profile.id, "prettykitttt");
 
         let patreon_profile = manager
-            .fetch_creator_profile("patreon", "3340149")
+            .fetch_creator_profile("patreon", "3340149", None)
             .await
             .unwrap();
         assert_eq!(patreon_profile.id, "3340149");
@@ -1673,7 +2255,7 @@ mod tests {
         }
 
         let of_post = manager
-            .fetch_post("onlyfans", "prettykitttt", "366178580")
+            .fetch_post("onlyfans", "prettykitttt", "366178580", None)
             .await
             .unwrap();
         assert!(
@@ -1683,7 +2265,7 @@ mod tests {
         assert_eq!(of_post.unwrap().post.id, "366178580");
 
         let patreon_post = manager
-            .fetch_post("patreon", "3340149", "142680139")
+            .fetch_post("patreon", "3340149", "142680139", None)
             .await
             .unwrap();
         assert!(
@@ -1693,7 +2275,7 @@ mod tests {
         assert_eq!(patreon_post.unwrap().post.id, "142680139");
 
         let non_existent = manager
-            .fetch_post("patreon", "3340149", "999999999999999")
+            .fetch_post("patreon", "3340149", "999999999999999", None)
             .await
             .unwrap();
         assert!(

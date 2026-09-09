@@ -63,7 +63,10 @@ impl MediaServer {
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
             .route("/cloud_stream/mega", get(serve_mega_stream_handler))
-            .route("/cloud_stream/proxy", get(serve_cloud_proxy_stream_handler))
+            .route(
+                "/cloud_stream/proxy",
+                get(serve_cloud_proxy_stream_handler).head(serve_cloud_proxy_stream_handler),
+            )
             .with_state(state)
             .layer(cors);
 
@@ -452,6 +455,7 @@ struct CloudProxyParams {
 
 async fn serve_cloud_proxy_stream_handler(
     State(state): State<Arc<MediaServerState>>,
+    method: Method,
     Query(params): Query<CloudProxyParams>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
@@ -487,14 +491,18 @@ async fn serve_cloud_proxy_stream_handler(
         .build()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    let is_head = method == Method::HEAD;
     let normalized_url = crate::downloader::normalize_download_url(&params.url);
     let mut target_url = validate_proxy_target(&normalized_url).await?;
     let mut redirect_count = 0;
     let upstream = loop {
         let target_text = target_url.as_str();
-        let mut req = client
-            .get(target_url.clone())
-            .headers(crate::downloader::derive_download_headers(target_text));
+        let mut req = if is_head {
+            client.head(target_url.clone())
+        } else {
+            client.get(target_url.clone())
+        };
+        req = req.headers(crate::downloader::derive_download_headers(target_text));
         if let Some(referer_url) = crate::downloader::derive_download_referer(target_text) {
             if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
                 req = req.header(header::REFERER, ref_val);
@@ -582,7 +590,11 @@ async fn serve_cloud_proxy_stream_handler(
         ));
     }
 
-    let body = Body::from_stream(upstream.bytes_stream());
+    let body = if is_head {
+        Body::empty()
+    } else {
+        Body::from_stream(upstream.bytes_stream())
+    };
 
     let mut response = Response::builder()
         .status(status)
@@ -600,11 +612,12 @@ async fn serve_cloud_proxy_stream_handler(
         }
     }
 
-    // Ensure valid streaming MIME type
-    let is_generic = upstream_content_type.starts_with("application/octet-stream")
-        || upstream_content_type.is_empty();
+    // Ensure valid streaming MIME type if upstream returned non-media or generic type (e.g. Dropbox returning application/json)
+    let is_not_media = !upstream_content_type.starts_with("video/")
+        && !upstream_content_type.starts_with("audio/")
+        && !upstream_content_type.starts_with("image/");
 
-    if is_generic {
+    if is_not_media {
         let extracted_path =
             if let Some(name) = params.name.as_deref().filter(|s| !s.trim().is_empty()) {
                 Some(name.to_string())
@@ -701,13 +714,59 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
         && !ip.is_unspecified()
         && !ip.is_multicast()
         && octets[0] != 0
-        && !(octets[0] == 100 && (64..=127).contains(&octets[1]))
-        && !(octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
-        && !(octets[0] == 198 && (18..=19).contains(&octets[1]))
         && octets[0] < 240
 }
 
 fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
     let segments = ip.segments();
     segments[0] == 0x2001 && segments[1] == 0x0db8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_is_public_ipv4_allows_fakeip_and_cgnat() {
+        // Fake-IP (Clash, Mihomo, Sing-box TUN adapter) must be allowed
+        assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
+        assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 37)));
+        assert!(is_public_ipv4(Ipv4Addr::new(198, 19, 255, 254)));
+
+        // CGNAT (Carrier-Grade NAT, Tailscale) must be allowed
+        assert!(is_public_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_public_ipv4(Ipv4Addr::new(100, 100, 100, 100)));
+
+        // Public internet IPs must be allowed
+        assert!(is_public_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
+        assert!(is_public_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
+    }
+
+    #[test]
+    fn test_is_public_ipv4_blocks_private_and_local() {
+        // Loopback
+        assert!(!is_public_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
+        // RFC 1918 Private LAN
+        assert!(!is_public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!is_public_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
+        assert!(!is_public_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
+        // Link-local / Cloud metadata (AWS/GCP/Azure: 169.254.169.254)
+        assert!(!is_public_ipv4(Ipv4Addr::new(169, 254, 169, 254)));
+        // Broadcast and Multicast
+        assert!(!is_public_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
+        assert!(!is_public_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
+        // Zero address
+        assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
+    }
+
+    #[tokio::test]
+    async fn test_validate_proxy_target_dropbox() {
+        let res = validate_proxy_target("https://www.dropbox.com/scl/fi/dzou30iaabzttgdkofk0s/KEI-FULL-VIDEO.mp4?rlkey=d69eq3s4u7ds888h9ia9qrhwn&st=vna292xr&raw=1").await;
+        assert!(
+            res.is_ok(),
+            "Failed to validate proxy target: {:?}",
+            res.err()
+        );
+    }
 }

@@ -11,12 +11,12 @@
 
   let { stats, limitMb, formatBytes }: Props = $props();
 
-  let totalUsed = $derived((stats?.total_bytes ?? 0) + (stats?.metadata_bytes ?? 0));
+  let fileBytes = $derived(stats?.total_bytes ?? 0);
   let maxBytes = $derived(Math.max(1, limitMb * 1024 * 1024));
-  let usedPercent = $derived(Math.min(100, Math.max(0, (totalUsed / maxBytes) * 100)));
+  let usedPercent = $derived(Math.min(100, Math.max(0, (fileBytes / maxBytes) * 100)));
 
   let categories = $derived.by(() => {
-    if (!stats || totalUsed === 0) return [];
+    if (!stats || fileBytes === 0) return [];
     const p = themeState.palette;
 
     const items = [
@@ -39,9 +39,9 @@
         color: p.quadrants[3]
       },
       {
-        id: 'metadata',
-        label: i18n.t('settings.cache_metadata'),
-        bytes: stats.metadata_bytes,
+        id: 'thumbnails',
+        label: i18n.t('settings.cache_thumbnails'),
+        bytes: stats.thumbnail_bytes,
         color: p.quadrants[2]
       },
       {
@@ -56,7 +56,7 @@
       .filter((it) => it.bytes > 0)
       .map((it) => ({
         ...it,
-        shareOfUsed: (it.bytes / totalUsed) * 100,
+        shareOfUsed: (it.bytes / fileBytes) * 100,
         shareOfTotal: (it.bytes / maxBytes) * 100
       }));
   });
@@ -66,7 +66,7 @@
   <div class="flex items-baseline justify-between gap-2">
     <div class="flex items-baseline gap-2">
       <span class="text-base font-semibold text-white tracking-tight">
-        {formatBytes(totalUsed)}
+        {formatBytes(fileBytes)}
       </span>
       <span class="text-xs text-white/40 font-mono">
         / {limitMb} MB
@@ -83,7 +83,7 @@
     </span>
   </div>
 
-  <div class="storage-bar-track" title="{formatBytes(totalUsed)} / {limitMb} MB">
+  <div class="storage-bar-track" title="{formatBytes(fileBytes)} / {limitMb} MB">
     {#if categories.length === 0}
       <div class="h-full w-full bg-white/[0.04]"></div>
     {:else}
@@ -107,6 +107,13 @@
         <span class="font-mono text-white/90">{formatBytes(cat.bytes)}</span>
       </div>
     {/each}
+    {#if stats?.metadata_bytes && stats.metadata_bytes > 0}
+      <div class="flex items-center gap-1.5 text-[11.5px] text-white/50">
+        <span class="w-2 h-2 rounded-full shrink-0 border border-white/20 bg-white/10"></span>
+        <span class="text-white/40">{i18n.t('settings.cache_metadata')}:</span>
+        <span class="font-mono text-white/70">{formatBytes(stats.metadata_bytes)}</span>
+      </div>
+    {/if}
   </div>
 </div>
 

@@ -44,6 +44,7 @@ export interface CacheStats {
   preview_bytes: number;
   avatar_bytes: number;
   banner_bytes: number;
+  thumbnail_bytes: number;
   other_bytes: number;
   file_count: number;
 }
@@ -70,7 +71,35 @@ export const apiShowMainWindow = () => invoke<void>('show_main_window');
 export const apiPickFolder = () => invoke<string | null>('pick_folder');
 export const apiGetAccountSession = () => invoke<AccountSession>('get_account_session');
 
+export interface CreatorsQueryParams {
+  query?: string;
+  services?: string[];
+  providers?: string[];
+  sort_by?: 'favorited' | 'updated' | 'indexed' | 'name';
+  sort_order?: 'asc' | 'desc';
+  subscribed_only?: boolean;
+  hide_ai?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreatorsPageResult {
+  items: Creator[];
+  total: number;
+  has_more: boolean;
+}
+
 export const apiFetchCreators = () => invoke<Creator[]>('fetch_creators');
+export const apiListCreatorsPage = (query: CreatorsQueryParams) =>
+  invoke<CreatorsPageResult>('list_creators_page', { query });
+export const apiListCreatorServices = () =>
+  invoke<string[]>('list_creator_services');
+export const apiListCreatorNames = () =>
+  invoke<Record<string, string>>('list_creator_names');
+export const apiGetCreatorName = (service: string, creatorId: string) =>
+  invoke<string | null>('get_creator_name', { service, creatorId });
+export const apiSyncCreators = () =>
+  invoke<number>('sync_creators');
 
 export const apiFetchPosts = (service: string, userId: string, offset = 0) =>
   invoke<Post[]>('fetch_posts', { service, userId, offset });
@@ -88,29 +117,30 @@ export const apiFetchCreatorPosts = (
   service: string,
   creatorId: string,
   query?: string,
-  offset = 0
-) => invoke<Post[]>('fetch_creator_posts', { service, creatorId, query, offset });
+  offset = 0,
+  providerId?: string
+) => invoke<Post[]>('fetch_creator_posts', { service, creatorId, query, offset, providerId });
 
-export const apiFetchCreatorProfile = (service: string, creatorId: string) =>
-  invoke<CreatorProfile>('fetch_creator_profile', { service, creatorId });
+export const apiFetchCreatorProfile = (service: string, creatorId: string, providerId?: string) =>
+  invoke<CreatorProfile>('fetch_creator_profile', { service, creatorId, providerId });
 
-export const apiFetchAnnouncements = (service: string, creatorId: string) =>
-  invoke<Announcement[]>('fetch_announcements', { service, creatorId });
+export const apiFetchAnnouncements = (service: string, creatorId: string, providerId?: string) =>
+  invoke<Announcement[]>('fetch_announcements', { service, creatorId, providerId });
 
-export const apiFetchFancards = (service: string, creatorId: string) =>
-  invoke<Fancard[]>('fetch_fancards', { service, creatorId });
+export const apiFetchFancards = (service: string, creatorId: string, providerId?: string) =>
+  invoke<Fancard[]>('fetch_fancards', { service, creatorId, providerId });
 
-export const apiFetchCreatorLinks = (service: string, creatorId: string) =>
-  invoke<CreatorProfile[]>('fetch_creator_links', { service, creatorId });
+export const apiFetchCreatorLinks = (service: string, creatorId: string, providerId?: string) =>
+  invoke<CreatorProfile[]>('fetch_creator_links', { service, creatorId, providerId });
 
-export const apiFetchSimilarCreators = (service: string, creatorId: string) =>
-  invoke<CreatorProfile[]>('fetch_similar_creators', { service, creatorId });
+export const apiFetchSimilarCreators = (service: string, creatorId: string, providerId?: string) =>
+  invoke<CreatorProfile[]>('fetch_similar_creators', { service, creatorId, providerId });
 
-export const apiFetchPost = (service: string, creatorId: string, postId: string) =>
-  invoke<Post>('fetch_post', { service, creatorId, postId });
+export const apiFetchPost = (service: string, creatorId: string, postId: string, providerId?: string) =>
+  invoke<Post>('fetch_post', { service, creatorId, postId, providerId });
 
-export const apiGetCachedPost = (service: string, creatorId: string, postId: string) =>
-  invoke<Post | null>('get_cached_post', { service, creatorId, postId });
+export const apiGetCachedPost = (service: string, creatorId: string, postId: string, providerId?: string) =>
+  invoke<Post | null>('get_cached_post', { service, creatorId, postId, providerId });
 
 export const apiResolveExternalPostLink = (
   url: string,
@@ -121,6 +151,18 @@ export const apiResolveExternalPostLink = (
   currentService,
   currentCreatorId
 });
+
+export const apiResolveCreatorUrl = (service: string, creatorId: string, providerId?: string) =>
+  invoke<string>('resolve_creator_url', { service, creatorId, providerId });
+
+export const apiResolvePostUrl = (service: string, creatorId: string, postId: string, providerId?: string) =>
+  invoke<string>('resolve_post_url', { service, creatorId, postId, providerId });
+
+export const apiResolveCreatorAvatarUrl = (service: string, creatorId: string, providerId?: string) =>
+  invoke<string>('resolve_creator_avatar_url', { service, creatorId, providerId });
+
+export const apiResolveCreatorBannerUrl = (service: string, creatorId: string, providerId?: string) =>
+  invoke<string>('resolve_creator_banner_url', { service, creatorId, providerId });
 
 export const apiFetchAccountFavorites = (favoriteType?: FavoriteType) =>
   invoke<Favorite[]>('fetch_account_favorites', { favoriteType });
@@ -144,8 +186,21 @@ export const apiFetchCreatorArtworkDataUrl = (
   artworkKind: 'banner' | 'avatar'
 ) => invoke<string>('fetch_creator_artwork_data_url', { service, creatorId, artworkKind });
 
-export const apiFetchCreatorTags = (service: string, creatorId: string) =>
-  invoke<string[]>('fetch_creator_tags', { service, creatorId });
+export const apiGetCreatorArtworkPath = (
+  service: string,
+  creatorId: string,
+  artworkKind: 'banner' | 'avatar'
+) => invoke<string | null>('get_creator_artwork_path', { service, creatorId, artworkKind });
+
+export const apiRevalidateCreatorArtwork = (
+  service: string,
+  creatorId: string,
+  artworkKind: 'banner' | 'avatar',
+  providerId?: string
+) => invoke<string | null>('revalidate_creator_artwork', { service, creatorId, artworkKind, providerId });
+
+export const apiFetchCreatorTags = (service: string, creatorId: string, providerId?: string) =>
+  invoke<string[]>('fetch_creator_tags', { service, creatorId, providerId });
 
 export const apiSearchHash = (fileHash: string) =>
   invoke<FileSearchResult>('search_hash', { fileHash });

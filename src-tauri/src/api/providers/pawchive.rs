@@ -813,6 +813,9 @@ impl PawchiveClient {
                     prev: None,
                     favorite_count,
                     attachment_count,
+                    thumbnail_url: None,
+                    page_url: None,
+                    preview_path: None,
                     extra: HashMap::new(),
                 })
             })
@@ -988,6 +991,11 @@ impl PawchiveClient {
                     indexed: None,
                     favorited: None,
                     ever_imported: None,
+                    avatar_url: None,
+                    avatar_path: None,
+                    banner_url: None,
+                    banner_path: None,
+                    page_url: None,
                     extra: Default::default(),
                 });
             }
@@ -1180,7 +1188,16 @@ pub struct PawchiveProvider {
 
 impl PawchiveProvider {
     pub fn default_services() -> Vec<String> {
-        vec!["patreon".into(), "fanbox".into(), "discord".into()]
+        vec![
+            "patreon".into(),
+            "fanbox".into(),
+            "discord".into(),
+            "fantia".into(),
+            "boosty".into(),
+            "subscribestar".into(),
+            "gumroad".into(),
+            "afdian".into(),
+        ]
     }
 
     pub fn default_queue_config() -> ProviderQueueConfig {
@@ -1422,16 +1439,23 @@ impl SourceProvider for PawchiveProvider {
             "provider_id".to_string(),
             serde_json::Value::String(self.id().to_string()),
         );
+        let indexed = parse_timestamp_value(prof.indexed.as_ref());
+        let updated = parse_timestamp_value(prof.updated.as_ref());
         Ok(Creator {
             id: prof.id,
             name: prof.name,
             service: prof.service,
             public_id: prof.public_id,
             relation_id: prof.relation_id,
-            indexed: None,
-            updated: None,
+            indexed,
+            updated,
             favorited: prof.favorited,
             ever_imported: prof.ever_imported,
+            avatar_url: prof.avatar_url,
+            avatar_path: prof.avatar_path,
+            banner_url: prof.banner_url,
+            banner_path: prof.banner_path,
+            page_url: prof.page_url,
             extra,
         })
     }
@@ -1734,6 +1758,80 @@ impl SourceProvider for PawchiveProvider {
             PawchiveClient::segment(service),
             PawchiveClient::segment(creator_id)
         )
+    }
+
+    fn resolve_avatar_url(&self, service: &str, creator_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/icons/{}/{}",
+            PawchiveClient::segment(service),
+            PawchiveClient::segment(creator_id)
+        )
+    }
+
+    fn resolve_banner_url(&self, service: &str, creator_id: &str) -> String {
+        let endpoint = self.get_active_endpoint();
+        let base = endpoint.trim_end_matches('/');
+        format!(
+            "{base}/banners/{}/{}",
+            PawchiveClient::segment(service),
+            PawchiveClient::segment(creator_id)
+        )
+    }
+
+    fn resolve_fancard_media_url(&self, _service: &str, hash: &str, ext: &str) -> String {
+        if hash.len() < 4 {
+            return String::new();
+        }
+        let sub1 = &hash[0..2];
+        let sub2 = &hash[2..4];
+        let ext = if ext.is_empty() {
+            "jpg"
+        } else {
+            ext.trim_start_matches('.')
+        };
+        let conf = self.config.read().unwrap();
+        let origin = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| {
+                let active = self.get_active_endpoint();
+                crate::api::providers::derive_subdomain_url(
+                    &active,
+                    conf.image_prefix.as_deref().unwrap_or("img"),
+                )
+            });
+        format!("{origin}/data/{sub1}/{sub2}/{hash}.{ext}")
+    }
+
+    fn resolve_fancard_thumbnail_url(&self, _service: &str, hash: &str, ext: &str) -> String {
+        if hash.len() < 4 {
+            return String::new();
+        }
+        let sub1 = &hash[0..2];
+        let sub2 = &hash[2..4];
+        let ext = if ext.is_empty() {
+            "jpg"
+        } else {
+            ext.trim_start_matches('.')
+        };
+        let conf = self.config.read().unwrap();
+        let origin = conf
+            .image_url
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| {
+                let active = self.get_active_endpoint();
+                crate::api::providers::derive_subdomain_url(
+                    &active,
+                    conf.image_prefix.as_deref().unwrap_or("img"),
+                )
+            });
+        format!("{origin}/thumbnail/data/{sub1}/{sub2}/{hash}.{ext}")
     }
 
     async fn fetch_creator_artwork_data_url(

@@ -19,8 +19,7 @@
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
-  import { creatorAvatarUrl, formatProviderName } from '$lib/utils/media';
-  import { thumbHashToUrl } from '$lib/utils/thumbhash';
+  import { creatorAvatarSrc, creatorPlaceholderUrl, formatProviderName } from '$lib/utils/media';
   import { notify } from '$lib/utils/toast';
   import { tooltip, ripple } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -61,6 +60,7 @@
     searchQuery?: string;
     searchOpen?: boolean;
     serviceFilters?: FilterMap;
+    providerFilters?: FilterMap;
     sortBy?: 'name' | 'updated' | 'indexed' | 'favorited';
     sortOrder?: 'asc' | 'desc';
     activeTab?: 'all' | 'subscribed';
@@ -69,6 +69,7 @@
   if (savedState) {
     if (savedState.searchQuery !== undefined) creatorsState.searchQuery = savedState.searchQuery;
     if (savedState.serviceFilters !== undefined) creatorsState.serviceFilters = savedState.serviceFilters;
+    if (savedState.providerFilters !== undefined) creatorsState.providerFilters = savedState.providerFilters;
     if (savedState.sortBy !== undefined) creatorsState.sortBy = savedState.sortBy;
     if (savedState.sortOrder !== undefined) creatorsState.sortOrder = savedState.sortOrder;
     if (savedState.activeTab !== undefined) creatorsState.activeTab = savedState.activeTab;
@@ -81,13 +82,13 @@
       searchQuery: creatorsState.searchQuery,
       searchOpen,
       serviceFilters: $state.snapshot(creatorsState.serviceFilters),
+      providerFilters: $state.snapshot(creatorsState.providerFilters),
       sortBy: creatorsState.sortBy,
       sortOrder: creatorsState.sortOrder,
       activeTab: creatorsState.activeTab
     });
   });
 
-  let visibleCount = $state(80);
   let loadSentinel = $state<HTMLDivElement>();
   let observer: IntersectionObserver | undefined;
 
@@ -110,8 +111,14 @@
 
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
-  onMount(() => {
-    void creatorsState.load();
+  onMount(async () => {
+    if (providerState.providers.length === 0) {
+      await providerState.loadProviders();
+    }
+    if (creatorsState.services.length === 0) {
+      await creatorsState.loadServices();
+    }
+    void creatorsState.loadPage(false);
   });
 
   onDestroy(() => {
@@ -120,12 +127,12 @@
   });
 
   function loadMore() {
-    if (!hasMore) return;
-    visibleCount += 80;
+    if (!creatorsState.hasMore || creatorsState.loadingMore) return;
+    void creatorsState.loadMore();
   }
 
   function handleScroll(top: number) {
-    if (!hasMore || !scrollContext?.viewport) return;
+    if (!creatorsState.hasMore || creatorsState.loadingMore || !scrollContext?.viewport) return;
     const vp = scrollContext.viewport;
     const distanceToBottom = vp.scrollHeight - top - vp.clientHeight;
     if (distanceToBottom < 1400) {
@@ -151,20 +158,6 @@
     };
   }
 
-  function getAvatarUrl(creator: Creator) {
-    const headerThumb = (creator as any).header_thumbhash || (creator.extra as any)?.header_thumbhash;
-    const avatarThumb = (creator as any).avatar_thumbhash || (creator.extra as any)?.avatar_thumbhash;
-    if (headerThumb) {
-      const url = thumbHashToUrl(headerThumb);
-      if (url) return url;
-    }
-    if (avatarThumb) {
-      const url = thumbHashToUrl(avatarThumb);
-      if (url) return url;
-    }
-    return creatorAvatarUrl(creator.service, creator.id);
-  }
-
   function formatTimestamp(ts?: number) {
     if (!ts) return '';
     const date = new Date(ts * 1000);
@@ -173,10 +166,14 @@
 
   function toggleService(service: string) {
     creatorsState.serviceFilters = toggleFilterKey(creatorsState.serviceFilters, service);
+    void creatorsState.loadPage(true);
   }
 
   function resetFilters() {
     creatorsState.serviceFilters = {};
+    creatorsState.providerFilters = {};
+    creatorsState.aiFilter = 'neutral';
+    void creatorsState.loadPage(true);
   }
 
 
@@ -241,34 +238,25 @@
     const parts = val.split('_');
     creatorsState.sortBy = parts[0] as any;
     creatorsState.sortOrder = parts[1] as any;
-    visibleCount = 80;
     scrollContext?.viewport?.scrollTo({ top: 0 });
+    void creatorsState.loadPage(true);
   }
 
   let subscribedKeys = $derived(
     new Set(subscriptionState.items.map(item => `${item.service.toLowerCase()}:${item.creator_id.toLowerCase()}`))
   );
 
-  let activeFilterCount = $derived(countActiveFilters([creatorsState.serviceFilters]));
+  let activeFilterCount = $derived(
+    countActiveFilters([
+      creatorsState.serviceFilters,
+      creatorsState.providerFilters,
+      creatorsState.aiFilter !== 'neutral' ? { ai: creatorsState.aiFilter } : {}
+    ])
+  );
   let activeTab = $derived(creatorsState.activeTab);
 
-  let creatorsList = $derived.by(() => {
-    let list = creatorsState.filteredCreators;
-    if (activeTab === 'subscribed') {
-      list = list.filter(c => subscribedKeys.has(`${c.service.toLowerCase()}:${c.id.toLowerCase()}`));
-    }
-    return list.slice(0, visibleCount);
-  });
-
-  let hasMore = $derived.by(() => {
-    let totalLength = creatorsState.filteredCreators.length;
-    if (activeTab === 'subscribed') {
-      totalLength = creatorsState.filteredCreators.filter(c => 
-        subscribedKeys.has(`${c.service.toLowerCase()}:${c.id.toLowerCase()}`)
-      ).length;
-    }
-    return totalLength > visibleCount;
-  });
+  let creatorsList = $derived(creatorsState.creators);
+  let hasMore = $derived(creatorsState.hasMore);
 
   let mobileMoreOpen = $state(false);
 
@@ -283,9 +271,9 @@
 
   function selectTab(tab: 'all' | 'subscribed') {
     creatorsState.activeTab = tab;
-    visibleCount = 80;
     if (isSelectionActive) selectionState.clear();
     scrollContext?.viewport?.scrollTo({ top: 0 });
+    void creatorsState.loadPage(true);
   }
 
   async function handleRefresh() {
@@ -410,6 +398,7 @@
 
   function toggleProvider(providerId: string) {
     creatorsState.providerFilters = toggleFilterKey(creatorsState.providerFilters, providerId);
+    void creatorsState.loadPage(true);
   }
 
   let enabledProviders = $derived(providerState.providers.filter((p) => p.enabled));
@@ -445,13 +434,16 @@
     <Button
       variant={Object.keys(creatorsState.serviceFilters).length === 0 ? 'accent' : 'ghost'}
       size="sm"
-      onclick={() => creatorsState.serviceFilters = {}}
+      onclick={() => {
+        creatorsState.serviceFilters = {};
+        void creatorsState.loadPage(true);
+      }}
       class="filter-chip chip-all {Object.keys(creatorsState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
       <IconGlobe class="w-5 h-5" />
       <span>{i18n.t('feed.all_platforms')}</span>
     </Button>
-    {#each creatorsState.services as service}
+    {#each creatorsState.enabledServices as service}
       {@const state = creatorsState.serviceFilters[service] ?? 'neutral'}
       <Button
         variant="ghost"
@@ -481,6 +473,7 @@
         onclick={() => {
           const cur = creatorsState.aiFilter;
           creatorsState.aiFilter = cur === 'neutral' ? 'include' : cur === 'include' ? 'exclude' : 'neutral';
+          void creatorsState.loadPage(true);
         }}
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
@@ -562,12 +555,12 @@
       <Button
         variant="ghost"
         class="btn-icon"
-        disabled={creatorsState.loading}
+        disabled={creatorsState.loading || creatorsState.syncing}
         aria-label={i18n.t('feed.refresh')}
         title={i18n.t('feed.refresh')}
         onclick={handleRefresh}
       >
-        {#if creatorsState.loading}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
+        {#if creatorsState.loading || creatorsState.syncing}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
       </Button>
 
       {@render creatorsFilter(sticky)}
@@ -646,6 +639,8 @@
       {#each creatorsList as creator (creator.service + ':' + creator.id)}
         {@const creatorKey = `${creator.service}:${creator.id}`}
         {@const isSelected = isSelectionActive && selectionState.isSelected(creatorKey)}
+        {@const placeholder = creatorPlaceholderUrl(creator)}
+        {@const avatarSrc = creatorAvatarSrc(creator)}
         <article
           class="grid-tile"
           class:selected={isSelected}
@@ -678,16 +673,27 @@
             <span class="fallback-initials">{creator.name.slice(0, 2).toUpperCase()}</span>
           </div>
 
-          <img
-            class="grid-tile-media"
-            src={getAvatarUrl(creator)}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            onerror={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
-          />
+          {#if placeholder}
+            <img
+              class="grid-tile-media placeholder-blur"
+              src={placeholder}
+              alt=""
+              aria-hidden="true"
+            />
+          {/if}
+
+          {#if avatarSrc}
+            <img
+              class="grid-tile-media"
+              src={avatarSrc}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              onerror={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          {/if}
 
           <div class="grid-tile-shade"></div>
 
@@ -733,7 +739,9 @@
 
     {#if hasMore}
       <div use:sentinel class="sentinel">
-        <IconLoading />
+        {#if creatorsState.loadingMore}
+          <IconLoading />
+        {/if}
       </div>
     {/if}
   {/if}
@@ -808,14 +816,14 @@
       <button
         type="button"
         class="sheet-action-item"
-        disabled={creatorsState.loading}
+        disabled={creatorsState.loading || creatorsState.syncing}
         use:ripple
         onclick={() => {
           mobileMoreOpen = false;
           void handleRefresh();
         }}
       >
-        {#if creatorsState.loading}
+        {#if creatorsState.loading || creatorsState.syncing}
           <IconLoading class="text-accent" />
         {:else}
           <IconArrowClockwise class="text-secondary" />

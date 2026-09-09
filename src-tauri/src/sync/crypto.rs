@@ -306,8 +306,14 @@ mod tests {
         assert_eq!(dec, sample_json);
 
         let legacy_json = b"{\"legacy\":true,\"name\":\"uncompressed\"}";
-        let legacy_enc = encrypt(&key, legacy_json, format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes()).unwrap();
-        let legacy_dec = decrypt_record(&key, record_id, &legacy_enc.ciphertext, &legacy_enc.nonce).unwrap();
+        let legacy_enc = encrypt(
+            &key,
+            legacy_json,
+            format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes(),
+        )
+        .unwrap();
+        let legacy_dec =
+            decrypt_record(&key, record_id, &legacy_enc.ciphertext, &legacy_enc.nonce).unwrap();
         assert_eq!(legacy_dec, legacy_json);
     }
 }

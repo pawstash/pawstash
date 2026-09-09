@@ -1,36 +1,29 @@
-import { apiFetchCreators } from '$lib/utils/ipc';
+import {
+  apiListCreatorsPage,
+  apiListCreatorServices,
+  apiListCreatorNames,
+  apiGetCreatorName,
+  apiSyncCreators,
+  type CreatorsQueryParams
+} from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 import type { Creator } from '$lib/types/content';
 import type { FilterMap, TriStateFilter } from '$lib/types/filter';
-import { matchesTriStateFilter } from '$lib/types/filter';
 import { configState } from './configState.svelte';
 import { providerState } from './providerState.svelte';
-
-const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
-
-function parseTimestamp(value: unknown): number {
-  if (!value) return 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 10_000_000_000 ? Math.round(numeric / 1000) : numeric;
-  }
-  const ms = new Date(String(value)).getTime();
-  return Number.isNaN(ms) ? 0 : Math.round(ms / 1000);
-}
-
-function parseFavoriteCount(c: Creator): number {
-  const val = c.favorited ?? (c as any).favorited ?? (c as any).kemono_favorited ?? (c as any).favorite_count ?? (c.extra as any)?.favorited ?? 0;
-  const num = Number(val);
-  return Number.isFinite(num) ? num : 0;
-}
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export class CreatorsState {
-  creators = $state<Creator[]>([]);
+  creators = $state.raw<Creator[]>([]);
   loading = $state(false);
+  loadingMore = $state(false);
+  syncing = $state(false);
   error = $state<string | null>(null);
   loaded = $state(false);
+  totalCount = $state(0);
+  hasMore = $state(false);
 
-  searchQuery = $state('');
+  private _searchQuery = $state('');
   providerFilters = $state<FilterMap>({});
   serviceFilters = $state<FilterMap>({});
   aiFilter = $state<TriStateFilter>('neutral');
@@ -38,127 +31,282 @@ export class CreatorsState {
   sortOrder = $state<'asc' | 'desc'>('desc');
   activeTab = $state<'all' | 'subscribed'>('all');
 
-  services = $derived.by(() => {
-    const list = new Set(this.creators.map((c) => c.service));
-    return [...list].sort();
-  });
+  services = $state<string[]>([]);
 
-  creatorsMap = $derived.by(() => {
-    const map = new Map<string, string>();
-    for (const c of this.creators) {
-      map.set(`${c.service.toLowerCase()}:${c.id.toLowerCase()}`, c.name);
-    }
-    return map;
-  });
-
-  filteredCreators = $derived.by(() => {
-    let result = this.creators;
-
-    if (Object.keys(this.providerFilters).length > 0) {
-      result = result.filter((c) => {
-        const cProviders: string[] = (c as any).provider_ids || [
-          (c as any).provider_id || (c.extra as any)?.provider_id || providerState.getProviderIdForService(c.service)
-        ];
-        return matchesTriStateFilter(cProviders, this.providerFilters);
-      });
-    }
-
-    if (Object.keys(this.serviceFilters).length > 0) {
-      result = result.filter((c) => matchesTriStateFilter([c.service], this.serviceFilters));
-    }
-
-    if (configState.settings.pawchive_hide_ai || this.aiFilter !== 'neutral') {
-      result = result.filter((c) => {
-        const isAi = Boolean(
-          (c.extra as any)?.tags?.some((t: string) => t.toLowerCase() === 'ai' || t.toLowerCase().includes('ai generated')) ||
-          c.name.toLowerCase().includes('[ai]') ||
-          c.name.toLowerCase().includes('(ai)')
-        );
-        if (configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude') {
-          return !isAi;
-        } else if (this.aiFilter === 'include') {
-          return isAi;
-        }
-        return true;
-      });
-    }
-
-    const query = this.searchQuery.trim().toLowerCase();
-    if (query) {
-      result = result.filter(
-        (c) =>
-          c.name.toLowerCase().includes(query) ||
-          c.id.toLowerCase().includes(query)
-      );
-    }
-
-    const sortBy = this.sortBy;
-    const sortOrder = this.sortOrder;
-
-    result = [...result].sort((a, b) => {
-      let comparison = 0;
-      if (sortBy === 'name') {
-        comparison = collator.compare(a.name || '', b.name || '');
-      } else if (sortBy === 'updated') {
-        const tA = parseTimestamp(a.updated || a.indexed);
-        const tB = parseTimestamp(b.updated || b.indexed);
-        comparison = tA - tB;
-        if (comparison === 0) {
-          comparison = collator.compare(a.name || '', b.name || '');
-        }
-      } else if (sortBy === 'indexed') {
-        const tA = parseTimestamp(a.indexed || a.updated);
-        const tB = parseTimestamp(b.indexed || b.updated);
-        comparison = tA - tB;
-        if (comparison === 0) {
-          comparison = collator.compare(a.name || '', b.name || '');
-        }
-      } else if (sortBy === 'favorited') {
-        const favA = parseFavoriteCount(a);
-        const favB = parseFavoriteCount(b);
-        comparison = favA - favB;
-        if (comparison === 0) {
-          comparison = parseTimestamp(a.updated || a.indexed) - parseTimestamp(b.updated || b.indexed);
-          if (comparison === 0) {
-            comparison = collator.compare(a.name || '', b.name || '');
-          }
-        }
+  get enabledServices(): string[] {
+    const list = this.services.filter((s) => providerState.isServiceEnabled(s));
+    if (list.length > 0) return list;
+    if (this.services.length > 0) return this.services;
+    const defaults: string[] = [];
+    for (const p of providerState.providers) {
+      if (p.enabled) {
+        defaults.push(...p.services);
       }
+    }
+    return [...new Set(defaults)].sort();
+  }
 
-      return sortOrder === 'asc' ? comparison : -comparison;
+  // Lookup index "service:id" -> name. Kept outside $state to avoid reactive proxy overhead.
+  creatorsMap = new Map<string, string>();
+
+  get searchQuery(): string {
+    return this._searchQuery;
+  }
+
+  set searchQuery(val: string) {
+    if (this._searchQuery === val) return;
+    this._searchQuery = val;
+    this.scheduleSearch(250);
+  }
+
+  get filteredCreators(): Creator[] {
+    return this.creators;
+  }
+
+  private _unlisten: UnlistenFn | null = null;
+  private _queryId = 0;
+  private _debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  private _initialized = false;
+
+  async init() {
+    if (this._initialized) return;
+    this._initialized = true;
+
+    void listen<number>('creators-updated', (event) => {
+      logger.info(`[Creators] Background sync updated ${event.payload} creators`);
+      void this.loadServices();
+      void this.loadNamesMap();
+      void this.loadPage(false);
+    }).then((un) => {
+      this._unlisten = un;
     });
 
-    return result;
-  });
+    if (providerState.providers.length === 0) {
+      await providerState.loadProviders();
+    }
+    await this.loadServices();
+    void this.loadNamesMap();
+    await this.loadPage(false);
+  }
 
-  private _loadId = 0;
+  destroy() {
+    this._unlisten?.();
+    this._unlisten = null;
+    if (this._debounceTimer) clearTimeout(this._debounceTimer);
+  }
 
-  async load(force = false) {
-    if (this.loading && !force) return;
-    if (this.loaded && !force) return;
+  async loadServices() {
+    try {
+      this.services = await apiListCreatorServices();
+    } catch (e) {
+      logger.warn('[Creators] Failed to load creator services', e);
+    }
+  }
 
-    const currentId = ++this._loadId;
+  async loadNamesMap() {
+    try {
+      const names = await apiListCreatorNames();
+      for (const [key, name] of Object.entries(names)) {
+        this.creatorsMap.set(key, name);
+      }
+    } catch (e) {
+      logger.warn('[Creators] Failed to load creator names map', e);
+    }
+  }
+
+  getName(service?: string, creatorId?: string): string | undefined {
+    if (!service || !creatorId) return undefined;
+    const key = `${service.toLowerCase()}:${creatorId.toLowerCase()}`;
+    const cached = this.creatorsMap.get(key);
+    if (cached) return cached;
+
+    void apiGetCreatorName(service, creatorId).then((name) => {
+      if (name) {
+        this.creatorsMap.set(key, name);
+      }
+    });
+    return undefined;
+  }
+
+  async resolveName(service?: string, creatorId?: string): Promise<string | undefined> {
+    if (!service || !creatorId) return undefined;
+    const key = `${service.toLowerCase()}:${creatorId.toLowerCase()}`;
+    const cached = this.creatorsMap.get(key);
+    if (cached) return cached;
+
+    try {
+      const name = await apiGetCreatorName(service, creatorId);
+      if (name) {
+        this.creatorsMap.set(key, name);
+        return name;
+      }
+    } catch {}
+    return undefined;
+  }
+
+  setName(service: string, creatorId: string, name: string) {
+    if (!service || !creatorId || !name) return;
+    this.creatorsMap.set(`${service.toLowerCase()}:${creatorId.toLowerCase()}`, name);
+  }
+
+  private buildQueryParams(offset = 0, limit = 80): CreatorsQueryParams {
+    const enabledConfigs = providerState.providers.filter((p) => p.enabled);
+    const enabledIds = enabledConfigs.map((p) => p.id);
+
+    const activeProviderEntries = Object.entries(this.providerFilters).filter(([, state]) => state !== 'neutral');
+    let candidateProviders = [...enabledIds];
+    if (activeProviderEntries.length > 0) {
+      const included = activeProviderEntries.filter(([, state]) => state === 'include').map(([id]) => id);
+      const excluded = activeProviderEntries.filter(([, state]) => state === 'exclude').map(([id]) => id);
+
+      if (included.length > 0) {
+        candidateProviders = candidateProviders.filter((id) => included.includes(id));
+      }
+      if (excluded.length > 0) {
+        candidateProviders = candidateProviders.filter((id) => !excluded.includes(id));
+      }
+    }
+    const effectiveProviders = candidateProviders.length === 0 ? ['__none__'] : candidateProviders;
+
+    const allServices = this.services.length > 0 ? this.services : this.enabledServices;
+    let candidateServices = allServices.filter((s) => {
+      const provs = providerState.getProvidersForService(s);
+      if (provs.length === 0) return true;
+      return provs.some((p) => effectiveProviders.includes(p.id));
+    });
+
+    const includedServices: string[] = [];
+    const excludedServices: string[] = [];
+    for (const [srv, state] of Object.entries(this.serviceFilters)) {
+      if (state === 'include') includedServices.push(srv);
+      else if (state === 'exclude') excludedServices.push(srv);
+    }
+
+    let finalServices: string[];
+    if (includedServices.length > 0) {
+      finalServices = candidateServices.filter((s) => includedServices.includes(s));
+    } else if (excludedServices.length > 0) {
+      finalServices = candidateServices.filter((s) => !excludedServices.includes(s));
+    } else {
+      finalServices = candidateServices;
+    }
+
+    const effectiveServices = finalServices.length === 0
+      ? ['__none__']
+      : finalServices;
+
+    return {
+      query: this.searchQuery.trim() || undefined,
+      services: effectiveServices,
+      providers: effectiveProviders,
+      sort_by: this.sortBy,
+      sort_order: this.sortOrder,
+      subscribed_only: this.activeTab === 'subscribed',
+      hide_ai: configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude',
+      limit,
+      offset
+    };
+  }
+
+  async loadPage(reset = false) {
+    if (providerState.providers.length === 0) {
+      await providerState.loadProviders();
+    }
+    if (this.services.length === 0) {
+      await this.loadServices();
+    }
+
+    const currentId = ++this._queryId;
+    if (reset) {
+      this.creators = [];
+    }
     this.loading = true;
     this.error = null;
+
     try {
-      const list = await apiFetchCreators();
-      if (currentId !== this._loadId) return;
-      this.creators = list;
+      const params = this.buildQueryParams(0, 80);
+      const res = await apiListCreatorsPage(params);
+      if (currentId !== this._queryId) return;
+
+      this.creators = res.items;
+      this.totalCount = res.total;
+      this.hasMore = res.has_more;
       this.loaded = true;
-      logger.info(`[Creators] Loaded ${this.creators.length} creators`);
+
+      for (const c of res.items) {
+        this.creatorsMap.set(`${c.service.toLowerCase()}:${c.id.toLowerCase()}`, c.name);
+      }
     } catch (e) {
-      if (currentId !== this._loadId) return;
+      if (currentId !== this._queryId) return;
       this.error = e instanceof Error ? e.message : String(e);
-      logger.error('[Creators] Failed to load creators', e);
+      logger.error('[Creators] Failed to load creators page', e);
     } finally {
-      if (currentId === this._loadId) {
+      if (currentId === this._queryId) {
         this.loading = false;
       }
     }
   }
 
+  scheduleSearch(delay = 250) {
+    if (this._debounceTimer) clearTimeout(this._debounceTimer);
+    this._debounceTimer = setTimeout(() => {
+      void this.loadPage(true);
+    }, delay);
+  }
+
+  async loadMore() {
+    if (this.loadingMore || !this.hasMore || this.loading) return;
+    this.loadingMore = true;
+
+    try {
+      if (providerState.providers.length === 0) {
+        await providerState.loadProviders();
+      }
+      if (this.services.length === 0) {
+        await this.loadServices();
+      }
+      const params = this.buildQueryParams(this.creators.length, 80);
+      const res = await apiListCreatorsPage(params);
+
+      this.creators = [...this.creators, ...res.items];
+      this.totalCount = res.total;
+      this.hasMore = res.has_more;
+
+      for (const c of res.items) {
+        this.creatorsMap.set(`${c.service.toLowerCase()}:${c.id.toLowerCase()}`, c.name);
+      }
+    } catch (e) {
+      logger.error('[Creators] Failed to load more creators', e);
+    } finally {
+      this.loadingMore = false;
+    }
+  }
+
+  async load(force = false) {
+    if (!this._initialized) {
+      await this.init();
+      return;
+    }
+    if (force) {
+      await this.refresh();
+    } else if (!this.loaded) {
+      await this.loadPage(false);
+    }
+  }
+
   async refresh() {
-    await this.load(true);
+    this.syncing = true;
+    try {
+      const count = await apiSyncCreators();
+      logger.info(`[Creators] Synced ${count} creators`);
+      await this.loadServices();
+      await this.loadNamesMap();
+      await this.loadPage(true);
+    } catch (e) {
+      logger.error('[Creators] Failed to sync creators', e);
+    } finally {
+      this.syncing = false;
+    }
   }
 }
 

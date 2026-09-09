@@ -191,6 +191,8 @@ mod tests {
                 path: Some("/path/file1.png".into()),
                 server: None,
                 size: Some(1024),
+                url: None,
+                thumbnail_url: None,
                 extra: HashMap::new(),
             }]),
             file: None,
@@ -205,6 +207,9 @@ mod tests {
             prev: None,
             favorite_count: None,
             attachment_count: Some(1),
+            thumbnail_url: None,
+            page_url: None,
+            preview_path: None,
             extra: HashMap::new(),
         };
 
@@ -226,6 +231,8 @@ mod tests {
                     path: Some("/path/file1.png".into()),
                     server: None,
                     size: Some(1024),
+                    url: None,
+                    thumbnail_url: None,
                     extra: HashMap::new(),
                 },
                 Attachment {
@@ -233,6 +240,8 @@ mod tests {
                     path: Some("/path/file2.png".into()),
                     server: None,
                     size: Some(2048),
+                    url: None,
+                    thumbnail_url: None,
                     extra: HashMap::new(),
                 },
             ]),
@@ -248,6 +257,9 @@ mod tests {
             prev: None,
             favorite_count: None,
             attachment_count: Some(2),
+            thumbnail_url: None,
+            page_url: None,
+            preview_path: None,
             extra: HashMap::new(),
         };
 

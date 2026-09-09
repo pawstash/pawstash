@@ -1,24 +1,14 @@
-import type { Post, Attachment } from '$lib/types/content';
+import type { Post, Attachment, Creator, CreatorProfile } from '$lib/types/content';
 import { providerState } from '$lib/state/providerState.svelte';
-import { getProviderDriver, deriveSubdomainOrigin, DRIVERS } from '$lib/providers/drivers';
 import { thumbHashToUrl } from './thumbhash';
 import { apiProbeDownloadSize } from '$lib/utils/ipc';
-
-export { deriveSubdomainOrigin };
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { serverPortState } from '$lib/state/serverPort.svelte';
+import { configState } from '$lib/state/configState.svelte';
 
 export function formatProviderName(name?: string): string {
   if (!name) return '';
   return name.replace(/\s*\([^)]*\)/g, '').trim();
-}
-
-function resolveDriver(service?: string, explicitProviderId?: string) {
-  if (explicitProviderId) {
-    const config = providerState.getProviderById(explicitProviderId);
-    if (config) {
-      return { config, driver: getProviderDriver(config.id) };
-    }
-  }
-  return providerState.getDriverForService(service);
 }
 
 export function cleanMediaPath(rawPath: string): string {
@@ -131,56 +121,90 @@ export function inferAttachmentExtension(file?: { name?: string; path?: string; 
   return fallback;
 }
 
-export function creatorAvatarUrl(service: string, creatorId: string, thumbhash?: string | null): string {
-  if (thumbhash) {
-    const dataUrl = thumbHashToUrl(thumbhash);
-    if (dataUrl) return dataUrl;
+export function resolveLocalMediaUrl(path?: string | null): string | undefined {
+  if (!path) return undefined;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const port = serverPortState.port || 0;
+  if (port > 0) {
+    const norm = path.replace(/\\/g, '/');
+    const clean = norm.startsWith('/') ? norm.slice(1) : norm;
+    return serverPortState.mediaUrl(`/media/${encodeURI(clean)}`);
   }
-  const { config, driver } = resolveDriver(service);
-  return driver.resolveAvatarUrl(config, service, creatorId);
-}
-
-export function creatorBannerUrl(service: string, creatorId: string, thumbhash?: string | null): string {
-  if (thumbhash) {
-    const dataUrl = thumbHashToUrl(thumbhash);
-    if (dataUrl) return dataUrl;
+  try {
+    return convertFileSrc(path);
+  } catch {
+    return undefined;
   }
-  const { config, driver } = resolveDriver(service);
-  return driver.resolveBannerUrl(config, service, creatorId);
 }
 
-export function creatorPageUrl(service: string, creatorId: string, explicitProviderId?: string): string {
-  const { config, driver } = resolveDriver(service, explicitProviderId);
-  return driver.resolveCreatorPageUrl(config, service, creatorId);
+export function creatorAvatarUrl(_service: string, _creatorId: string, _thumbhash?: string | null, _explicitProviderId?: string): string {
+  return '';
 }
 
-export function postPageUrl(service: string, creatorId: string, postId: string, explicitProviderId?: string): string {
-  const { config, driver } = resolveDriver(service, explicitProviderId);
-  return driver.resolvePostPageUrl(config, service, creatorId, postId);
+export function creatorAvatarSrc(creator?: Creator | CreatorProfile | null): string {
+  if (!creator) return '';
+  const c = creator as any;
+  const avatarPath = typeof c.avatar_path === 'string' ? c.avatar_path : undefined;
+  if (avatarPath) {
+    const local = resolveLocalMediaUrl(avatarPath);
+    if (local) return local;
+  }
+  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
+  if (avatarUrl) {
+    return avatarUrl;
+  }
+  return '';
+}
+
+export function creatorPlaceholderUrl(creator?: Creator | CreatorProfile | null): string | undefined {
+  if (!creator || configState.settings.disable_blur_placeholders) return undefined;
+  const thumb = (creator as any).avatar_thumbhash || (creator.extra as any)?.avatar_thumbhash;
+  if (thumb && typeof thumb === 'string') {
+    return thumbHashToUrl(thumb) || undefined;
+  }
+  return undefined;
+}
+
+export function creatorBannerUrl(_service: string, _creatorId: string, _thumbhash?: string | null, _explicitProviderId?: string): string {
+  return '';
+}
+
+export function creatorBannerSrc(creator?: Creator | CreatorProfile | null): string {
+  if (!creator) return '';
+  const c = creator as any;
+  const bannerPath = typeof c.banner_path === 'string' ? c.banner_path : undefined;
+  if (bannerPath) {
+    const local = resolveLocalMediaUrl(bannerPath);
+    if (local) return local;
+  }
+  const bannerUrl = typeof c.banner_url === 'string' ? c.banner_url : undefined;
+  if (bannerUrl) {
+    return bannerUrl;
+  }
+  return '';
+}
+
+export function creatorBannerPlaceholderUrl(creator?: Creator | CreatorProfile | null): string | undefined {
+  if (!creator || configState.settings.disable_blur_placeholders) return undefined;
+  const thumb = (creator as any).banner_thumbhash || (creator.extra as any)?.banner_thumbhash;
+  if (thumb && typeof thumb === 'string') {
+    return thumbHashToUrl(thumb) || undefined;
+  }
+  return undefined;
+}
+
+export function creatorPageUrl(_service: string, _creatorId: string, _explicitProviderId?: string): string {
+  return '';
+}
+
+export function postPageUrl(_service: string, _creatorId: string, _postId: string, _explicitProviderId?: string): string {
+  return '';
 }
 
 export function postMediaUrl(post: Post): string | null {
   const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
-  if (!media?.path) return null;
-  return attachmentMediaUrl(media, post.service);
-}
-
-export function resolveServerOrigin(server: string, service?: string): string {
-  const srv = server.trim().replace(/\/+$/, '');
-  if (/^https?:\/\//i.test(srv)) return srv;
-  if (srv.includes('.')) return `https://${srv}`;
-
-  const { config } = resolveDriver(service);
-  const providerOrigin = config.file_url ? config.file_url : deriveSubdomainOrigin(config.api_url, 'file');
-  try {
-    const url = new URL(providerOrigin);
-    const host = url.hostname;
-    const parts = host.split('.');
-    const baseHost = parts.length > 2 ? parts.slice(1).join('.') : host;
-    return `${url.protocol}//${srv}.${baseHost}`;
-  } catch {
-    return providerOrigin;
-  }
+  if (!media) return null;
+  return media.url || (media.path && (media.path.startsWith('http://') || media.path.startsWith('https://')) ? media.path : null);
 }
 
 export function isPostUnarchived(post?: Post | null): boolean {
@@ -204,9 +228,12 @@ export function isPostUnarchived(post?: Post | null): boolean {
   return false;
 }
 
-export function attachmentMediaUrl(file: Attachment, service: string, post?: Post | null): string {
-  if (!file?.path) return '';
-  if (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/')) {
+export function attachmentMediaUrl(file: Attachment, _service?: string, _post?: Post | null): string {
+  if (!file) return '';
+  if (file.url && (file.url.startsWith('http://') || file.url.startsWith('https://'))) {
+    return file.url;
+  }
+  if (file.path && (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/'))) {
     return file.path;
   }
 
@@ -215,53 +242,41 @@ export function attachmentMediaUrl(file: Attachment, service: string, post?: Pos
     (file as any).deferred === true ||
     (file.extra as any)?.deferred === true;
 
-  if (isPreviewOnly || (post?.has_full === false && !isAttachmentVideo(file, file.path))) {
-    return attachmentThumbnailUrl(file, service);
+  if (isPreviewOnly && file.thumbnail_url) {
+    return file.thumbnail_url;
   }
 
-  const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
-  const { config, driver } = resolveDriver(service, explicitProv);
-  const ext = inferAttachmentExtension(file);
-  return driver.resolveMediaUrl(config, file.path, file.server, ext);
+  return file.url || file.path || '';
 }
 
-export function attachmentThumbnailUrl(file: Attachment, service: string): string {
-  if (!file?.path) return '';
-  if (isAttachmentVideo(file, file.path)) {
-    const thumb = (file as any)?.thumbnail || (file as any)?.preview || (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
-    if (thumb && typeof thumb === 'string') return thumb;
-    const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
-    const { config, driver } = resolveDriver(service, explicitProv);
-    if (driver.supportsVideoThumbnails) {
-      return driver.resolveThumbnailUrl(config, file.path);
-    }
-    return '';
-  }
-  if (file.path.startsWith('/cloud_stream/')) {
-    return '';
-  }
-  if (file.path.startsWith('http://') || file.path.startsWith('https://')) {
-    return file.path;
-  }
-
-  const explicitProv = (file as any)?.provider_id || (file.extra as any)?.provider_id;
-  const { config, driver } = resolveDriver(service, explicitProv);
-  return driver.resolveThumbnailUrl(config, file.path);
+export function attachmentThumbnailUrl(file: Attachment, _service?: string): string {
+  if (!file) return '';
+  if (file.thumbnail_url) return file.thumbnail_url;
+  const thumb = (file as any)?.thumbnail || (file as any)?.preview || (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
+  if (thumb && typeof thumb === 'string') return thumb;
+  if (file.path && (file.path.startsWith('http://') || file.path.startsWith('https://'))) return file.path;
+  return '';
 }
 
 export function postThumbnailUrl(post: Post): string | null {
-  const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
-  if (media?.path) {
-    const explicitProv = (post as any)?.provider_id || (post.extra as any)?.provider_id || (media as any)?.provider_id || (media?.extra as any)?.provider_id;
-    const { config, driver } = resolveDriver(post.service, explicitProv);
-    if (isAttachmentVideo(media, media.path) && !driver.supportsVideoThumbnails) {
-      const thumb = (media as any)?.thumbnail || (media as any)?.preview || (media.extra as any)?.thumbnail || (media.extra as any)?.preview;
-      if (thumb && typeof thumb === 'string') return thumb;
-      return null;
-    }
-    return driver.resolveThumbnailUrl(config, media.path);
-  }
+  return post.thumbnail_url || post.file?.thumbnail_url || post.attachments?.[0]?.thumbnail_url || null;
+}
 
+export function postThumbnailSrc(post?: Post | null): string | null {
+  if (!post) return null;
+  if (post.preview_path) {
+    const local = resolveLocalMediaUrl(post.preview_path);
+    if (local) return local;
+  }
+  if (post.thumbnail_url) {
+    return post.thumbnail_url;
+  }
+  return postThumbnailUrl(post);
+}
+
+export function postPlaceholderUrl(post?: Post | null): string | undefined {
+  if (!post || configState.settings.disable_blur_placeholders) return undefined;
+  const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
   const thumbhash = (media as any)?.preview_thumbhash ||
     (media?.extra as any)?.preview_thumbhash ||
     (post.file as any)?.preview_thumbhash ||
@@ -270,73 +285,34 @@ export function postThumbnailUrl(post: Post): string | null {
     (post.attachments?.[0]?.extra as any)?.preview_thumbhash ||
     (post.extra as any)?.preview_thumbhash;
 
-  if (thumbhash) {
-    const dataUrl = thumbHashToUrl(thumbhash);
-    if (dataUrl) return dataUrl;
-  }
-
-  return null;
-}
-
-export function deriveCdnThumbnailUrl(url?: string): string | undefined {
-  if (!url) return undefined;
-  const providers = providerState.providers;
-  if (providers.length > 0) {
-    for (const config of providers) {
-      const driver = getProviderDriver(config.id);
-      const thumb = driver.resolveCdnThumbnailUrl(config, url);
-      if (thumb) return thumb;
-    }
-  } else {
-    for (const [id, driver] of Object.entries(DRIVERS)) {
-      const fallbackConfig = {
-        id,
-        name: id,
-        enabled: true,
-        api_url: '',
-        fallback_urls: [],
-        session_cookie: '',
-        username: '',
-        services: [],
-        is_custom: false,
-        priority: 1
-      };
-      const thumb = driver.resolveCdnThumbnailUrl(fallbackConfig, url);
-      if (thumb) return thumb;
-    }
+  if (thumbhash && typeof thumbhash === 'string') {
+    return thumbHashToUrl(thumbhash) || undefined;
   }
   return undefined;
 }
 
-export function postPlaceholderUrl(post: Post): string | null {
-  const media = post.file?.path ? post.file : post.attachments?.[0];
-  const thumbhash = (media as any)?.preview_thumbhash ||
-    (media?.extra as any)?.preview_thumbhash ||
-    (post.file as any)?.preview_thumbhash ||
-    (post.file?.extra as any)?.preview_thumbhash ||
-    (post.attachments?.[0] as any)?.preview_thumbhash ||
-    (post.attachments?.[0]?.extra as any)?.preview_thumbhash ||
-    (post.extra as any)?.preview_thumbhash;
-
-  if (thumbhash) {
-    return thumbHashToUrl(thumbhash);
+export function deriveCdnThumbnailUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const cleanUrl = url.split(/[?#]/)[0];
+  if (/\.(m4v|mkv|mov|mp4|webm)$/i.test(cleanUrl)) return undefined;
+  if (cleanUrl.includes('/data/')) {
+    return cleanUrl
+      .replace('/data/', '/thumbnail/data/')
+      .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, '://img.');
   }
-  return null;
+  const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
+  if (match) {
+    return cleanUrl.replace(/\/media\/[^/]+\/original.*/, `/thumbnail/${match[1]}/preview.webp`);
+  }
+  return undefined;
 }
 
-export function fancardMediaUrl(card: { hash?: string; ext?: string; mime?: string }, service: string): string {
-  if (!card.hash || card.hash.length < 4) return '';
-  const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
-  const { config, driver } = resolveDriver(service);
-  return driver.resolveFancardMediaUrl(config, service, { hash: card.hash, ext });
+export function fancardMediaUrl(card: { media_url?: string; hash?: string; ext?: string }): string {
+  return (card as any).media_url || '';
 }
 
-export function fancardThumbnailUrl(card: { hash?: string; ext?: string; mime?: string; ihash?: string }, service: string): string {
-  if (card.hash && card.hash.length >= 4) {
-    const ext = (card.ext || '').replace(/^\.+/, '') || (card.mime?.includes('png') ? 'png' : card.mime?.includes('webp') ? 'webp' : card.mime?.includes('gif') ? 'gif' : 'jpg');
-    const { config, driver } = resolveDriver(service);
-    return driver.resolveFancardThumbnailUrl(config, service, { hash: card.hash, ext });
-  }
+export function fancardThumbnailUrl(card: { thumbnail_url?: string; ihash?: string }): string {
+  if ((card as any).thumbnail_url) return (card as any).thumbnail_url;
   if (card.ihash) {
     const dataUrl = thumbHashToUrl(card.ihash);
     if (dataUrl) return dataUrl;
@@ -1034,6 +1010,16 @@ export function diagnoseVideoFailure(
   };
 }
 
+export function getAttachmentDeclaredSize(file?: Attachment | null): number {
+  if (!file) return 0;
+  if (typeof file.size === 'number' && file.size > 0) return file.size;
+  if (typeof (file as any).filesize === 'number' && (file as any).filesize > 0) return (file as any).filesize;
+  if (typeof (file as any).file_size === 'number' && (file as any).file_size > 0) return (file as any).file_size;
+  if (typeof (file as any).bytes === 'number' && (file as any).bytes > 0) return (file as any).bytes;
+  if (typeof file.size === 'string' && Number(file.size) > 0) return Number(file.size);
+  return 0;
+}
+
 export async function diagnoseVideoFailureAsync(
   file?: Attachment | null,
   videoEl?: HTMLVideoElement | null,
@@ -1046,21 +1032,35 @@ export async function diagnoseVideoFailureAsync(
 
   const src = videoEl?.src || file?.path || '';
   if (src.startsWith('http://') || src.startsWith('https://')) {
+    let probeUrl = src;
+    if (src.includes('/cloud_stream/proxy')) {
+      try {
+        const parsed = new URL(src);
+        const target = parsed.searchParams.get('url');
+        if (target) {
+          probeUrl = target;
+        }
+      } catch {}
+    }
+
+    const declaredBytes = file ? getAttachmentDeclaredSize(file) : 0;
+
     try {
-      const size = await apiProbeDownloadSize(src);
+      const size = await apiProbeDownloadSize(probeUrl);
       if (typeof size === 'number' && size > 0) {
         return {
           preset: 'decode',
           message: 'Video codec or container is not supported by browser'
         };
-      } else {
-        return {
-          preset: 'not_found',
-          httpStatus: 404,
-          message: 'Video file is unavailable or missing on server'
-        };
       }
     } catch {}
+
+    if (declaredBytes > 0) {
+      return {
+        preset: 'network',
+        message: 'Network stream error while connecting to media source'
+      };
+    }
   }
 
   return syncDiag;

@@ -15,14 +15,14 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiFetchCreatorArtworkDataUrl, apiOpenInBrowser, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiGetCreatorArtworkPath, apiOpenInBrowser, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile, apiResolvePostUrl } from '$lib/utils/ipc';
   import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, postPageUrl, getPlatformPostUrl, formatProviderName, postThumbnailUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
@@ -117,10 +117,6 @@
   }
   let { service, creatorId, postId, initialMedia, openViewer }: Props = $props();
 
-  const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
-  let entry = $derived.by(() => contentState.posts[postCacheKey(service, creatorId, postId)] ?? emptyEntry);
-  let rawPost = $derived(entry.post);
-
   let postKey = $derived(providerState.getPostKey(service, creatorId, postId));
   let postRevisions = $derived(providerState.postRevisions[postKey] || []);
   let selectedRevId = $derived(providerState.selectedRevision[postKey] ?? null);
@@ -145,6 +141,21 @@
       ? candidateProviders[0].id
       : providerState.getSelectedProvider(service, creatorId, postId)
   );
+
+  const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
+  let entry = $derived.by(() => contentState.posts[postCacheKey(service, creatorId, postId, activeProviderId)] ?? emptyEntry);
+  let rawPost = $derived(entry.post);
+  let availableProviders = $derived.by<string[]>(() => {
+    const raw = (rawPost as any)?.extra?.available_providers;
+    if (Array.isArray(raw)) return raw as string[];
+    return [];
+  });
+  let providersWithPost = $derived.by(() => {
+    if (availableProviders.length > 0) {
+      return candidateProviders.filter((p) => availableProviders.includes(p.id));
+    }
+    return candidateProviders;
+  });
 
   let filteredRevisions = $derived.by(() => {
     if (!activeProviderId || activeProviderId === 'auto') {
@@ -359,7 +370,7 @@
       const p = providerState.getProviderById(activeProviderId);
       if (p) return formatProviderName(p.name);
     }
-    const defaultProv = providerState.getDriverForService(service)?.config;
+    const defaultProv = providerState.getProviderForService(service);
     if (defaultProv) return formatProviderName(defaultProv.name || defaultProv.id);
     return 'Provider';
   });
@@ -368,13 +379,15 @@
 
   function openInProvider(targetProvId?: string) {
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-    const url = postPageUrl(
-      service,
-      creatorId,
-      postId,
-      effectiveProvId
-    );
-    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open post URL in provider', err));
+    if (post?.page_url && (!effectiveProvId || effectiveProvId === post.provider_id)) {
+      void apiOpenInBrowser(post.page_url).catch((err) => logger.warn('Failed to open post URL in provider', err));
+      return;
+    }
+    apiResolvePostUrl(service, creatorId, postId, effectiveProvId)
+      .then((url) => {
+        if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open post URL in provider', err));
+      })
+      .catch((err) => logger.warn('Failed to resolve post URL', err));
   }
 
   function openOriginalPost() {
@@ -390,19 +403,25 @@
   let copyLinkTimeout: ReturnType<typeof setTimeout> | null = null;
   function copyPostLink(targetProvId?: string) {
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-    const url = postPageUrl(
-      service,
-      creatorId,
-      postId,
-      effectiveProvId
-    );
-    if (!url) return;
-    void navigator.clipboard.writeText(url);
-    copiedPostLink = true;
-    if (copyLinkTimeout) clearTimeout(copyLinkTimeout);
-    copyLinkTimeout = setTimeout(() => {
-      copiedPostLink = false;
-    }, 2000);
+    const doCopy = (url: string) => {
+      void navigator.clipboard.writeText(url);
+      copiedPostLink = true;
+      if (copyLinkTimeout) clearTimeout(copyLinkTimeout);
+      copyLinkTimeout = setTimeout(() => {
+        copiedPostLink = false;
+      }, 2000);
+    };
+
+    if (post?.page_url && (!effectiveProvId || effectiveProvId === post.provider_id)) {
+      doCopy(post.page_url);
+      return;
+    }
+
+    apiResolvePostUrl(service, creatorId, postId, effectiveProvId)
+      .then((url) => {
+        if (url) doCopy(url);
+      })
+      .catch((err) => logger.warn('Failed to resolve post URL for copy', err));
   }
 
   let copiedOriginalLink = $state(false);
@@ -1056,11 +1075,8 @@
 
   function getEffectiveFileSize(file?: Attachment | null): number {
     if (!file) return 0;
-    if (typeof file.size === 'number' && file.size > 0) return file.size;
-    if (typeof (file as any).filesize === 'number' && (file as any).filesize > 0) return (file as any).filesize;
-    if (typeof (file as any).file_size === 'number' && (file as any).file_size > 0) return (file as any).file_size;
-    if (typeof (file as any).bytes === 'number' && (file as any).bytes > 0) return (file as any).bytes;
-    if (typeof file.size === 'string' && Number(file.size) > 0) return Number(file.size);
+    const declared = getAttachmentDeclaredSize(file);
+    if (declared > 0) return declared;
     if (file.path) {
       if (probedMediaSizes[file.path] && probedMediaSizes[file.path] > 0) return probedMediaSizes[file.path];
       const clean = cleanMediaPath(file.path);
@@ -1515,7 +1531,8 @@
     const currentService = service;
     const currentCreatorId = creatorId;
     const currentPostId = postId;
-    const currentKey = `${currentService}:${currentCreatorId}:${currentPostId}`;
+    const currentProvider = activeProviderId;
+    const currentKey = `${currentService}:${currentCreatorId}:${currentPostId}:${currentProvider || 'auto'}`;
     if (currentService && currentCreatorId && currentPostId) {
       if (lastLoadedPostKey !== currentKey) {
         lastLoadedPostKey = currentKey;
@@ -1523,7 +1540,7 @@
         closeMediaSearch();
       }
       untrack(() => {
-        void contentState.loadPost(currentService, currentCreatorId, currentPostId).then(() => {
+        void contentState.loadPost(currentService, currentCreatorId, currentPostId, true, currentProvider).then(() => {
           void checkFavoriteStatus();
         });
         void providerState.loadPostRevisions(currentService, currentCreatorId, currentPostId);
@@ -1562,29 +1579,43 @@
   $effect(() => {
     if (service && creatorId) {
       const cacheKey = `${service.toLowerCase()}:${creatorId.toLowerCase()}`;
-      const cachedName = creatorsState.creatorsMap.get(cacheKey) || contentState.creators[cacheKey]?.profile?.name;
-      if (typeof cachedName === 'string' && cachedName) {
-        creatorName = cachedName;
+      const existingCreator = contentState.creators[cacheKey];
+      if (existingCreator?.profile) {
+        if (typeof existingCreator.profile.name === 'string' && existingCreator.profile.name) {
+          creatorName = existingCreator.profile.name;
+        }
+        creatorAvatar = creatorAvatarSrc(existingCreator.profile);
+        creatorAvatarFailed = false;
       } else {
+        const cachedName = creatorsState.creatorsMap.get(cacheKey);
+        if (typeof cachedName === 'string' && cachedName) {
+          creatorName = cachedName;
+        }
+        void apiGetCreatorArtworkPath(service, creatorId, 'avatar')
+          .then((path) => {
+            if (path) {
+              creatorAvatar = resolveLocalMediaUrl(path) || '';
+              creatorAvatarFailed = false;
+            }
+          })
+          .catch(() => {});
+
         void apiFetchCreatorProfile(service, creatorId)
           .then((profile) => {
-            if (typeof profile?.name === 'string' && profile.name) {
-              creatorName = profile.name;
+            if (profile) {
+              if (typeof profile.name === 'string' && profile.name) {
+                creatorName = profile.name;
+              }
               const cachedCreator = contentState.getCreator(service, creatorId);
               cachedCreator.profile = profile;
+              creatorAvatar = creatorAvatarSrc(profile);
+              creatorAvatarFailed = false;
             }
           })
           .catch((err) => {
             logger.warn(`Failed to load creator profile for ${service}:${creatorId}`, err);
           });
       }
-
-      void apiFetchCreatorArtworkDataUrl(service, creatorId, 'avatar')
-        .then((avatar) => {
-          creatorAvatar = avatar;
-          creatorAvatarFailed = false;
-        })
-        .catch(() => (creatorAvatar = ''));
     }
   });
 
@@ -2504,32 +2535,36 @@
       {/if}
     </div>
 
-    {#if post}
+    {#if post || (entry.loaded && !entry.loading)}
       <header class="detail-header">
         <div class="min-w-0 flex-1">
-          <h1>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
-          <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
-            <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-[var(--fg-subtle)]">{i18n.t('post.published_at')}:</span>
-              <strong class="font-semibold text-[var(--fg-default)]">{publishedDateStr}</strong>
+          {#if post}
+            <h1>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
+          {/if}
+          {#if publishedDateStr}
+            <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[var(--fg-subtle)]">{i18n.t('post.published_at')}:</span>
+                <strong class="font-semibold text-[var(--fg-default)]">{publishedDateStr}</strong>
+              </div>
+
+              {#if showEdited}
+                <span class="text-[var(--fg-subtle)]">·</span>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at') || 'Edited'}:</span>
+                  <strong class="font-medium text-[var(--fg-default)]">{editedDateStr}</strong>
+                </div>
+              {/if}
+
+              {#if showImported}
+                <span class="text-[var(--fg-subtle)]">·</span>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.imported_at')}:</span>
+                  <strong class="font-medium text-[var(--fg-default)]">{addedDateStr}</strong>
+                </div>
+              {/if}
             </div>
-
-            {#if showEdited}
-              <span class="text-[var(--fg-subtle)]">·</span>
-              <div class="flex items-center gap-1.5 shrink-0">
-                <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at') || 'Edited'}:</span>
-                <strong class="font-medium text-[var(--fg-default)]">{editedDateStr}</strong>
-              </div>
-            {/if}
-
-            {#if showImported}
-              <span class="text-[var(--fg-subtle)]">·</span>
-              <div class="flex items-center gap-1.5 shrink-0">
-                <span class="text-[var(--fg-subtle)]">{i18n.t('post.imported_at')}:</span>
-                <strong class="font-medium text-[var(--fg-default)]">{addedDateStr}</strong>
-              </div>
-            {/if}
-          </div>
+          {/if}
 
           <div class="post-meta-actions-row flex items-center flex-wrap gap-2 mt-1 min-h-[38px] text-sm text-[var(--fg-muted)]">
             <Button
@@ -2542,30 +2577,32 @@
               <span class="capitalize">{service}</span>
             </Button>
 
-            {#if activeProviderId === 'auto' && candidateProviders.length > 1}
-              {#each candidateProviders as prov}
+            {#if post}
+              {#if activeProviderId === 'auto' && providersWithPost.length > 1}
+                {#each providersWithPost as prov}
+                  <span class="text-[var(--fg-subtle)]">·</span>
+                  <Button
+                    variant="ghost"
+                    onclick={() => openInProvider(prov.id)}
+                    tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
+                    aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
+                  >
+                    <IconOpen class="w-4 h-4" />
+                    <span>{formatProviderName(prov.name || prov.id)}</span>
+                  </Button>
+                {/each}
+              {:else}
                 <span class="text-[var(--fg-subtle)]">·</span>
                 <Button
                   variant="ghost"
-                  onclick={() => openInProvider(prov.id)}
-                  tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
-                  aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
+                  onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
+                  tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+                  aria-label={`Open in ${currentProviderName}`}
                 >
                   <IconOpen class="w-4 h-4" />
-                  <span>{formatProviderName(prov.name || prov.id)}</span>
+                  <span>{currentProviderName}</span>
                 </Button>
-              {/each}
-            {:else}
-              <span class="text-[var(--fg-subtle)]">·</span>
-              <Button
-                variant="ghost"
-                onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
-                tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
-                aria-label={`Open in ${currentProviderName}`}
-              >
-                <IconOpen class="w-4 h-4" />
-                <span>{currentProviderName}</span>
-              </Button>
+              {/if}
             {/if}
 
             <span class="text-[var(--fg-subtle)]">·</span>
@@ -2621,9 +2658,10 @@
         </div>
       </header>
 
-      {#if post.poll}
-        <PostPoll poll={post.poll} />
-      {/if}
+      {#if post}
+        {#if post.poll}
+          <PostPoll poll={post.poll} />
+        {/if}
 
       {#if entry.loading && !entry.loaded}
         <div class="detail-loading">{i18n.t('feed.loading')}</div>
@@ -3386,10 +3424,11 @@
           </div>
         {/if}
       </section>
+      {/if}
+    {:else if entry.loading}
+      <div class="detail-loading">{i18n.t('feed.loading')}</div>
     {:else if entry.error}
       <div class="detail-loading">{entry.error}</div>
-    {:else}
-      <div class="detail-loading">{i18n.t('feed.loading')}</div>
     {/if}
   </div>
 </PageShell>
@@ -3440,8 +3479,8 @@
         </div>
       </button>
 
-      {#if activeProviderId === 'auto' && candidateProviders.length > 1}
-        {#each candidateProviders as prov}
+      {#if activeProviderId === 'auto' && providersWithPost.length > 1}
+        {#each providersWithPost as prov}
           <button
             type="button"
             class="sheet-action-item"

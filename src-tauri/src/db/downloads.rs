@@ -111,18 +111,18 @@ impl DownloadRepository {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT id, service, creator_id, post_id, media_id, url, filename, output_dir, temp_path, final_path, engine,
-                        status, downloaded_bytes, total_bytes, speed_bps, sha256,
-                        error_code, error_message, retry_count, created_at, updated_at,
-                        completed_at, p.title, c.name, p.preview_path, c.avatar_path
+                "SELECT d.id, d.service, d.creator_id, d.post_id, d.media_id, d.url, d.filename, d.output_dir, d.temp_path, d.final_path, d.engine,
+                        d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
+                        d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
+                        d.completed_at, p.title, c.name, p.preview_path, c.avatar_path
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id)
                  ORDER BY
-                    CASE status
+                    CASE d.status
                       WHEN 'downloading' THEN 0 WHEN 'resolving' THEN 1
                       WHEN 'verifying' THEN 2 WHEN 'queued' THEN 3
                       WHEN 'paused' THEN 4 WHEN 'failed' THEN 5 ELSE 6 END,
-                    updated_at DESC, id DESC",
+                    d.updated_at DESC, d.id DESC",
             )
             .map_err(|error| error.to_string())?;
         let rows = statement
@@ -136,10 +136,10 @@ impl DownloadRepository {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
             .query_row(
-                "SELECT id, service, creator_id, post_id, media_id, url, filename, output_dir, temp_path, final_path, engine,
-                        status, downloaded_bytes, total_bytes, speed_bps, sha256,
-                        error_code, error_message, retry_count, created_at, updated_at,
-                        completed_at
+                "SELECT d.id, d.service, d.creator_id, d.post_id, d.media_id, d.url, d.filename, d.output_dir, d.temp_path, d.final_path, d.engine,
+                        d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
+                        d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
+                        d.completed_at
                         , p.title, c.name, p.preview_path, c.avatar_path
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.id = ?1",
@@ -486,7 +486,9 @@ impl DownloadRepository {
             .map_err(|error| error.to_string())
     }
 
-    pub fn queue_progress_stats_with_paused(&self) -> Result<(i32, i32, u64, u64, u64, i32), String> {
+    pub fn queue_progress_stats_with_paused(
+        &self,
+    ) -> Result<(i32, i32, u64, u64, u64, i32), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
             .query_row(
@@ -519,10 +521,10 @@ impl DownloadRepository {
     ) -> Result<Option<DownloadJob>, String> {
         connection
             .query_row(
-                "SELECT id, service, creator_id, post_id, media_id, url, filename, output_dir, temp_path, final_path, engine,
-                        status, downloaded_bytes, total_bytes, speed_bps, sha256,
-                        error_code, error_message, retry_count, created_at, updated_at,
-                        completed_at
+                "SELECT d.id, d.service, d.creator_id, d.post_id, d.media_id, d.url, d.filename, d.output_dir, d.temp_path, d.final_path, d.engine,
+                        d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
+                        d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
+                        d.completed_at
                         , p.title, c.name, p.preview_path, c.avatar_path
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.logical_key = ?1",
@@ -536,10 +538,10 @@ impl DownloadRepository {
     fn get_by_id(connection: &Connection, id: &str) -> Result<Option<DownloadJob>, String> {
         connection
             .query_row(
-                "SELECT id, service, creator_id, post_id, media_id, url, filename, output_dir, temp_path, final_path, engine,
-                        status, downloaded_bytes, total_bytes, speed_bps, sha256,
-                        error_code, error_message, retry_count, created_at, updated_at,
-                        completed_at
+                "SELECT d.id, d.service, d.creator_id, d.post_id, d.media_id, d.url, d.filename, d.output_dir, d.temp_path, d.final_path, d.engine,
+                        d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
+                        d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
+                        d.completed_at
                         , p.title, c.name, p.preview_path, c.avatar_path
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.id = ?1",

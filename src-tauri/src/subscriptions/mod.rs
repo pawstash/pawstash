@@ -143,6 +143,7 @@ impl SubscriptionManager {
                     &subscription.creator_id,
                     page * 50,
                     None,
+                    None,
                 )
                 .await?;
             if posts.is_empty() {

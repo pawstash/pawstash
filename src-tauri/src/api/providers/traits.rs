@@ -142,7 +142,9 @@ pub trait SourceProvider: Send + Sync {
     fn supports_service(&self, service: &str) -> bool;
     fn get_active_endpoint(&self) -> String;
 
-    fn request_queue(&self) -> Option<std::sync::Arc<crate::api::providers::queue::ProviderRequestQueue>> {
+    fn request_queue(
+        &self,
+    ) -> Option<std::sync::Arc<crate::api::providers::queue::ProviderRequestQueue>> {
         None
     }
 
@@ -326,6 +328,14 @@ pub trait SourceProvider: Send + Sync {
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String;
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String;
     fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String;
+    fn resolve_avatar_url(&self, service: &str, creator_id: &str) -> String;
+    fn resolve_banner_url(&self, service: &str, creator_id: &str) -> String;
+    fn resolve_fancard_media_url(&self, _service: &str, _hash: &str, _ext: &str) -> String {
+        String::new()
+    }
+    fn resolve_fancard_thumbnail_url(&self, _service: &str, _hash: &str, _ext: &str) -> String {
+        String::new()
+    }
     async fn fetch_creator_artwork_data_url(
         &self,
         service: &str,

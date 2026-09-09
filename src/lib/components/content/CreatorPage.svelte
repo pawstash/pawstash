@@ -12,7 +12,7 @@
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import {
-    apiFetchCreatorArtworkDataUrl,
+    apiRevalidateCreatorArtwork,
     apiFetchCreatorProfile,
     apiFetchCreatorPosts,
     apiFetchCreatorLinks,
@@ -21,13 +21,15 @@
     apiFetchAnnouncements,
     apiFetchFancards,
     apiOpenInBrowser,
+    apiResolveCreatorUrl,
     apiSetCreatorFavorite,
     apiSetPostFavorite
   } from '$lib/utils/ipc';
   import {
-    creatorAvatarUrl,
-    creatorBannerUrl,
-    creatorPageUrl,
+    creatorAvatarSrc,
+    creatorPlaceholderUrl,
+    creatorBannerSrc,
+    creatorBannerPlaceholderUrl,
     fancardMediaUrl,
     fancardThumbnailUrl,
     formatProviderName,
@@ -121,11 +123,53 @@
     postSearchOpen?: boolean;
     postSearchResults?: Post[];
     formatFilters?: FilterMap;
+    providerFilters?: FilterMap;
     onlyWithAttachments?: boolean;
     activeTab?: 'posts' | 'similar' | 'links' | 'announcements' | 'fancards';
     sortOrder?: 'default' | 'newest' | 'oldest' | 'popular';
     selectedTag?: string | null;
+    selectedProviderId?: string;
   }>(navigationState.entryKey);
+
+  onMount(() => {
+    if (savedState?.selectedProviderId) {
+      providerState.setSelectedProvider(service, creatorId, '*', savedState.selectedProviderId);
+    }
+  });
+
+  let candidateProviders = $derived(providerState.getProvidersForService(service));
+  let activeProviderId = $derived(
+    candidateProviders.length === 1
+      ? candidateProviders[0].id
+      : providerState.getSelectedProvider(service, creatorId, '*')
+  );
+  let providerSelectOptions = $derived.by(() => {
+    if (candidateProviders.length <= 1) {
+      return candidateProviders.map((p) => ({
+        value: p.id,
+        label: formatProviderName(p.name)
+      }));
+    }
+    return [
+      { value: 'auto', label: i18n.t('post.source_auto') || 'Merged' },
+      ...candidateProviders.map((p) => ({
+        value: p.id,
+        label: formatProviderName(p.name)
+      }))
+    ];
+  });
+
+  function handleProviderChange(val: string) {
+    if (activeProviderId === val) return;
+    providerState.setSelectedProvider(service, creatorId, '*', val);
+    providerFilters = {};
+    selectedTag = null;
+    postSearchQuery = '';
+    postSearchResults = [];
+    avatarErrorIndex = 0;
+    avatarLoaded = false;
+    bannerFailed = false;
+  }
 
   const emptyEntry: CachedCreator = {
     profile: null,
@@ -138,7 +182,7 @@
     hasMore: true
   };
 
-  let entry = $derived.by(() => contentState.creators[creatorCacheKey(service, creatorId)] ?? emptyEntry);
+  let entry = $derived.by(() => contentState.creators[creatorCacheKey(service, creatorId, activeProviderId)] ?? emptyEntry);
   let subscription = $derived(subscriptionState.forCreator(service, creatorId));
   let subscriptionMenuOpen = $state(false);
   let saving = $state(false);
@@ -174,12 +218,15 @@
   let postSearchQuery = $state(savedState?.postSearchQuery ?? '');
   let postSearchResults = $state<Post[]>(savedState?.postSearchResults ?? []);
   let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
+  let providerFilters = $state<FilterMap>(savedState?.providerFilters ?? {});
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
   let mobileMoreOpen = $state(false);
   let mobileSubSettingsOpen = $state(false);
-  let activeFilterCount = $derived(countActiveFilters([formatFilters]) + (onlyWithAttachments ? 1 : 0));
+  let activeFilterCount = $derived(
+    countActiveFilters([formatFilters, providerFilters]) + (onlyWithAttachments ? 1 : 0)
+  );
 
   let postSearchLoading = $state(false);
   let postSearchError = $state<string | null>(null);
@@ -197,6 +244,10 @@
     formatFilters = toggleFilterKey(formatFilters, fmt);
   }
 
+  function toggleProvider(providerId: string) {
+    providerFilters = toggleFilterKey(providerFilters, providerId);
+  }
+
   let formatList = $derived([
     { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
     { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
@@ -209,6 +260,7 @@
 
   function clearAllFilters() {
     formatFilters = {};
+    providerFilters = {};
     onlyWithAttachments = false;
   }
 
@@ -218,10 +270,12 @@
       postSearchOpen,
       postSearchResults,
       formatFilters: $state.snapshot(formatFilters),
+      providerFilters: $state.snapshot(providerFilters),
       onlyWithAttachments,
       activeTab,
       sortOrder,
-      selectedTag
+      selectedTag,
+      selectedProviderId: activeProviderId
     });
   });
 
@@ -235,16 +289,26 @@
     }
     return (typeof entry.profile?.name === 'string' && entry.profile.name) || String(creatorId);
   });
-  let cachedAvatarUrl = $state<string | null>(null);
-  let cachedBannerUrl = $state<string | null>(null);
-  let avatarThumbhash = $derived((entry.profile?.extra as any)?.avatar_thumbhash);
-  let headerThumbhash = $derived((entry.profile?.extra as any)?.header_thumbhash);
-  let avatarUrl = $derived(cachedAvatarUrl || creatorAvatarUrl(service, creatorId, avatarThumbhash));
-  let bannerUrl = $derived(cachedBannerUrl || creatorBannerUrl(service, creatorId, headerThumbhash));
-  let avatarFailed = $state(false);
+  let avatarLoaded = $state(false);
+  let avatarErrorIndex = $state(0);
   let bannerFailed = $state(false);
-  let effectiveAvatar = $derived(avatarFailed ? null : avatarUrl);
+  let avatarPlaceholder = $derived(creatorPlaceholderUrl(entry.profile));
+  let bannerPlaceholder = $derived(creatorBannerPlaceholderUrl(entry.profile));
+  let avatarUrl = $derived(creatorAvatarSrc(entry.profile));
+  let bannerUrl = $derived(creatorBannerSrc(entry.profile));
+  let candidateAvatarUrls = $derived.by<string[]>(() => {
+    const extraCandidate = entry.profile?.extra?.candidate_avatar_urls;
+    const fromExtra = Array.isArray(extraCandidate) ? (extraCandidate as string[]) : [];
+    const main = avatarUrl;
+    if (!main) return fromExtra;
+    return [main, ...fromExtra.filter((u) => u !== main)];
+  });
+  let effectiveAvatar = $derived(candidateAvatarUrls[avatarErrorIndex] ?? null);
   let effectiveBanner = $derived(bannerFailed ? null : bannerUrl);
+
+  function handleAvatarError() {
+    avatarErrorIndex++;
+  }
 
   $effect(() => {
     if (bannerUrl) {
@@ -259,27 +323,35 @@
 
   let initialLetter = $derived(creatorName ? creatorName.charAt(0).toUpperCase() : '?');
 
-  let candidateProviders = $derived(providerState.getProvidersForService(service));
-  let providerSelectOptions = $derived.by(() => {
-    if (candidateProviders.length <= 1) {
-      return candidateProviders.map((p) => ({
-        value: p.id,
-        label: formatProviderName(p.name)
-      }));
-    }
-    return [
-      { value: 'auto', label: i18n.t('post.source_auto') || 'Merged' },
-      ...candidateProviders.map((p) => ({
-        value: p.id,
-        label: formatProviderName(p.name)
-      }))
-    ];
-  });
-  let activeProviderId = $derived(
-    candidateProviders.length === 1
-      ? candidateProviders[0].id
-      : providerState.getSelectedProvider(service, creatorId, '*')
+  let rawUpdated = $derived(
+    entry.profile?.updated ||
+    (entry.profile?.extra as any)?.updated_at ||
+    (entry.profile?.extra as any)?.updated ||
+    null
   );
+  let rawIndexed = $derived(
+    entry.profile?.indexed ||
+    (entry.profile?.extra as any)?.indexed_at ||
+    (entry.profile?.extra as any)?.indexed ||
+    null
+  );
+  let latestPost = $derived(entry.posts.length > 0 ? entry.posts[0] : null);
+  let rawLatestPostDate = $derived(latestPost?.published || latestPost?.added || null);
+
+  let latestPostDateStr = $derived(rawLatestPostDate ? formatDate(rawLatestPostDate) : '');
+  let updatedDateStr = $derived(rawUpdated && rawUpdated !== 0 && rawUpdated !== '0' ? formatDate(rawUpdated) : '');
+  let indexedDateStr = $derived(rawIndexed && rawIndexed !== 0 && rawIndexed !== '0' ? formatDate(rawIndexed) : '');
+
+  let showUpdated = $derived(Boolean(
+    updatedDateStr &&
+    updatedDateStr !== '—'
+  ));
+
+  let showIndexed = $derived(Boolean(
+    indexedDateStr &&
+    indexedDateStr !== '—' &&
+    (!showUpdated || indexedDateStr !== updatedDateStr)
+  ));
 
   let creatorTags = $derived.by<Array<{ name: string; count: number }>>(() => {
     const tagCountMap = new Map<string, number>();
@@ -374,6 +446,16 @@
       posts = posts.filter((post) => matchesTriStateFilter(getPostFormats(post), formatFilters));
     }
 
+    if (Object.keys(providerFilters).length > 0) {
+      posts = posts.filter((post) => {
+        const raw = (post.extra as any)?.available_providers;
+        const postProviders: string[] = Array.isArray(raw) && raw.length > 0
+          ? (raw as string[])
+          : [(post as any).provider_id || (post.extra as any)?.provider_id || providerState.getProviderIdForService(post.service)];
+        return matchesTriStateFilter(postProviders, providerFilters);
+      });
+    }
+
     if (sortOrder === 'newest') {
       posts = [...posts].sort((a, b) => {
         const da = parseDateTimestamp(a.published || a.added);
@@ -441,15 +523,34 @@
   });
 
   let isPostsFiltered = $derived(
-    Boolean(selectedTag || onlyWithAttachments || Object.keys(formatFilters).length > 0 || normalizedPostSearch)
+    Boolean(
+      selectedTag ||
+      onlyWithAttachments ||
+      Object.keys(formatFilters).length > 0 ||
+      Object.keys(providerFilters).length > 0 ||
+      normalizedPostSearch
+    )
   );
 
   let creatorTabOptions = $derived.by(() => {
     let postsCount: string | number | undefined;
+    const rawPostCount = (entry.profile?.extra as any)?.post_count ?? (entry.profile?.extra as any)?.postCount;
+    const totalProfileCount = typeof rawPostCount === 'number' && rawPostCount > 0
+      ? rawPostCount
+      : (typeof rawPostCount === 'string' && Number(rawPostCount) > 0 ? Number(rawPostCount) : undefined);
+
     if (isPostsFiltered) {
       postsCount = visibleCreatorPosts.length;
     } else if (entry.posts.length > 0) {
-      postsCount = `${entry.posts.length}${entry.hasMore ? '+' : ''}`;
+      if (totalProfileCount && totalProfileCount > entry.posts.length && entry.hasMore) {
+        postsCount = `${entry.posts.length} / ${totalProfileCount}`;
+      } else if (totalProfileCount) {
+        postsCount = totalProfileCount;
+      } else {
+        postsCount = `${entry.posts.length}${entry.hasMore ? '+' : ''}`;
+      }
+    } else if (totalProfileCount) {
+      postsCount = totalProfileCount;
     }
 
     const list: Array<ChoiceOption<'posts' | 'similar' | 'links' | 'announcements' | 'fancards'>> = [
@@ -496,6 +597,13 @@
   });
 
   $effect(() => {
+    const isTabAvailable = creatorTabOptions.some((opt) => opt.value === activeTab);
+    if (!isTabAvailable) {
+      activeTab = 'posts';
+    }
+  });
+
+  $effect(() => {
     if (!postSearchOpen) return;
     void tick().then(() => {
       const isStickyVisible = Boolean(document.querySelector('.sticky-header-bar.visible'));
@@ -531,7 +639,7 @@
     postSearchError = null;
 
     try {
-      const posts = await apiFetchCreatorPosts(service, creatorId, query, offset);
+      const posts = await apiFetchCreatorPosts(service, creatorId, query, offset, activeProviderId);
       if (request !== postSearchRequest || query !== postSearchQuery.trim()) return;
 
       postSearchResults = reset ? posts : [...postSearchResults, ...posts];
@@ -545,7 +653,7 @@
             if (request !== postSearchRequest || query !== postSearchQuery.trim()) break;
 
             try {
-              const nextBatch = await apiFetchCreatorPosts(service, creatorId, query, postSearchOffset);
+              const nextBatch = await apiFetchCreatorPosts(service, creatorId, query, postSearchOffset, activeProviderId);
               if (request !== postSearchRequest || query !== postSearchQuery.trim()) break;
 
               const existingIds = new Set(postSearchResults.map((p) => p.id));
@@ -587,8 +695,8 @@
     return () => window.clearTimeout(timeout);
   });
 
-  async function loadExtraData() {
-    apiFetchSimilarCreators(service, creatorId).then((res) => {
+  async function loadExtraData(providerId = activeProviderId) {
+    apiFetchSimilarCreators(service, creatorId, providerId).then((res) => {
       const map = new Map<string, CreatorProfile>();
       for (const item of (res || [])) {
         const key = `${item.service || service}:${item.id}`;
@@ -599,19 +707,19 @@
       similarCreators = Array.from(map.values());
     }).catch(() => {});
 
-    apiFetchCreatorLinks(service, creatorId).then((res) => {
+    apiFetchCreatorLinks(service, creatorId, providerId).then((res) => {
       creatorLinks = res || [];
     }).catch(() => {});
 
-    apiFetchAnnouncements(service, creatorId).then((res) => {
+    apiFetchAnnouncements(service, creatorId, providerId).then((res) => {
       announcements = res || [];
     }).catch(() => {});
 
-    apiFetchFancards(service, creatorId).then((res) => {
+    apiFetchFancards(service, creatorId, providerId).then((res) => {
       fancards = res || [];
     }).catch(() => {});
 
-    apiFetchCreatorTags(service, creatorId).then((res) => {
+    apiFetchCreatorTags(service, creatorId, providerId).then((res) => {
       if (res && res.length > 0) {
         apiCreatorTags = res;
       }
@@ -622,13 +730,13 @@
   $effect(() => {
     const currentService = service;
     const currentCreatorId = creatorId;
-    const currentKey = `${currentService}:${currentCreatorId}`;
+    const currentProvider = activeProviderId;
+    const currentKey = `${currentService}:${currentCreatorId}:${currentProvider}`;
     if (currentService && currentCreatorId) {
       if (lastLoadedCreatorKey !== currentKey) {
         lastLoadedCreatorKey = currentKey;
-        cachedAvatarUrl = null;
-        cachedBannerUrl = null;
-        avatarFailed = false;
+        avatarLoaded = false;
+        avatarErrorIndex = 0;
         bannerFailed = false;
         similarCreators = [];
         creatorLinks = [];
@@ -637,10 +745,19 @@
         apiCreatorTags = [];
       }
       untrack(() => {
-        void contentState.loadCreator(currentService, currentCreatorId, true);
-        void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {});
-        void apiFetchCreatorArtworkDataUrl(currentService, currentCreatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {});
-        void loadExtraData();
+        void contentState.loadCreator(currentService, currentCreatorId, true, currentProvider).then(() => {
+          void apiRevalidateCreatorArtwork(currentService, currentCreatorId, 'avatar', currentProvider).then((newPath) => {
+            if (newPath && entry.profile && entry.profile.avatar_path !== newPath) {
+              entry.profile.avatar_path = newPath;
+            }
+          }).catch(() => {});
+          void apiRevalidateCreatorArtwork(currentService, currentCreatorId, 'banner', currentProvider).then((newPath) => {
+            if (newPath && entry.profile && entry.profile.banner_path !== newPath) {
+              entry.profile.banner_path = newPath;
+            }
+          }).catch(() => {});
+        });
+        void loadExtraData(currentProvider);
         void checkFavoriteStatus();
       });
     }
@@ -649,16 +766,17 @@
   $effect(() => {
     const s = service;
     const c = creatorId;
+    const p = activeProviderId;
     return () => {
-      contentState.stopAutoFetchCreatorPosts(s, c);
+      contentState.stopAutoFetchCreatorPosts(s, c, p);
     };
   });
 
   $effect(() => {
     if (creatorName === creatorId) {
-      void apiFetchCreatorProfile(service, creatorId).then((p) => {
+      void apiFetchCreatorProfile(service, creatorId, activeProviderId).then((p) => {
         if (p && p.name && p.name !== creatorId) {
-          const key = creatorCacheKey(service, creatorId);
+          const key = creatorCacheKey(service, creatorId, activeProviderId);
           const cur = contentState.creators[key];
           if (cur) {
             contentState.creators[key] = { ...cur, profile: p };
@@ -672,10 +790,19 @@
   async function refreshCreator() {
     try {
       await Promise.all([
-        contentState.refreshCreator(service, creatorId),
-        apiFetchCreatorArtworkDataUrl(service, creatorId, 'avatar').then((url) => cachedAvatarUrl = url).catch(() => {}),
-        apiFetchCreatorArtworkDataUrl(service, creatorId, 'banner').then((url) => cachedBannerUrl = url).catch(() => {}),
-        loadExtraData(),
+        contentState.refreshCreator(service, creatorId, activeProviderId).then(() => {
+          void apiRevalidateCreatorArtwork(service, creatorId, 'avatar', activeProviderId).then((newPath) => {
+            if (newPath && entry.profile && entry.profile.avatar_path !== newPath) {
+              entry.profile.avatar_path = newPath;
+            }
+          }).catch(() => {});
+          void apiRevalidateCreatorArtwork(service, creatorId, 'banner', activeProviderId).then((newPath) => {
+            if (newPath && entry.profile && entry.profile.banner_path !== newPath) {
+              entry.profile.banner_path = newPath;
+            }
+          }).catch(() => {});
+        }),
+        loadExtraData(activeProviderId),
         checkFavoriteStatus()
       ]);
     } catch (error) {
@@ -708,17 +835,20 @@
   }
 
   async function getCreatorAccentColor(hasBanner: boolean, hasAvatar: boolean) {
-    const artworkKinds: Array<'banner' | 'avatar'> = [];
-    if (hasBanner) artworkKinds.push('banner');
-    if (hasAvatar) artworkKinds.push('avatar');
-
-    for (const artworkKind of artworkKinds) {
+    if (hasBanner && effectiveBanner) {
       try {
-        const dataUrl = await apiFetchCreatorArtworkDataUrl(service, creatorId, artworkKind);
-        const color = await getAverageColor(dataUrl);
+        const color = await getAverageColor(effectiveBanner);
         if (color) return color;
       } catch (error) {
-        logger.warn(`Failed to extract creator ${artworkKind} accent for ${service}:${creatorId}`, error);
+        logger.warn(`Failed to extract creator banner accent for ${service}:${creatorId}`, error);
+      }
+    }
+    if (hasAvatar && effectiveAvatar) {
+      try {
+        const color = await getAverageColor(effectiveAvatar);
+        if (color) return color;
+      } catch (error) {
+        logger.warn(`Failed to extract creator avatar accent for ${service}:${creatorId}`, error);
       }
     }
     return '';
@@ -730,7 +860,9 @@
 
     let cancelled = false;
     const cachedAccent = contentState.getCreatorAccent(service, creatorId);
-    const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumbhash) || thumbHashToAverageColor(avatarThumbhash);
+    const headerThumb = (entry.profile?.extra as any)?.header_thumbhash;
+    const avatarThumb = (entry.profile?.extra as any)?.avatar_thumbhash;
+    const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumb) || thumbHashToAverageColor(avatarThumb);
 
     if (thumbColor) {
       themeState.setOverrideAccent(thumbColor);
@@ -875,19 +1007,23 @@
       const p = providerState.getProviderById(activeProviderId);
       if (p) return formatProviderName(p.name);
     }
-    const defaultProv = providerState.getDriverForService(service)?.config;
+    const defaultProv = providerState.getProviderForService(service);
     if (defaultProv) return formatProviderName(defaultProv.name || defaultProv.id);
     return 'Provider';
   });
 
   function openInProvider(targetProvId?: string) {
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-    const url = creatorPageUrl(
-      service,
-      creatorId,
-      effectiveProvId
-    );
-    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator in provider', err));
+    const pageUrl = typeof entry.profile?.page_url === 'string' ? entry.profile.page_url : undefined;
+    if (!effectiveProvId && pageUrl) {
+      void apiOpenInBrowser(pageUrl).catch((err) => logger.warn('Failed to open creator in provider', err));
+      return;
+    }
+    void apiResolveCreatorUrl(service, creatorId, effectiveProvId)
+      .then((url) => {
+        if (url) void apiOpenInBrowser(url);
+      })
+      .catch((err) => logger.warn('Failed to resolve creator URL in provider', err));
   }
 
   function openOriginalProfile() {
@@ -925,8 +1061,8 @@
         id: String(card.id || card.hash || idx),
         name: `fancard_${card.id || idx + 1}.${ext}`,
         kind: 'image',
-        url: fancardMediaUrl(card, service),
-        poster: fancardThumbnailUrl(card, service),
+        url: fancardMediaUrl(card),
+        poster: fancardThumbnailUrl(card),
         size: card.size
       };
     })
@@ -1183,6 +1319,30 @@
 {/snippet}
 
 {#snippet filterInnerContent()}
+  {#if candidateProviders.length > 1}
+    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <div class="service-options">
+      {#each candidateProviders as provider}
+        {@const state = providerFilters[provider.id] ?? 'neutral'}
+        {@const cleanName = formatProviderName(provider.name || provider.id)}
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={() => toggleProvider(provider.id)}
+          class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+        >
+          <span>{cleanName}</span>
+          {#if state === 'include'}
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          {:else if state === 'exclude'}
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          {/if}
+        </Button>
+      {/each}
+    </div>
+    <div class="floating-divider"></div>
+  {/if}
+
   <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
   <div class="service-options">
     {#each formatList as fmt}
@@ -1236,7 +1396,15 @@
         </Button>
         <div class="creator-header-avatar sticky-avatar">
           {#if effectiveAvatar}
-            <img src={effectiveAvatar} alt={creatorName} onerror={() => avatarFailed = true} />
+            {#if avatarPlaceholder && !avatarLoaded}
+              <img src={avatarPlaceholder} alt="" class="creator-avatar-placeholder" aria-hidden="true" />
+            {/if}
+            <img
+              src={effectiveAvatar}
+              alt={creatorName}
+              onload={() => avatarLoaded = true}
+              onerror={handleAvatarError}
+            />
           {:else}
             <span class="sticky-initial">{initialLetter}</span>
           {/if}
@@ -1430,11 +1598,15 @@
       <div class="creator-title-row">
         <div class="creator-header-avatar">
           {#if effectiveAvatar}
+            {#if avatarPlaceholder && !avatarLoaded}
+              <img src={avatarPlaceholder} alt="" class="creator-avatar-placeholder" aria-hidden="true" />
+            {/if}
             <img
               src={effectiveAvatar}
               alt={creatorName}
               class="creator-avatar-img"
-              onerror={() => avatarFailed = true}
+              onload={() => avatarLoaded = true}
+              onerror={handleAvatarError}
             />
           {:else}
             <div class="creator-avatar-initial">
@@ -1446,7 +1618,34 @@
         <h1>{creatorName}</h1>
       </div>
 
-      <div class="post-date post-meta-row flex items-center flex-wrap gap-2 mt-2 min-h-[38px] text-sm text-[var(--fg-muted)]">
+      {#if latestPostDateStr || showUpdated || showIndexed}
+        <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
+          {#if latestPostDateStr}
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.latest_post_at')}:</span>
+              <strong class="font-semibold text-[var(--fg-default)]">{latestPostDateStr}</strong>
+            </div>
+          {/if}
+
+          {#if showUpdated}
+            {#if latestPostDateStr}<span class="text-[var(--fg-subtle)]">·</span>{/if}
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.updated_at')}:</span>
+              <strong class="font-medium text-[var(--fg-default)]">{updatedDateStr}</strong>
+            </div>
+          {/if}
+
+          {#if showIndexed}
+            {#if latestPostDateStr || showUpdated}<span class="text-[var(--fg-subtle)]">·</span>{/if}
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.indexed_at')}:</span>
+              <strong class="font-medium text-[var(--fg-default)]">{indexedDateStr}</strong>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="post-date post-meta-row flex items-center flex-wrap gap-2 mt-1 min-h-[38px] text-sm text-[var(--fg-muted)]">
         <Button
           variant="ghost"
           onclick={openOriginalProfile}
@@ -1504,7 +1703,7 @@
               variant="ghost"
               options={providerSelectOptions}
               value={activeProviderId}
-              onchange={(val) => providerState.setSelectedProvider(service, creatorId, '*', val)}
+              onchange={handleProviderChange}
             />
           </div>
         {/if}
@@ -1649,7 +1848,7 @@
               {@const sService = String(sim.service ?? service)}
               {@const sId = String(sim.id ?? '')}
               {@const sName = String(sim.name ?? sId)}
-              {@const simAvatar = creatorAvatarUrl(sService, sId, (sim.extra as any)?.avatar_thumbhash)}
+              {@const simAvatar = creatorAvatarSrc(sim)}
               <article
                 class="grid-tile"
                 style:aspect-ratio={ratio}
@@ -1726,7 +1925,7 @@
               {@const lService = String(link.service ?? '')}
               {@const lId = String(link.id ?? '')}
               {@const lName = String(link.name ?? lId)}
-              {@const linkAvatar = creatorAvatarUrl(lService, lId, (link.extra as any)?.avatar_thumbhash)}
+              {@const linkAvatar = creatorAvatarSrc(link)}
               <article
                 class="grid-tile"
                 style:aspect-ratio={ratio}
@@ -1825,8 +2024,8 @@
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each fancards as card, index}
-              {@const cardThumb = fancardThumbnailUrl(card, service)}
-              {@const cardFull = fancardMediaUrl(card, service)}
+              {@const cardThumb = fancardThumbnailUrl(card)}
+              {@const cardFull = fancardMediaUrl(card)}
               {@const ext = (card.ext || card.mime?.split('/').pop() || 'IMG').replace(/^\.+/, '').toUpperCase()}
               <article
                 class="grid-tile"
@@ -2114,7 +2313,7 @@
             variant="ghost"
             options={providerSelectOptions}
             value={activeProviderId}
-            onchange={(val) => providerState.setSelectedProvider(service, creatorId, '*', val)}
+            onchange={handleProviderChange}
           />
         </div>
       {/if}
@@ -2226,13 +2425,27 @@
     border-radius: 50%;
     overflow: hidden;
     flex-shrink: 0;
+    position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     display: grid;
     place-items: center;
   }
 
+  .creator-avatar-placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(8px);
+    transform: scale(1.1);
+    pointer-events: none;
+  }
+
   .creator-avatar-img {
+    position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     object-fit: cover;

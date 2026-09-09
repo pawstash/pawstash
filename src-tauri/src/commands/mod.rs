@@ -8,7 +8,7 @@ use crate::api::provider::{
 };
 use crate::api::provider_manager::ProviderManager;
 use crate::config::settings::{AppSettings, ConfigManager};
-use crate::db::content::{CacheStats, ContentRepository};
+use crate::db::content::{CacheStats, ContentRepository, CreatorsPageResult, CreatorsQuery};
 use crate::db::downloads::DownloadJob;
 use crate::db::library::{
     LibraryCollection, LibraryPostIdentity, LibraryRepository, LibrarySaveResult,
@@ -25,7 +25,7 @@ use crate::sync::manager::{SyncManager, SyncStatus};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -555,38 +555,97 @@ pub async fn sync_provider_favorites(
         .await
 }
 
-#[tauri::command]
-pub async fn fetch_creators(state: State<'_, AppState>) -> Result<Vec<Creator>, String> {
-    match state.provider_manager.fetch_creators().await {
-        Ok(creators) => {
-            state.content.save_creators(&creators)?;
-            Ok(creators)
-        }
-        Err(error) => {
-            let enabled_services: std::collections::HashSet<String> = state
-                .provider_manager
-                .get_provider_configs()
-                .await
-                .into_iter()
-                .filter(|p| p.enabled)
-                .flat_map(|p| p.services)
-                .map(|s| s.to_lowercase())
-                .collect();
-            let cached = state.content.list_creators()?;
-            let filtered: Vec<Creator> = cached
-                .into_iter()
-                .filter(|c| {
-                    enabled_services.is_empty()
-                        || enabled_services.contains(&c.service.to_lowercase())
-                })
-                .collect();
-            if filtered.is_empty() {
-                Err(error)
-            } else {
-                Ok(filtered)
-            }
-        }
+async fn enrich_posts(
+    posts: &mut [Post],
+    manager: &crate::api::providers::manager::ProviderManager,
+) {
+    for post in posts.iter_mut() {
+        manager.enrich_post(post).await;
     }
+}
+
+#[tauri::command]
+pub async fn list_creators_page(
+    query: CreatorsQuery,
+    state: State<'_, AppState>,
+) -> Result<CreatorsPageResult, String> {
+    let mut page = state.content.query_creators(&query)?;
+    for item in &mut page.items {
+        state.provider_manager.enrich_creator(item).await;
+    }
+    Ok(page)
+}
+
+#[tauri::command]
+pub async fn list_creator_services(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.content.list_creator_services()
+}
+
+#[tauri::command]
+pub async fn list_creator_names(
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, String>, String> {
+    state.content.list_creator_names()
+}
+
+#[tauri::command]
+pub async fn get_creator_name(
+    service: String,
+    creator_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    state.content.get_creator_name(&service, &creator_id)
+}
+
+#[tauri::command]
+pub async fn sync_creators(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let creators = state.provider_manager.fetch_creators().await?;
+    let count = creators.len() as u64;
+    let content = state.content.clone();
+    tokio::task::spawn_blocking(move || {
+        let _ = content.save_creators(&creators);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let _ = app_handle.emit("creators-updated", count);
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn fetch_creators(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<Creator>, String> {
+    let cached = state.content.list_creators()?;
+    if !cached.is_empty() {
+        let provider_manager = state.provider_manager.clone();
+        let content = state.content.clone();
+        let handle = app_handle.clone();
+        tokio::spawn(async move {
+            if let Ok(creators) = provider_manager.fetch_creators().await {
+                let count = creators.len() as u64;
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = content.save_creators(&creators);
+                })
+                .await;
+                let _ = handle.emit("creators-updated", count);
+            }
+        });
+        return Ok(cached);
+    }
+
+    let creators = state.provider_manager.fetch_creators().await?;
+    let content = state.content.clone();
+    let to_save = creators.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = content.save_creators(&to_save);
+    })
+    .await;
+    Ok(creators)
 }
 
 #[tauri::command]
@@ -599,18 +658,20 @@ pub async fn fetch_posts(
     let list_key = format!("creator:{service}:{user_id}:");
     match state
         .provider_manager
-        .fetch_posts(&service, &user_id, offset, None)
+        .fetch_posts(&service, &user_id, offset, None, None)
         .await
     {
-        Ok(posts) => {
+        Ok(mut posts) => {
             state.content.save_post_list(&list_key, offset, &posts)?;
+            enrich_posts(&mut posts, &state.provider_manager).await;
             Ok(posts)
         }
         Err(error) => {
-            let cached = state.content.load_post_list(&list_key, offset)?;
+            let mut cached = state.content.load_post_list(&list_key, offset)?;
             if cached.is_empty() {
                 Err(error)
             } else {
+                enrich_posts(&mut cached, &state.provider_manager).await;
                 Ok(cached)
             }
         }
@@ -629,8 +690,9 @@ pub async fn fetch_recent_posts(
         .fetch_recent_posts(query.as_deref(), offset)
         .await
     {
-        Ok(posts) => {
+        Ok(mut posts) => {
             state.content.save_post_list(&list_key, offset, &posts)?;
+            enrich_posts(&mut posts, &state.provider_manager).await;
             Ok(posts)
         }
         Err(error) => {
@@ -641,6 +703,7 @@ pub async fn fetch_recent_posts(
             if cached.is_empty() {
                 Err(error)
             } else {
+                enrich_posts(&mut cached, &state.provider_manager).await;
                 Ok(cached)
             }
         }
@@ -660,20 +723,23 @@ pub async fn fetch_popular_posts(
         .fetch_popular_posts(&period, date.as_deref(), offset)
         .await
     {
-        Ok(posts) => {
+        Ok(mut posts) => {
             state.content.save_post_list(&list_key, offset, &posts)?;
-            if let Ok(cached) = state.content.load_post_list(&list_key, offset) {
+            if let Ok(mut cached) = state.content.load_post_list(&list_key, offset) {
                 if cached.len() == posts.len() {
+                    enrich_posts(&mut cached, &state.provider_manager).await;
                     return Ok(cached);
                 }
             }
+            enrich_posts(&mut posts, &state.provider_manager).await;
             Ok(posts)
         }
         Err(error) => {
-            let cached = state.content.load_post_list(&list_key, offset)?;
+            let mut cached = state.content.load_post_list(&list_key, offset)?;
             if cached.is_empty() {
                 Err(error)
             } else {
+                enrich_posts(&mut cached, &state.provider_manager).await;
                 Ok(cached)
             }
         }
@@ -686,24 +752,34 @@ pub async fn fetch_creator_posts(
     creator_id: String,
     query: Option<String>,
     offset: u32,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Post>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     let list_key = format!(
-        "creator:{service}:{creator_id}:{}",
+        "creator:{service}:{creator_id}:{prov_key}:{}",
         query.as_deref().unwrap_or("")
     );
     let result = state
         .provider_manager
-        .fetch_posts(&service, &creator_id, offset, query.as_deref())
+        .fetch_posts(
+            &service,
+            &creator_id,
+            offset,
+            query.as_deref(),
+            provider_id.as_deref(),
+        )
         .await;
     match result {
-        Ok(posts) => {
+        Ok(mut posts) => {
             state.content.save_post_list(&list_key, offset, &posts)?;
+            enrich_posts(&mut posts, &state.provider_manager).await;
             Ok(posts)
         }
         Err(error) => {
             let mut cached = state.content.load_post_list(&list_key, offset)?;
-            if cached.is_empty() && query.as_deref().unwrap_or("").is_empty() {
+            if cached.is_empty() && query.as_deref().unwrap_or("").is_empty() && prov_key == "auto"
+            {
                 cached = state
                     .content
                     .list_creator_posts(&service, &creator_id, offset, 50)?;
@@ -711,6 +787,7 @@ pub async fn fetch_creator_posts(
             if cached.is_empty() {
                 Err(error)
             } else {
+                enrich_posts(&mut cached, &state.provider_manager).await;
                 Ok(cached)
             }
         }
@@ -721,15 +798,16 @@ pub async fn fetch_creator_posts(
 pub async fn fetch_creator_profile(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<CreatorProfile, String> {
     match state
         .provider_manager
-        .fetch_creator_profile(&service, &creator_id)
+        .fetch_creator_profile(&service, &creator_id, provider_id.as_deref())
         .await
     {
         Ok(creator) => {
-            let profile = CreatorProfile {
+            let mut profile = CreatorProfile {
                 id: creator.id.clone(),
                 name: creator.name.clone(),
                 service: creator.service.clone(),
@@ -739,14 +817,37 @@ pub async fn fetch_creator_profile(
                 updated: creator.updated.map(serde_json::Value::from),
                 favorited: creator.favorited,
                 ever_imported: creator.ever_imported,
+                avatar_url: creator.avatar_url,
+                avatar_path: creator.avatar_path,
+                banner_url: creator.banner_url,
+                banner_path: creator.banner_path,
+                page_url: creator.page_url,
                 extra: creator.extra,
             };
-            state.content.save_creator(&profile)?;
+            let prov_key = provider_id.as_deref().unwrap_or("auto");
+            profile.extra.insert(
+                "provider_id".to_string(),
+                serde_json::Value::String(prov_key.to_string()),
+            );
+            state
+                .provider_manager
+                .enrich_creator_profile(&mut profile)
+                .await;
+            if prov_key == "auto" {
+                state.content.save_creator(&profile)?;
+            }
             Ok(profile)
         }
         Err(error) => {
-            if let Ok(Some(cached)) = state.content.get_creator(&service, &creator_id) {
-                return Ok(cached);
+            let prov_key = provider_id.as_deref().unwrap_or("auto");
+            if prov_key == "auto" {
+                if let Ok(Some(mut cached)) = state.content.get_creator(&service, &creator_id) {
+                    state
+                        .provider_manager
+                        .enrich_creator_profile(&mut cached)
+                        .await;
+                    return Ok(cached);
+                }
             }
             Err(error)
         }
@@ -757,22 +858,28 @@ pub async fn fetch_creator_profile(
 pub async fn fetch_announcements(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Announcement>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_announcements(&service, &creator_id)
+        .fetch_announcements(&service, &creator_id, provider_id.as_deref())
         .await
     {
         Ok(items) => {
-            state
-                .content
-                .save_document("announcements", &service, &creator_id, "", &items)?;
+            state.content.save_document(
+                "announcements",
+                &service,
+                &creator_id,
+                prov_key,
+                &items,
+            )?;
             Ok(items)
         }
         Err(error) => state
             .content
-            .load_document("announcements", &service, &creator_id, "")?
+            .load_document("announcements", &service, &creator_id, prov_key)?
             .ok_or(error),
     }
 }
@@ -781,23 +888,32 @@ pub async fn fetch_announcements(
 pub async fn fetch_fancards(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Fancard>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_fancards(&service, &creator_id)
+        .fetch_fancards(&service, &creator_id, provider_id.as_deref())
         .await
     {
         Ok(items) => {
             state
                 .content
-                .save_document("fancards", &service, &creator_id, "", &items)?;
+                .save_document("fancards", &service, &creator_id, prov_key, &items)?;
             Ok(items)
         }
-        Err(error) => state
-            .content
-            .load_document("fancards", &service, &creator_id, "")?
-            .ok_or(error),
+        Err(error) => {
+            let mut cached: Vec<Fancard> = state
+                .content
+                .load_document("fancards", &service, &creator_id, prov_key)?
+                .ok_or(error)?;
+            state
+                .provider_manager
+                .enrich_fancards(&service, &mut cached, provider_id.as_deref())
+                .await;
+            Ok(cached)
+        }
     }
 }
 
@@ -805,23 +921,38 @@ pub async fn fetch_fancards(
 pub async fn fetch_creator_links(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<CreatorProfile>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_creator_links(&service, &creator_id)
+        .fetch_creator_links(&service, &creator_id, provider_id.as_deref())
         .await
     {
-        Ok(items) => {
-            state
-                .content
-                .save_document("creator_links", &service, &creator_id, "", &items)?;
+        Ok(mut items) => {
+            state.content.save_document(
+                "creator_links",
+                &service,
+                &creator_id,
+                prov_key,
+                &items,
+            )?;
+            for item in &mut items {
+                state.provider_manager.enrich_creator_profile(item).await;
+            }
             Ok(items)
         }
-        Err(error) => state
-            .content
-            .load_document("creator_links", &service, &creator_id, "")?
-            .ok_or(error),
+        Err(error) => {
+            let mut cached: Vec<CreatorProfile> = state
+                .content
+                .load_document("creator_links", &service, &creator_id, prov_key)?
+                .ok_or(error)?;
+            for item in &mut cached {
+                state.provider_manager.enrich_creator_profile(item).await;
+            }
+            Ok(cached)
+        }
     }
 }
 
@@ -829,23 +960,38 @@ pub async fn fetch_creator_links(
 pub async fn fetch_similar_creators(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<CreatorProfile>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_similar_creators(&service, &creator_id)
+        .fetch_similar_creators(&service, &creator_id, provider_id.as_deref())
         .await
     {
-        Ok(items) => {
-            state
-                .content
-                .save_document("similar_creators", &service, &creator_id, "", &items)?;
+        Ok(mut items) => {
+            state.content.save_document(
+                "similar_creators",
+                &service,
+                &creator_id,
+                prov_key,
+                &items,
+            )?;
+            for item in &mut items {
+                state.provider_manager.enrich_creator_profile(item).await;
+            }
             Ok(items)
         }
-        Err(error) => state
-            .content
-            .load_document("similar_creators", &service, &creator_id, "")?
-            .ok_or(error),
+        Err(error) => {
+            let mut cached: Vec<CreatorProfile> = state
+                .content
+                .load_document("similar_creators", &service, &creator_id, prov_key)?
+                .ok_or(error)?;
+            for item in &mut cached {
+                state.provider_manager.enrich_creator_profile(item).await;
+            }
+            Ok(cached)
+        }
     }
 }
 
@@ -853,25 +999,30 @@ pub async fn fetch_similar_creators(
 pub async fn fetch_creator_tags(
     service: String,
     creator_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_creator_tags(&service, &creator_id)
+        .fetch_creator_tags(&service, &creator_id, provider_id.as_deref())
         .await
     {
         Ok(items) => {
             if !items.is_empty() {
-                let _ =
-                    state
-                        .content
-                        .save_document("creator_tags", &service, &creator_id, "", &items);
+                let _ = state.content.save_document(
+                    "creator_tags",
+                    &service,
+                    &creator_id,
+                    prov_key,
+                    &items,
+                );
             }
             Ok(items)
         }
         Err(error) => state
             .content
-            .load_document("creator_tags", &service, &creator_id, "")?
+            .load_document("creator_tags", &service, &creator_id, prov_key)?
             .ok_or(error),
     }
 }
@@ -881,50 +1032,63 @@ pub async fn fetch_post(
     service: String,
     creator_id: String,
     post_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Post, String> {
+    let prov_key = provider_id.as_deref().unwrap_or("auto");
     match state
         .provider_manager
-        .fetch_post(&service, &creator_id, &post_id)
+        .fetch_post(&service, &creator_id, &post_id, provider_id.as_deref())
         .await
     {
-        Ok(Some(reconciled)) => {
+        Ok(Some(mut reconciled)) => {
             state
                 .content
                 .save_posts(std::slice::from_ref(&reconciled.post))?;
             if !reconciled.revisions.is_empty() {
                 for rev in &reconciled.revisions {
-                    let provider_id = rev
+                    let pid = rev
                         .post
                         .extra
                         .get("provider_id")
                         .and_then(|v| v.as_str())
-                        .unwrap_or_else(|| {
-                            reconciled
-                                .available_providers
-                                .first()
-                                .map(String::as_str)
-                                .unwrap_or("unknown")
-                        });
+                        .unwrap_or(prov_key);
                     let _ = state.content.save_post_revisions(
                         &service,
                         &creator_id,
                         &post_id,
-                        provider_id,
+                        pid,
                         std::slice::from_ref(rev),
                     );
                 }
             }
+            enrich_posts(
+                std::slice::from_mut(&mut reconciled.post),
+                &state.provider_manager,
+            )
+            .await;
             Ok(reconciled.post)
         }
-        Ok(None) => state
-            .content
-            .get_post(&service, &creator_id, &post_id)?
-            .ok_or_else(|| "Post not found".to_string()),
-        Err(error) => state
-            .content
-            .get_post(&service, &creator_id, &post_id)?
-            .ok_or(error),
+        Ok(None) => {
+            if prov_key == "auto" {
+                if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id)
+                {
+                    enrich_posts(std::slice::from_mut(&mut post), &state.provider_manager).await;
+                    return Ok(post);
+                }
+            }
+            Err(format!("Post not found on provider '{prov_key}'"))
+        }
+        Err(error) => {
+            if prov_key == "auto" {
+                if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id)
+                {
+                    enrich_posts(std::slice::from_mut(&mut post), &state.provider_manager).await;
+                    return Ok(post);
+                }
+            }
+            Err(error)
+        }
     }
 }
 
@@ -933,9 +1097,31 @@ pub async fn get_cached_post(
     service: String,
     creator_id: String,
     post_id: String,
+    provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<Post>, String> {
-    state.content.get_post(&service, &creator_id, &post_id)
+    let mut post_opt = state.content.get_post(&service, &creator_id, &post_id)?;
+    if let Some(ref mut post) = post_opt {
+        if let Some(ref pid) = provider_id {
+            if pid != "auto" {
+                let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
+                let avail = post
+                    .extra
+                    .get("available_providers")
+                    .and_then(|v| v.as_array());
+                let matches_prov = prov_id.is_some_and(|p| p.eq_ignore_ascii_case(pid));
+                let matches_avail = avail.is_some_and(|arr| {
+                    arr.iter()
+                        .any(|v| v.as_str().is_some_and(|p| p.eq_ignore_ascii_case(pid)))
+                });
+                if !matches_prov && !matches_avail {
+                    return Ok(None);
+                }
+            }
+        }
+        enrich_posts(std::slice::from_mut(post), &state.provider_manager).await;
+    }
+    Ok(post_opt)
 }
 
 #[tauri::command]
@@ -996,7 +1182,7 @@ pub async fn resolve_external_post_link(
         for creator_id in candidates {
             if let Ok(Some(reconciled)) = state
                 .provider_manager
-                .fetch_post(&parsed.service, &creator_id, &parsed.post_id)
+                .fetch_post(&parsed.service, &creator_id, &parsed.post_id, None)
                 .await
             {
                 state
@@ -1048,7 +1234,7 @@ pub async fn resolve_external_post_link(
 
         if let Ok(profile) = state
             .provider_manager
-            .fetch_creator_profile(&creator_link.service, &creator_link.creator_hint)
+            .fetch_creator_profile(&creator_link.service, &creator_link.creator_hint, None)
             .await
         {
             let _ = state.content.save_creators(std::slice::from_ref(&profile));
@@ -1170,6 +1356,9 @@ pub async fn fetch_account_favorites(
                             prev: None,
                             favorite_count: None,
                             attachment_count: None,
+                            thumbnail_url: None,
+                            page_url: None,
+                            preview_path: None,
                             extra: fav.extra.clone(),
                         };
                         post.clean_extra();
@@ -1219,6 +1408,11 @@ pub async fn fetch_account_favorites(
                                 updated: fav.updated.clone().map(serde_json::Value::String),
                                 favorited: None,
                                 ever_imported: None,
+                                avatar_url: None,
+                                avatar_path: None,
+                                banner_url: None,
+                                banner_path: None,
+                                page_url: None,
                                 extra,
                             };
                             let _ = state.content.save_creator(&profile);
@@ -1331,7 +1525,7 @@ pub async fn set_post_favorite(
     if favorite {
         let post = match state
             .provider_manager
-            .fetch_post(&service, &creator_id, &post_id)
+            .fetch_post(&service, &creator_id, &post_id, None)
             .await
         {
             Ok(Some(reconciled)) => reconciled.post,
@@ -1393,7 +1587,7 @@ pub async fn set_creator_favorite(
     if favorite {
         let profile = match state
             .provider_manager
-            .fetch_creator_profile(&service, &creator_id)
+            .fetch_creator_profile(&service, &creator_id, None)
             .await
         {
             Ok(creator) => CreatorProfile {
@@ -1406,6 +1600,11 @@ pub async fn set_creator_favorite(
                 updated: creator.updated.map(|v| serde_json::Value::Number(v.into())),
                 favorited: creator.favorited,
                 ever_imported: creator.ever_imported,
+                avatar_url: creator.avatar_url,
+                avatar_path: creator.avatar_path,
+                banner_url: creator.banner_url,
+                banner_path: creator.banner_path,
+                page_url: creator.page_url,
                 extra: creator.extra,
             },
             Err(_) => {
@@ -1422,6 +1621,11 @@ pub async fn set_creator_favorite(
                         updated: None,
                         favorited: None,
                         ever_imported: None,
+                        avatar_url: None,
+                        avatar_path: None,
+                        banner_url: None,
+                        banner_path: None,
+                        page_url: None,
                         extra: Default::default(),
                     }
                 }
@@ -1492,6 +1696,115 @@ pub async fn fetch_creator_artwork_data_url(
         .content
         .store_artwork_data_url(&service, &creator_id, &artwork_kind, &data)?;
     Ok(data)
+}
+
+#[tauri::command]
+pub async fn get_creator_artwork_path(
+    service: String,
+    creator_id: String,
+    artwork_kind: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let path_opt = state
+        .content
+        .artwork_path(&service, &creator_id, &artwork_kind)?;
+    if let Some(path_str) = path_opt {
+        if std::path::Path::new(&path_str).is_file() {
+            return Ok(Some(path_str));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn revalidate_creator_artwork(
+    service: String,
+    creator_id: String,
+    artwork_kind: String,
+    provider_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let prov_key = provider_id.as_deref();
+    let url = if artwork_kind == "banner" {
+        state
+            .provider_manager
+            .resolve_banner_url(&service, &creator_id, prov_key)
+            .await
+    } else {
+        state
+            .provider_manager
+            .resolve_avatar_url(&service, &creator_id, prov_key)
+            .await
+    };
+    if url.is_empty() {
+        return Ok(None);
+    }
+    let client = reqwest::Client::new();
+    let res = state
+        .content
+        .revalidate_creator_artwork(
+            &service,
+            &creator_id,
+            &artwork_kind,
+            &url,
+            prov_key,
+            &client,
+        )
+        .await?;
+    Ok(res.map(|p| p.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+pub async fn resolve_creator_url(
+    service: String,
+    creator_id: String,
+    provider_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    Ok(state
+        .provider_manager
+        .resolve_creator_url(&service, &creator_id, provider_id.as_deref())
+        .await)
+}
+
+#[tauri::command]
+pub async fn resolve_post_url(
+    service: String,
+    creator_id: String,
+    post_id: String,
+    provider_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    Ok(state
+        .provider_manager
+        .resolve_post_url(&service, &creator_id, &post_id, provider_id.as_deref())
+        .await)
+}
+
+#[tauri::command]
+pub async fn resolve_creator_avatar_url(
+    service: String,
+    creator_id: String,
+    provider_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    Ok(state
+        .provider_manager
+        .resolve_avatar_url(&service, &creator_id, provider_id.as_deref())
+        .await)
+}
+
+#[tauri::command]
+pub async fn resolve_creator_banner_url(
+    service: String,
+    creator_id: String,
+    provider_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    Ok(state
+        .provider_manager
+        .resolve_banner_url(&service, &creator_id, provider_id.as_deref())
+        .await)
 }
 
 #[tauri::command]
@@ -1790,7 +2103,7 @@ pub async fn start_download(
     state.content.pin_post(&post, "download", "")?;
     if let Ok(creator) = state
         .provider_manager
-        .fetch_creator_profile(&post.service, &post.user)
+        .fetch_creator_profile(&post.service, &post.user, None)
         .await
     {
         let profile = CreatorProfile {
@@ -1803,6 +2116,11 @@ pub async fn start_download(
             updated: creator.updated.map(serde_json::Value::from),
             favorited: creator.favorited,
             ever_imported: creator.ever_imported,
+            avatar_url: creator.avatar_url,
+            avatar_path: creator.avatar_path,
+            banner_url: creator.banner_url,
+            banner_path: creator.banner_path,
+            page_url: creator.page_url,
             extra: creator.extra,
         };
         let _ = state.content.save_creator(&profile);
@@ -1836,14 +2154,12 @@ pub async fn start_download(
         })
         .and_then(|file| file.path.as_deref())
     {
+        let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
         let preview_url = state
             .provider_manager
-            .resolve_thumbnail_url(&post.service, file)
+            .resolve_thumbnail_url(&post.service, file, prov_id)
             .await;
-        let _ = state
-            .content
-            .cache_post_preview(&post, &preview_url)
-            .await;
+        let _ = state.content.cache_post_preview(&post, &preview_url).await;
     }
     let creator_name = state
         .content
@@ -1996,7 +2312,13 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJo
             })
             .and_then(|file| file.path.as_deref());
         if let Some(path) = path {
-            job.post_preview_url = Some(state.provider_manager.resolve_thumbnail_url(&job.service, path).await);
+            let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
+            job.post_preview_url = Some(
+                state
+                    .provider_manager
+                    .resolve_thumbnail_url(&job.service, path, prov_id)
+                    .await,
+            );
         }
     }
     Ok(jobs)
@@ -2080,7 +2402,7 @@ pub async fn upsert_subscription(
 ) -> Result<Subscription, String> {
     if let Ok(profile) = state
         .provider_manager
-        .fetch_creator_profile(&input.service, &input.creator_id)
+        .fetch_creator_profile(&input.service, &input.creator_id, None)
         .await
     {
         state.content.save_creators(&[profile])?;
