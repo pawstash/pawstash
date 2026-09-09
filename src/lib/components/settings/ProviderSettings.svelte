@@ -5,6 +5,7 @@
   import { feedState } from '$lib/state/feedState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { contentState } from '$lib/state/contentState.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
   import { notify } from '$lib/utils/toast';
   import { formatProviderName } from '$lib/utils/media';
@@ -14,7 +15,8 @@
     apiGetDefaultSettings,
     apiGetProviderAuthSchema,
     apiLogoutProviderSession,
-    apiSyncProviderFavorites
+    apiSyncProviderFavorites,
+    apiOpenAppLinksSettings
   } from '$lib/utils/ipc';
   import type { ProviderConfig, ProviderAuthSchema } from '$lib/types/provider';
   import type { AppSettings } from '$lib/types/config';
@@ -35,6 +37,7 @@
   import IconPerson from '~icons/fluent/person-24-regular';
   import IconPower from '~icons/fluent/power-24-regular';
   import IconLink from '~icons/fluent/link-24-regular';
+  import IconOpen from '~icons/fluent/open-24-regular';
 
   let defaultSettings = $state<AppSettings>({ ...configState.settings });
   let authSchemas = $state<Record<string, ProviderAuthSchema>>({});
@@ -162,6 +165,14 @@
       formatProviderName(provider.name || provider.id)
     );
   }
+
+  async function handleOpenAppLinksSettings() {
+    try {
+      await apiOpenAppLinksSettings();
+    } catch (err: any) {
+      notify.error(i18n.t('settings.android_open_by_default_error'), err);
+    }
+  }
 </script>
 
 <div id="settings-providers" class="settings-section">
@@ -194,6 +205,23 @@
         }}
       />
     </SettingItem>
+
+    {#if layoutState.isAndroid}
+      <SettingItem
+        title={i18n.t('settings.android_open_by_default')}
+        description={i18n.t('settings.android_open_by_default_desc')}
+        icon={IconLink}
+        align="right"
+      >
+        <Button
+          variant="primary"
+          onclick={handleOpenAppLinksSettings}
+        >
+          <IconOpen class="w-4 h-4 mr-1.5" />
+          <span>{i18n.t('settings.android_open_by_default_btn')}</span>
+        </Button>
+      </SettingItem>
+    {/if}
   </div>
 </div>
 

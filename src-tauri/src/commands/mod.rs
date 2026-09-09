@@ -2043,6 +2043,31 @@ pub async fn remove_download(
 }
 
 #[tauri::command]
+pub fn pause_all_downloads(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.download_manager.pause_all(&app_handle)
+}
+
+#[tauri::command]
+pub fn resume_all_downloads(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.download_manager.resume_all(&app_handle)
+}
+
+#[tauri::command]
+pub fn cancel_all_downloads(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.download_manager.cancel_all_with_events(&app_handle);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn list_subscriptions(state: State<'_, AppState>) -> Result<Vec<Subscription>, String> {
     state.subscription_manager.list()
 }
@@ -2699,8 +2724,43 @@ pub extern "C" fn Java_app_pawstash_client_MainActivity_onDeepLinkReceived(
         if let Ok(lock) = APP_HANDLE.read() {
             if let Some(handle) = lock.as_ref() {
                 use tauri::Emitter;
-                let _ = handle.emit("open-post-deep-link", payload_str.clone());
-                let _ = handle.emit("deep-link:opened", payload_str);
+                if payload_str.starts_with('{') {
+                    let _ = handle.emit("open-post-deep-link", payload_str);
+                } else {
+                    let _ = handle.emit("deep-link:opened", payload_str);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_app_pawstash_client_DownloadForegroundService_onNotificationAction(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    action_jstr: jni::objects::JString,
+) {
+    if let Ok(action) = env.get_string(&action_jstr) {
+        let action_str = action.to_string_lossy().to_string();
+        tracing::info!("Received download notification action from Android: {action_str}");
+        if let Ok(lock) = APP_HANDLE.read() {
+            if let Some(handle) = lock.as_ref() {
+                use tauri::Manager;
+                if let Some(state) = handle.try_state::<crate::AppState>() {
+                    match action_str.as_str() {
+                        "pause" => {
+                            let _ = state.download_manager.pause_all(handle);
+                        }
+                        "resume" => {
+                            let _ = state.download_manager.resume_all(handle);
+                        }
+                        "cancel" => {
+                            state.download_manager.cancel_all_with_events(handle);
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -2760,6 +2820,22 @@ fn launch_folder_picker_android() -> Result<(), String> {
             .map_err(|e| format!("Failed to launch native folder picker: {e}"))?;
         Ok(())
     })
+}
+
+#[tauri::command]
+pub fn open_app_links_settings() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        with_android_context(|env, context| {
+            env.call_method(context, "openAppLinksSettings", "()V", &[])
+                .map_err(|e| format!("Failed to open Android app links settings: {e}"))?;
+            Ok(())
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("App links settings are only supported on Android".to_string())
+    }
 }
 
 #[tauri::command]

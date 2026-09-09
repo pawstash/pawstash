@@ -291,7 +291,50 @@ impl DownloadManager {
                 control.cancel();
             }
         }
-        let _ = self.repository.cancel_all_queued();
+        let _ = self.repository.cancel_all_active_and_queued();
+        self.notify.notify_waiters();
+    }
+
+    pub fn pause_all(&self, app_handle: &tauri::AppHandle) -> Result<(), String> {
+        use tauri::Emitter;
+        if let Ok(active) = self.active.lock() {
+            for control in active.values() {
+                control.pause();
+            }
+        }
+        let updated = self.repository.pause_all_active()?;
+        for job in &updated {
+            let _ = app_handle.emit("download-job-updated", job);
+        }
+        self.notify.notify_waiters();
+        let paused_count = updated.len() as i32;
+        crate::downloader::notifications::update_download_paused_notification(paused_count, Some(app_handle));
+        Ok(())
+    }
+
+    pub fn resume_all(&self, app_handle: &tauri::AppHandle) -> Result<(), String> {
+        use tauri::Emitter;
+        let updated = self.repository.resume_all_paused()?;
+        for job in &updated {
+            let _ = app_handle.emit("download-job-updated", job);
+        }
+        self.notify.notify_waiters();
+        Ok(())
+    }
+
+    pub fn cancel_all_with_events(&self, app_handle: &tauri::AppHandle) {
+        use tauri::Emitter;
+        if let Ok(active) = self.active.lock() {
+            for control in active.values() {
+                control.cancel();
+            }
+        }
+        if let Ok(cancelled) = self.repository.cancel_all_active_and_queued() {
+            for job in cancelled {
+                let _ = app_handle.emit("download-job-updated", job);
+            }
+        }
+        crate::downloader::notifications::stop_download_service(Some(app_handle));
         self.notify.notify_waiters();
     }
 
@@ -465,6 +508,7 @@ impl DownloadManager {
             manager: Arc<DownloadManager>,
             id: String,
             control: Arc<DownloadControl>,
+            app_handle: tauri::AppHandle,
         }
         impl Drop for RunGuard {
             fn drop(&mut self) {
@@ -472,7 +516,19 @@ impl DownloadManager {
                 if let Ok(mut active) = self.manager.active.lock() {
                     active.remove(&self.id);
                     if active.is_empty() {
-                        crate::downloader::notifications::stop_download_service();
+                        if let Ok((_, queued, _, _, _, paused)) =
+                            self.manager.repository.queue_progress_stats_with_paused()
+                        {
+                            if paused > 0 && queued == 0 {
+                                crate::downloader::notifications::update_download_paused_notification(
+                                    paused,
+                                    Some(&self.app_handle),
+                                );
+                                self.manager.notify.notify_waiters();
+                                return;
+                            }
+                        }
+                        crate::downloader::notifications::stop_download_service(Some(&self.app_handle));
                     }
                 }
                 self.manager.notify.notify_waiters();
@@ -482,6 +538,7 @@ impl DownloadManager {
             manager: self.clone(),
             id: id.clone(),
             control: control.clone(),
+            app_handle: app_handle.clone(),
         };
 
         match self.run_inner(&id, settings, control, &app_handle).await {
@@ -530,6 +587,7 @@ impl DownloadManager {
                 expected_total,
                 speed_total,
                 &job.filename,
+                Some(app_handle),
             );
         }
 
@@ -542,9 +600,9 @@ impl DownloadManager {
             filename: job.filename.clone(),
             session_cookie: settings.resolve_cookie_for_url(&job.url),
             proxy_mode: settings.proxy_mode,
-            proxy_url: settings.proxy_url,
-            proxy_username: settings.proxy_username,
-            proxy_password: settings.proxy_password,
+            proxy_url: settings.proxy_url.clone(),
+            proxy_username: settings.proxy_username.clone(),
+            proxy_password: settings.proxy_password.clone(),
             proxy_bypass_local: settings.proxy_bypass_local,
             connections: settings.aria2_connections.clamp(1, 32),
         };
@@ -670,12 +728,9 @@ impl DownloadManager {
         Self::notify_system_media_scan(&job.final_path);
         let _ = app_handle.emit("download-job-updated", completed.clone());
         crate::downloader::notifications::notify_download_completed(
-            &completed.service,
-            &completed.creator_id,
-            &completed.post_id,
-            &completed.filename,
-            &completed.post_title,
-            1,
+            app_handle,
+            &settings,
+            &completed,
         );
         Ok(())
     }

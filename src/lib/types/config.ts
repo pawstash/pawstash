@@ -48,4 +48,9 @@ export interface AppSettings {
   persist_in_app_favorites_locally?: boolean;
   disable_blur_placeholders?: boolean;
   card_view_mode?: 'detailed' | 'lite';
+  notifications_enabled?: boolean;
+  notifications_download_completed?: boolean;
+  notifications_download_progress?: boolean;
+  notifications_show_preview?: boolean;
+  notifications_sound?: boolean;
 }

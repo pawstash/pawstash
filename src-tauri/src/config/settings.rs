@@ -81,6 +81,24 @@ pub struct AppSettings {
     pub disable_blur_placeholders: bool,
     #[serde(default = "default_card_view_mode")]
     pub card_view_mode: String,
+    #[serde(default = "default_notifications_enabled")]
+    pub notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    pub notifications_download_completed: bool,
+    #[serde(default = "default_true")]
+    pub notifications_download_progress: bool,
+    #[serde(default = "default_true")]
+    pub notifications_show_preview: bool,
+    #[serde(default)]
+    pub notifications_sound: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_notifications_enabled() -> bool {
+    cfg!(target_os = "android")
 }
 
 fn default_card_view_mode() -> String {
@@ -149,6 +167,11 @@ impl Default for AppSettings {
             persist_in_app_favorites_locally: true,
             disable_blur_placeholders: false,
             card_view_mode: "detailed".to_string(),
+            notifications_enabled: cfg!(target_os = "android"),
+            notifications_download_completed: true,
+            notifications_download_progress: true,
+            notifications_show_preview: true,
+            notifications_sound: false,
         }
     }
 }
@@ -443,6 +466,26 @@ impl AppSettings {
                 self.disable_blur_placeholders.to_string(),
             ),
             ("card_view_mode", self.card_view_mode.clone()),
+            (
+                "notifications_enabled",
+                self.notifications_enabled.to_string(),
+            ),
+            (
+                "notifications_download_completed",
+                self.notifications_download_completed.to_string(),
+            ),
+            (
+                "notifications_download_progress",
+                self.notifications_download_progress.to_string(),
+            ),
+            (
+                "notifications_show_preview",
+                self.notifications_show_preview.to_string(),
+            ),
+            (
+                "notifications_sound",
+                self.notifications_sound.to_string(),
+            ),
         ])
     }
 
@@ -495,6 +538,21 @@ impl AppSettings {
         }
         if let Some(value) = get("disable_blur_placeholders").and_then(|v| v.parse().ok()) {
             self.disable_blur_placeholders = value;
+        }
+        if let Some(value) = get("notifications_enabled").and_then(|v| v.parse().ok()) {
+            self.notifications_enabled = value;
+        }
+        if let Some(value) = get("notifications_download_completed").and_then(|v| v.parse().ok()) {
+            self.notifications_download_completed = value;
+        }
+        if let Some(value) = get("notifications_download_progress").and_then(|v| v.parse().ok()) {
+            self.notifications_download_progress = value;
+        }
+        if let Some(value) = get("notifications_show_preview").and_then(|v| v.parse().ok()) {
+            self.notifications_show_preview = value;
+        }
+        if let Some(value) = get("notifications_sound").and_then(|v| v.parse().ok()) {
+            self.notifications_sound = value;
         }
         if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
             if value == "Alt+X" {

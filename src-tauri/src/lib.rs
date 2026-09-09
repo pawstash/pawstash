@@ -224,6 +224,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_system_accent_color,
             get_pending_deep_link,
+            open_app_links_settings,
             get_axum_port,
             check_aria2c_installed,
             probe_download_size,
@@ -303,6 +304,9 @@ pub fn run() {
             resume_download,
             retry_download,
             remove_download,
+            pause_all_downloads,
+            resume_all_downloads,
+            cancel_all_downloads,
             list_subscriptions,
             upsert_subscription,
             set_subscription_enabled,

@@ -706,6 +706,9 @@ select:focus-visible,
   background: transparent;
   cursor: pointer;
   outline: none !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .grid-tile-open:focus-visible {

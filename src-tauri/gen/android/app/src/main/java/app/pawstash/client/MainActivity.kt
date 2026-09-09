@@ -70,10 +70,14 @@ class MainActivity : TauriActivity() {
     fun notifyDownloadCompleted(
       service: String,
       creatorId: String,
+      creatorName: String,
       postId: String,
       filename: String,
       title: String,
-      mediaCount: Int
+      finalPath: String,
+      previewPath: String,
+      sound: Boolean,
+      showPreview: Boolean
     ) {
       try {
         val ctx = instance ?: return
@@ -81,10 +85,14 @@ class MainActivity : TauriActivity() {
           ctx,
           service,
           creatorId,
+          creatorName,
           postId,
           filename,
           title,
-          mediaCount
+          finalPath,
+          previewPath,
+          sound,
+          showPreview
         )
       } catch (e: Throwable) {
         android.util.Log.e("Pawstash", "notifyDownloadCompleted error", e)
@@ -102,10 +110,53 @@ class MainActivity : TauriActivity() {
     }
 
     @JvmStatic
+    fun updateDownloadPausedNotification(pausedCount: Int) {
+      try {
+        val ctx = instance ?: return
+        DownloadForegroundService.updatePaused(ctx, pausedCount)
+      } catch (e: Throwable) {
+        android.util.Log.e("Pawstash", "updateDownloadPausedNotification error", e)
+      }
+    }
+
+    @JvmStatic
     fun getPendingDeepLink(): String? {
       val link = pendingDeepLinkPayload
       pendingDeepLinkPayload = null
       return link
+    }
+
+    private val URL_EXTRACT_REGEX = Regex("""(?:https?://|pawstash://)[^\s<>"'{}|\\^`]+""", RegexOption.IGNORE_CASE)
+
+    @JvmStatic
+    fun resolveSharedTextToPayload(text: String): String? {
+      val trimmed = text.trim()
+      if (trimmed.isEmpty()) return null
+
+      val match = URL_EXTRACT_REGEX.find(trimmed)
+      if (match != null) {
+        var url = match.value
+        while (url.isNotEmpty() && (url.endsWith(".") || url.endsWith(",") || url.endsWith(")") || url.endsWith("]") || url.endsWith("!") || url.endsWith(";") || url.endsWith("\"") || url.endsWith("'"))) {
+          url = url.substring(0, url.length - 1)
+        }
+        if (url.isNotBlank()) {
+          return url
+        }
+      }
+
+      val lower = trimmed.lowercase()
+      if (lower.startsWith("patreon.com/") || lower.startsWith("www.patreon.com/") ||
+          lower.startsWith("fanbox.cc/") || lower.contains(".fanbox.cc/") ||
+          lower.startsWith("fantia.jp/") || lower.startsWith("www.fantia.jp/") ||
+          lower.startsWith("boosty.to/") ||
+          lower.startsWith("onlyfans.com/") || lower.startsWith("www.onlyfans.com/") ||
+          lower.startsWith("fansly.com/") || lower.startsWith("www.fansly.com/") ||
+          lower.startsWith("subscribestar.com/") || lower.startsWith("subscribestar.adult/") ||
+          lower.startsWith("cum.st/") || lower.contains("pawchive")) {
+        return "https://$trimmed"
+      }
+
+      return "pawstash://search?q=" + Uri.encode(trimmed)
     }
   }
 
@@ -119,7 +170,6 @@ class MainActivity : TauriActivity() {
   private val requestNotificationPermissionLauncher = registerForActivityResult(
     ActivityResultContracts.RequestPermission()
   ) { _ ->
-    // Notification permission result
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -148,7 +198,6 @@ class MainActivity : TauriActivity() {
   private fun handleDeepLinkIntent(intent: Intent?) {
     if (intent == null) return
 
-    // 1. Check for external deep links / universal links (e.g. pawstash://... or https://...)
     val dataUri = intent.dataString
     if (!dataUri.isNullOrBlank()) {
       pendingDeepLinkPayload = dataUri
@@ -160,8 +209,32 @@ class MainActivity : TauriActivity() {
       return
     }
 
-    // 2. Check for internal notification intent extras
+    if (intent.action == Intent.ACTION_SEND) {
+      val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+        ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+      if (!sharedText.isNullOrBlank()) {
+        val payload = resolveSharedTextToPayload(sharedText)
+        if (!payload.isNullOrBlank()) {
+          pendingDeepLinkPayload = payload
+          try {
+            onDeepLinkReceived(payload)
+          } catch (e: Throwable) {
+            // If Tauri JNI isn't attached yet, will be retrieved on startup via getPendingDeepLink
+          }
+          return
+        }
+      }
+    }
+
     val action = intent.getStringExtra("deep_link_action") ?: return
+    if (action == "open_folder") {
+      val folderPath = intent.getStringExtra("folder_path") ?: ""
+      if (folderPath.isNotBlank()) {
+        openFolderInFileManager(folderPath)
+      }
+      return
+    }
+
     val service = intent.getStringExtra("deep_link_service") ?: ""
     val creatorId = intent.getStringExtra("deep_link_creator_id") ?: ""
     val postId = intent.getStringExtra("deep_link_post_id") ?: ""
@@ -212,6 +285,42 @@ class MainActivity : TauriActivity() {
   fun launchFolderPicker() {
     runOnUiThread {
       openDocumentTreeLauncher.launch(null)
+    }
+  }
+
+  fun openAppLinksSettings() {
+    runOnUiThread {
+      try {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+          val intent = Intent(
+            android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS,
+            Uri.parse("package:$packageName")
+          ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(intent)
+        } else {
+          val intent = Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName")
+          ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(intent)
+        }
+      } catch (e: Throwable) {
+        try {
+          val fallbackIntent = Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName")
+          ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(fallbackIntent)
+        } catch (e2: Throwable) {
+          android.util.Log.e("Pawstash", "openAppLinksSettings error", e2)
+        }
+      }
     }
   }
 

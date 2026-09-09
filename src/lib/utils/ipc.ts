@@ -61,6 +61,7 @@ export async function openExternalUrl(url: string) {
   }
 }
 export const apiOpenDownloadsFolder = () => invoke<void>('open_downloads_folder');
+export const apiOpenAppLinksSettings = () => invoke<void>('open_app_links_settings');
 export const apiOpenDownloadFile = (filePath: string) =>
   invoke<void>('open_download_file', { filePath });
 export const apiShowInFolder = (path: string) =>

@@ -297,7 +297,7 @@
       return previewUrl(item);
     }
 
-    return undefined;
+    return localPathUrl(item.post_preview_path) || item.post_preview_url;
   }
 
   $effect(() => {

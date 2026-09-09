@@ -301,7 +301,11 @@
     selectionState.setContext('creators', creatorsKeys, creatorsMap);
   });
 
+  let lastContextTime = 0;
+
   function handleCreatorClick(event: MouseEvent, creator: any) {
+    if (Date.now() - lastContextTime < 500) return;
+
     const key = `${creator.service}:${creator.id}`;
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
@@ -318,6 +322,14 @@
     }
 
     navigationState.openCreator(creator.service, creator.id);
+  }
+
+  function handleCreatorContextMenu(event: MouseEvent, creator: any) {
+    event.preventDefault();
+    lastContextTime = Date.now();
+    try { navigator.vibrate?.(35); } catch {}
+    const key = `${creator.service}:${creator.id}`;
+    selectionState.toggle('creators', key, creator, creatorsKeys, false, creatorsMap);
   }
 
   function handleCreatorCheckbox(event: MouseEvent, creator: any) {
@@ -644,6 +656,7 @@
             class="grid-tile-open"
             type="button"
             onclick={(e) => handleCreatorClick(e, creator)}
+            oncontextmenu={(e) => handleCreatorContextMenu(e, creator)}
             aria-label={creator.name}
           ></button>
 

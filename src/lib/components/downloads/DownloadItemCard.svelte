@@ -128,7 +128,11 @@
     }
   });
 
+  let lastContextTime = 0;
+
   function handleCardClick(event: MouseEvent) {
+    if (Date.now() - lastContextTime < 500) return;
+
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       event.stopPropagation();
@@ -144,6 +148,13 @@
     }
 
     if (onopen) onopen(false);
+  }
+
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    lastContextTime = Date.now();
+    try { navigator.vibrate?.(35); } catch {}
+    selectionState.toggle('downloads', item.id, item, orderedKeys, false, itemsMap);
   }
 
   function handleSelectCheckbox(event: MouseEvent) {
@@ -186,7 +197,13 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  <button class="grid-tile-open" type="button" onclick={handleCardClick} aria-label={[item.filename, postTitle].filter(Boolean).join(' — ')}></button>
+  <button
+    class="grid-tile-open"
+    type="button"
+    onclick={handleCardClick}
+    oncontextmenu={handleContextMenu}
+    aria-label={[item.filename, postTitle].filter(Boolean).join(' — ')}
+  ></button>
 
   {#if isSelectionActive}
     <button

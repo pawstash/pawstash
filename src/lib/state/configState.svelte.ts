@@ -44,7 +44,12 @@ export class ConfigState {
     panic_button_enabled: true,
     panic_button_shortcut: 'H',
     persist_in_app_favorites_locally: true,
-    card_view_mode: 'detailed'
+    card_view_mode: 'detailed',
+    notifications_enabled: false,
+    notifications_download_completed: true,
+    notifications_download_progress: true,
+    notifications_show_preview: true,
+    notifications_sound: false
   });
 
   updateSettings(newSettings: AppSettings) {

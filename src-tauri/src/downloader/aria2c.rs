@@ -177,6 +177,7 @@ impl Aria2cManager {
                                             expected_total,
                                             speed_total,
                                             &task.filename,
+                                            Some(app_handle),
                                         );
                                     }
                                 }

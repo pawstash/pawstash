@@ -3,6 +3,7 @@ import { configState } from './configState.svelte';
 export class LayoutState {
   screenWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
   isMobileDevice = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|IEMobile/i.test(navigator.userAgent);
+  isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
   isMacOS = typeof navigator !== 'undefined' && /Macintosh|Mac OS X|MacPPC|MacIntel/i.test(navigator.userAgent);
 
   constructor() {

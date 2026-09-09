@@ -204,6 +204,97 @@ impl DownloadRepository {
         Ok(())
     }
 
+    pub fn pause_all_active(&self) -> Result<Vec<DownloadJob>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT id FROM download_jobs WHERE status IN ('queued', 'resolving', 'downloading', 'verifying')",
+            )
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+
+        connection
+            .execute(
+                "UPDATE download_jobs SET status = 'paused', speed_bps = 0, updated_at = CURRENT_TIMESTAMP
+                 WHERE status IN ('queued', 'resolving', 'downloading', 'verifying')",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+
+        let mut updated = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(job) = Self::get_by_id(&connection, &id)? {
+                updated.push(job);
+            }
+        }
+        Ok(updated)
+    }
+
+    pub fn resume_all_paused(&self) -> Result<Vec<DownloadJob>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut stmt = connection
+            .prepare("SELECT id FROM download_jobs WHERE status = 'paused'")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+
+        connection
+            .execute(
+                "UPDATE download_jobs SET status = 'queued', speed_bps = 0, updated_at = CURRENT_TIMESTAMP
+                 WHERE status = 'paused'",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+
+        let mut updated = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(job) = Self::get_by_id(&connection, &id)? {
+                updated.push(job);
+            }
+        }
+        Ok(updated)
+    }
+
+    pub fn cancel_all_active_and_queued(&self) -> Result<Vec<DownloadJob>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT id FROM download_jobs WHERE status IN ('queued', 'resolving', 'downloading', 'verifying', 'paused')",
+            )
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+
+        connection
+            .execute(
+                "UPDATE download_jobs SET status = 'cancelled', speed_bps = 0, updated_at = CURRENT_TIMESTAMP
+                 WHERE status IN ('queued', 'resolving', 'downloading', 'verifying', 'paused')",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+
+        let mut updated = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(job) = Self::get_by_id(&connection, &id)? {
+                updated.push(job);
+            }
+        }
+        Ok(updated)
+    }
+
     pub fn update_status(&self, id: &str, status: &str) -> Result<DownloadJob, String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
@@ -389,6 +480,33 @@ impl DownloadRepository {
                         row.get::<_, i64>(2)? as u64,
                         row.get::<_, i64>(3)? as u64,
                         row.get::<_, i64>(4)? as u64,
+                    ))
+                },
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn queue_progress_stats_with_paused(&self) -> Result<(i32, i32, u64, u64, u64, i32), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .query_row(
+                "SELECT
+                    COALESCE(SUM(CASE WHEN status IN ('downloading', 'resolving', 'verifying') THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status IN ('queued', 'downloading', 'resolving', 'verifying') THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status IN ('queued', 'downloading', 'resolving', 'verifying') THEN downloaded_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status IN ('queued', 'downloading', 'resolving', 'verifying') THEN total_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status IN ('downloading', 'resolving', 'verifying') THEN speed_bps ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END), 0)
+                 FROM download_jobs",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)? as i32,
+                        row.get::<_, i64>(1)? as i32,
+                        row.get::<_, i64>(2)? as u64,
+                        row.get::<_, i64>(3)? as u64,
+                        row.get::<_, i64>(4)? as u64,
+                        row.get::<_, i64>(5)? as i32,
                     ))
                 },
             )

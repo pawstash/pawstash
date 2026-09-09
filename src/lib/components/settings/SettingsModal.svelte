@@ -64,6 +64,7 @@
   import IconImageOff from '~icons/fluent/image-off-24-regular';
   import IconWindowApps from '~icons/fluent/window-apps-24-regular';
   import IconAlert from '~icons/fluent/alert-24-regular';
+  import IconSpeaker2 from '~icons/fluent/speaker-2-24-regular';
   import IconWarning from '~icons/fluent/warning-24-regular';
   import IconKeyboard from '~icons/fluent/keyboard-24-regular';
   import IconWallpaper from '~icons/fluent/wallpaper-24-regular';
@@ -211,6 +212,7 @@
     })),
     { id: 'proxy', label: i18n.t('settings.proxy_section') },
     { id: 'downloads', label: i18n.t('settings.download_section') },
+    { id: 'notifications', label: i18n.t('settings.notifications_section') },
     { id: 'cache', label: i18n.t('settings.cache_section') },
     { id: 'sync', label: i18n.t('sync.title') },
     { id: 'updates', label: i18n.t('settings.updates_section') }
@@ -615,6 +617,14 @@
           next.download_group_by_post = defaults.download_group_by_post;
           next.download_post_folder_template = defaults.download_post_folder_template;
           next.download_filename_template = defaults.download_filename_template;
+          break;
+
+        case 'notifications':
+          next.notifications_enabled = defaults.notifications_enabled;
+          next.notifications_download_completed = defaults.notifications_download_completed;
+          next.notifications_download_progress = defaults.notifications_download_progress;
+          next.notifications_show_preview = defaults.notifications_show_preview;
+          next.notifications_sound = defaults.notifications_sound;
           break;
 
         case 'cache':
@@ -1901,6 +1911,109 @@
             />
           </div>
         </SettingItem>
+      </div>
+    </div>
+
+    <div id="settings-notifications" class="settings-section">
+      <SectionTitle icon={IconAlert} title={i18n.t('settings.notifications_section')} onreset={() => (sectionToReset = 'notifications')} />
+
+      <div class="settings-list">
+        <SettingItem
+          title={i18n.t('settings.notifications_enabled')}
+          description={i18n.t('settings.notifications_enabled_desc')}
+          icon={IconAlert}
+          align="right"
+          value={settings.notifications_enabled}
+          defaultValue={defaultSettings.notifications_enabled}
+          onReset={() => resetSetting('notifications_enabled')}
+        >
+          <ChoiceGroup
+            options={[
+              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+            ]}
+            value={settings.notifications_enabled}
+            onchange={(val) => updateAndSaveSetting('notifications_enabled', val)}
+          />
+        </SettingItem>
+
+        {#if settings.notifications_enabled}
+          <SettingItem
+            title={i18n.t('settings.notifications_download_completed')}
+            description={i18n.t('settings.notifications_download_completed_desc')}
+            icon={IconCheck}
+            align="right"
+            value={settings.notifications_download_completed}
+            defaultValue={defaultSettings.notifications_download_completed}
+            onReset={() => resetSetting('notifications_download_completed')}
+          >
+            <ChoiceGroup
+              options={[
+                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+              ]}
+              value={settings.notifications_download_completed}
+              onchange={(val) => updateAndSaveSetting('notifications_download_completed', val)}
+            />
+          </SettingItem>
+
+          <SettingItem
+            title={i18n.t('settings.notifications_download_progress')}
+            description={i18n.t('settings.notifications_download_progress_desc')}
+            icon={IconDownload}
+            align="right"
+            value={settings.notifications_download_progress}
+            defaultValue={defaultSettings.notifications_download_progress}
+            onReset={() => resetSetting('notifications_download_progress')}
+          >
+            <ChoiceGroup
+              options={[
+                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+              ]}
+              value={settings.notifications_download_progress}
+              onchange={(val) => updateAndSaveSetting('notifications_download_progress', val)}
+            />
+          </SettingItem>
+
+          <SettingItem
+            title={i18n.t('settings.notifications_show_preview')}
+            description={i18n.t('settings.notifications_show_preview_desc')}
+            icon={IconImageMultiple}
+            align="right"
+            value={settings.notifications_show_preview}
+            defaultValue={defaultSettings.notifications_show_preview}
+            onReset={() => resetSetting('notifications_show_preview')}
+          >
+            <ChoiceGroup
+              options={[
+                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+              ]}
+              value={settings.notifications_show_preview}
+              onchange={(val) => updateAndSaveSetting('notifications_show_preview', val)}
+            />
+          </SettingItem>
+
+          <SettingItem
+            title={i18n.t('settings.notifications_sound')}
+            description={i18n.t('settings.notifications_sound_desc')}
+            icon={IconSpeaker2}
+            align="right"
+            value={settings.notifications_sound}
+            defaultValue={defaultSettings.notifications_sound}
+            onReset={() => resetSetting('notifications_sound')}
+          >
+            <ChoiceGroup
+              options={[
+                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
+                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
+              ]}
+              value={settings.notifications_sound}
+              onchange={(val) => updateAndSaveSetting('notifications_sound', val)}
+            />
+          </SettingItem>
+        {/if}
       </div>
     </div>
 

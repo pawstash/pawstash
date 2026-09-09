@@ -209,7 +209,11 @@
     return post.user || 'Unknown';
   });
 
+  let lastContextTime = 0;
+
   function handleCardClick(event: MouseEvent) {
+    if (Date.now() - lastContextTime < 500) return;
+
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       event.stopPropagation();
@@ -225,6 +229,13 @@
     }
 
     openPost();
+  }
+
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    lastContextTime = Date.now();
+    try { navigator.vibrate?.(35); } catch {}
+    selectionState.toggle('posts', postKey, post, orderedKeys, false, itemsMap);
   }
 
   function handleSelectCheckbox(event: MouseEvent) {
@@ -327,7 +338,13 @@
   data-post-key={postKey}
   onmouseenter={handleCardHover}
 >
-  <button class="grid-tile-open" type="button" onclick={handleCardClick} aria-label={cleanPostTitle(effectivePost.title)}></button>
+  <button
+    class="grid-tile-open"
+    type="button"
+    onclick={handleCardClick}
+    oncontextmenu={handleContextMenu}
+    aria-label={cleanPostTitle(effectivePost.title)}
+  ></button>
 
   {#if isSelectionActive}
     <button
