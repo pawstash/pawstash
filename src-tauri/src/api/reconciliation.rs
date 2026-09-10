@@ -104,7 +104,10 @@ pub fn reconcile_post_snapshots(snapshots: Vec<(String, Post)>) -> Option<Reconc
             all_files.extend(atts.clone());
         }
 
-        for file in all_files {
+        for mut file in all_files {
+            file.extra
+                .entry("provider_id".to_string())
+                .or_insert_with(|| serde_json::Value::String(prov_id.clone()));
             let key = file
                 .path
                 .clone()
@@ -208,8 +211,10 @@ mod tests {
             favorite_count: None,
             attachment_count: Some(1),
             thumbnail_url: None,
+            media_url: None,
             page_url: None,
             preview_path: None,
+            cloud_urls: Vec::new(),
             extra: HashMap::new(),
         };
 
@@ -258,8 +263,10 @@ mod tests {
             favorite_count: None,
             attachment_count: Some(2),
             thumbnail_url: None,
+            media_url: None,
             page_url: None,
             preview_path: None,
+            cloud_urls: Vec::new(),
             extra: HashMap::new(),
         };
 
@@ -272,5 +279,22 @@ mod tests {
         assert_eq!(reconciled.post.title, "Updated Title");
         assert_eq!(reconciled.available_providers.len(), 2);
         assert_eq!(reconciled.revisions.len(), 2);
+        assert_eq!(
+            reconciled
+                .post
+                .file
+                .as_ref()
+                .and_then(|file| file.extra.get("provider_id"))
+                .and_then(|value| value.as_str()),
+            Some("mirror1")
+        );
+        let attachments = reconciled.post.attachments.unwrap();
+        assert_eq!(
+            attachments[0]
+                .extra
+                .get("provider_id")
+                .and_then(|value| value.as_str()),
+            Some("mirror2")
+        );
     }
 }

@@ -105,6 +105,18 @@ export class ContentState {
       loading: false,
       error: null
     };
+    const provId = (post.extra as any)?.provider_id;
+    if (typeof provId === 'string' && provId.trim()) {
+      const provKey = postCacheKey(post.service, post.user, post.id, provId);
+      const existingProv = this.posts[provKey];
+      this.posts[provKey] = {
+        ...(existingProv || {}),
+        post,
+        loaded: post.detail_fetched === true,
+        loading: false,
+        error: null
+      };
+    }
   }
 
   setPosts(posts: Post[]) {
@@ -182,24 +194,19 @@ export class ContentState {
       };
     } catch (error) {
       const msg = errorMessage(error);
-      if (providerId && providerId !== 'auto') {
+      const fallbackPost = currentEntry.post || this.getPost(service, creatorId, postId).post;
+      if (fallbackPost) {
         this.posts[key] = {
-          post: null,
+          ...currentEntry,
+          post: fallbackPost,
           loading: false,
-          loaded: true,
-          error: msg
-        };
-      } else if (!currentEntry.post) {
-        this.posts[key] = {
-          post: null,
-          loading: false,
-          loaded: true,
           error: msg
         };
       } else {
         this.posts[key] = {
-          ...currentEntry,
+          post: null,
           loading: false,
+          loaded: true,
           error: msg
         };
       }

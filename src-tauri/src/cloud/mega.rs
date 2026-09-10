@@ -5,6 +5,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use cbc::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
 use reqwest::Client;
+
+pub(crate) fn api_url(folder_id: Option<&str>) -> String {
+    folder_id
+        .map(|id| format!("https://g.api.mega.co.nz/cs?n={id}"))
+        .unwrap_or_else(|| "https://g.api.mega.co.nz/cs".to_string())
+}
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -16,12 +22,15 @@ pub enum MegaLink {
     File { id: String, key: String },
 }
 
+pub fn supports_url(url: &str) -> bool {
+    super::url_host_matches(url, &["mega.nz", "mega.co.nz"])
+}
+
 pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
-    let url = reqwest::Url::parse(url_str).ok()?;
-    let host = url.host_str()?.to_ascii_lowercase();
-    if !host.contains("mega.nz") && !host.contains("mega.co.nz") {
+    if !supports_url(url_str) {
         return None;
     }
+    let url = reqwest::Url::parse(url_str).ok()?;
 
     let fragment = url.fragment().unwrap_or("");
     let path = url.path().trim_matches('/');
@@ -188,12 +197,10 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                     }
                 }
 
-                // Decrypt node key
                 let mut node_key = folder_key;
                 let mut dec_k_raw: Option<Vec<u8>> = None;
                 let mut name = format!("Item_{}", n.h);
 
-                // Collect candidate key parts from n.k
                 let mut candidate_keys: Vec<String> = Vec::new();
                 if let Some(ref k_str) = n.k {
                     for token in k_str.split(['/', ',']) {
@@ -257,11 +264,11 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                         for k_part in &candidate_keys {
                             if let Ok(k_bytes) = mega_base64_decode(k_part) {
                                 if k_bytes.len() >= 16 {
-                                    // Try AES-128-ECB decryption (Standard MEGA folder share node key encryption)
+                                    // Shared node keys are normally wrapped with AES-128-ECB.
                                     if let Ok(dec_k) = decrypt_aes_ecb(&folder_key, k_bytes.clone())
                                     {
                                         if dec_k.len() >= 16 {
-                                            // Format 1: 32-byte key XOR (standard file node key)
+                                            // File keys combine two 16-byte halves.
                                             let mut test_key = [0u8; 16];
                                             if dec_k.len() >= 32 {
                                                 for i in 0..16 {
@@ -282,7 +289,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                                                 }
                                             }
 
-                                            // Format 2: Direct 16-byte key (standard folder node key)
+                                            // Folder keys use the first 16 bytes directly.
                                             let mut test_key_direct = [0u8; 16];
                                             test_key_direct.copy_from_slice(&dec_k[..16]);
                                             if let Ok(dec_attr) = decrypt_aes_cbc_zeros(
@@ -299,7 +306,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                                         }
                                     }
 
-                                    // Try AES-128-CBC fallback
+                                    // Accept CBC-wrapped keys when the ECB form does not decrypt.
                                     if let Ok(dec_k) = decrypt_aes_cbc_zeros(&folder_key, k_bytes) {
                                         if dec_k.len() >= 16 {
                                             let mut test_key = [0u8; 16];
@@ -327,7 +334,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                             }
                         }
 
-                        // Fallback: Try decrypting attributes with folder_key directly
+                        // Some responses encrypt attributes directly with the share key.
                         if decrypted_name.is_none() {
                             if let Ok(dec_attr) =
                                 decrypt_aes_cbc_zeros(&folder_key, a_bytes.clone())
@@ -478,7 +485,6 @@ mod tests {
 
     #[test]
     fn test_parse_mega_urls() {
-        // Modern folder
         match parse_mega_url("https://mega.nz/folder/abc12345#key67890") {
             Some(MegaLink::Folder { id, key }) => {
                 assert_eq!(id, "abc12345");
@@ -487,7 +493,6 @@ mod tests {
             _ => panic!("Expected MegaLink::Folder"),
         }
 
-        // Modern file
         match parse_mega_url("https://mega.nz/file/file123#filekey456") {
             Some(MegaLink::File { id, key }) => {
                 assert_eq!(id, "file123");
@@ -496,7 +501,6 @@ mod tests {
             _ => panic!("Expected MegaLink::File"),
         }
 
-        // Legacy folder
         match parse_mega_url("https://mega.nz/#F!folderId!folderKey") {
             Some(MegaLink::Folder { id, key }) => {
                 assert_eq!(id, "folderId");
@@ -505,7 +509,6 @@ mod tests {
             _ => panic!("Expected legacy MegaLink::Folder"),
         }
 
-        // Legacy file
         match parse_mega_url("https://mega.nz/#!legacyFile!legacyKey") {
             Some(MegaLink::File { id, key }) => {
                 assert_eq!(id, "legacyFile");
@@ -514,7 +517,6 @@ mod tests {
             _ => panic!("Expected legacy MegaLink::File"),
         }
 
-        // Invalid URL
         assert!(parse_mega_url("https://example.com/file/123").is_none());
     }
 }

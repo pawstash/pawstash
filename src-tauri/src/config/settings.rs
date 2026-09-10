@@ -10,6 +10,14 @@ const PAWCHIVE_SESSION_SECRET: &str = "pawchive-session";
 const PROXY_PASSWORD_SECRET: &str = "proxy-password";
 const PROVIDER_SESSION_SECRET_PREFIX: &str = "provider-session:";
 
+fn primary_provider_id() -> String {
+    crate::api::providers::ProviderManager::default_configs()
+        .into_iter()
+        .next()
+        .map(|provider| provider.id)
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProxyMode {
@@ -105,6 +113,16 @@ fn default_card_view_mode() -> String {
     "detailed".to_string()
 }
 
+fn legacy_domain_value(endpoint: Option<&str>) -> String {
+    endpoint
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('/')
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_string()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         #[cfg(target_os = "android")]
@@ -119,12 +137,28 @@ impl Default for AppSettings {
             .to_string_lossy()
             .to_string();
 
+        let default_provider = crate::api::provider_manager::ProviderManager::default_configs()
+            .into_iter()
+            .next();
+
         Self {
             download_dir,
             cache_max_mb: 128,
-            api_domain: "pawchive.pw".to_string(),
-            file_domain: "file.pawchive.pw".to_string(),
-            image_domain: "img.pawchive.pw".to_string(),
+            api_domain: legacy_domain_value(
+                default_provider
+                    .as_ref()
+                    .map(|provider| provider.api_url.as_str()),
+            ),
+            file_domain: legacy_domain_value(
+                default_provider
+                    .as_ref()
+                    .and_then(|provider| provider.file_url.as_deref()),
+            ),
+            image_domain: legacy_domain_value(
+                default_provider
+                    .as_ref()
+                    .and_then(|provider| provider.image_url.as_deref()),
+            ),
             session_cookie: String::new(),
             pawchive_username: String::new(),
             theme: "glass".to_string(),
@@ -238,9 +272,10 @@ impl ConfigManager {
         settings.session_cookie = Self::load_secret_string(PAWCHIVE_SESSION_SECRET)?;
         settings.proxy_password = Self::load_secret_string(PROXY_PASSWORD_SECRET)?;
         let migrated_plaintext_secret = Self::hydrate_provider_secrets(&mut settings)?;
+        let providers_before_normalize = settings.providers.clone();
         settings.normalize();
 
-        if migrated_plaintext_secret {
+        if migrated_plaintext_secret || settings.providers != providers_before_normalize {
             self.save(&settings)?;
             return Ok(settings);
         }
@@ -296,31 +331,37 @@ impl ConfigManager {
     }
 
     pub fn clear_session_cookie(&self) -> Result<(), String> {
+        let primary_provider_id = primary_provider_id();
         if let Ok(mut guard) = self.cached.lock() {
             if let Some(cached) = guard.as_mut() {
                 cached.session_cookie.clear();
-                if let Some(provider) = cached.providers.iter_mut().find(|p| p.id == "pawchive") {
+                if let Some(provider) = cached
+                    .providers
+                    .iter_mut()
+                    .find(|provider| provider.id == primary_provider_id)
+                {
                     provider.session_cookie.clear();
                 }
             }
         }
         SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)?;
-        SecretStore::delete_named(&Self::provider_secret_name("pawchive"))
+        SecretStore::delete_named(&Self::provider_secret_name(&primary_provider_id))
     }
 
     pub fn clear_provider_session(&self, provider_id: &str) -> Result<(), String> {
+        let primary_provider_id = primary_provider_id();
         if let Ok(mut guard) = self.cached.lock() {
             if let Some(cached) = guard.as_mut() {
                 if let Some(provider) = cached.providers.iter_mut().find(|p| p.id == provider_id) {
                     provider.session_cookie.clear();
                 }
-                if provider_id == "pawchive" {
+                if provider_id == primary_provider_id {
                     cached.session_cookie.clear();
                 }
             }
         }
         SecretStore::delete_named(&Self::provider_secret_name(provider_id))?;
-        if provider_id == "pawchive" {
+        if provider_id == primary_provider_id {
             SecretStore::delete_named(PAWCHIVE_SESSION_SECRET)?;
         }
         Ok(())
@@ -688,6 +729,18 @@ impl AppSettings {
                 if p.image_prefix.is_none() {
                     p.image_prefix = def.image_prefix.clone();
                 }
+
+                let api_matches_default =
+                    normalized_origin(&p.api_url) == normalized_origin(&def.api_url);
+
+                if !p.is_custom && api_matches_default {
+                    if endpoint_is_missing_or_api_origin(p.file_url.as_deref(), &p.api_url) {
+                        p.file_url = def.file_url.clone();
+                    }
+                    if endpoint_is_missing_or_api_origin(p.image_url.as_deref(), &p.api_url) {
+                        p.image_url = def.image_url.clone();
+                    }
+                }
             }
         }
         for def in default_configs {
@@ -699,7 +752,12 @@ impl AppSettings {
                 self.providers.push(def);
             }
         }
-        if let Some(pawchive) = self.providers.iter_mut().find(|p| p.id == "pawchive") {
+        let primary_provider_id = primary_provider_id();
+        if let Some(pawchive) = self
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == primary_provider_id)
+        {
             if !self.session_cookie.is_empty() {
                 if pawchive.session_cookie.is_empty() {
                     pawchive.session_cookie = self.session_cookie.clone();
@@ -785,6 +843,21 @@ impl AppSettings {
     }
 }
 
+fn normalized_origin(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches('/')
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_ascii_lowercase()
+}
+
+fn endpoint_is_missing_or_api_origin(endpoint: Option<&str>, api_url: &str) -> bool {
+    endpoint.is_none_or(|value| {
+        value.trim().is_empty() || normalized_origin(value) == normalized_origin(api_url)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,7 +868,7 @@ mod tests {
             serde_json::from_str(r#"{"api_domain":"mirror.example","download_dir":"downloads"}"#)
                 .unwrap();
         assert_eq!(settings.api_domain, "mirror.example");
-        assert_eq!(settings.file_domain, "file.pawchive.pw");
+        assert_eq!(settings.file_domain, AppSettings::default().file_domain);
         assert!(settings.proxy_bypass_local);
         assert_eq!(settings.grid_scale, 100);
         assert_eq!(settings.grid_aspect_ratio, GridAspectRatio::Square);
@@ -869,26 +942,58 @@ mod tests {
 
     #[test]
     fn test_resolve_cookie_for_url_multi_provider() {
-        let mut settings = AppSettings {
-            session_cookie: "pawchive_global_cookie".into(),
-            ..AppSettings::default()
-        };
+        let mut settings = AppSettings::default();
         settings.normalize();
-        if let Some(coomer) = settings.providers.iter_mut().find(|p| p.id == "coomer") {
-            coomer.session_cookie = "coomer_session_secret".into();
-        }
-
-        assert_eq!(
-            settings.resolve_cookie_for_url("https://c1.coomer.st/data/ab/cd/video.mp4"),
-            Some("coomer_session_secret".into())
+        let primary_id = settings.providers[0].id.clone();
+        let secondary_id = settings.providers[1].id.clone();
+        settings
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == primary_id)
+            .unwrap()
+            .session_cookie = "primary_session_secret".into();
+        settings
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == secondary_id)
+            .unwrap()
+            .session_cookie = "secondary_session_secret".into();
+        let primary = settings
+            .providers
+            .iter()
+            .find(|provider| provider.id == primary_id)
+            .unwrap();
+        let primary_url = format!(
+            "{}/data/ab/cd/video.mp4",
+            primary.file_url.as_deref().unwrap()
+        );
+        let primary_host = reqwest::Url::parse(&primary.api_url)
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .to_string();
+        let secondary = settings
+            .providers
+            .iter()
+            .find(|provider| provider.id == secondary_id)
+            .unwrap();
+        let secondary_url = format!(
+            "{}/data/ab/cd/video.mp4",
+            secondary.file_url.as_deref().unwrap()
         );
 
         assert_eq!(
-            settings.resolve_cookie_for_url("https://file.pawchive.pw/data/ab/cd/video.mp4"),
-            Some("pawchive_global_cookie".into())
+            settings.resolve_cookie_for_url(&secondary_url),
+            Some("secondary_session_secret".into())
+        );
+
+        assert_eq!(
+            settings.resolve_cookie_for_url(&primary_url),
+            Some("primary_session_secret".into())
         );
         assert_eq!(
-            settings.resolve_cookie_for_url("https://pawchive.pw.evil.example/video.mp4"),
+            settings
+                .resolve_cookie_for_url(&format!("https://{primary_host}.evil.example/video.mp4")),
             None
         );
         assert_eq!(
@@ -902,17 +1007,62 @@ mod tests {
         let mut settings = AppSettings::default();
         settings.normalize();
 
-        assert!(settings
+        for expected in crate::api::provider_manager::ProviderManager::default_configs() {
+            let actual = settings
+                .providers
+                .iter()
+                .find(|provider| provider.id == expected.id)
+                .unwrap();
+            assert_eq!(actual.file_prefix, expected.file_prefix);
+            assert_eq!(actual.image_prefix, expected.image_prefix);
+            assert_eq!(actual.file_url, expected.file_url);
+            assert_eq!(actual.image_url, expected.image_url);
+        }
+    }
+
+    #[test]
+    fn normalize_repairs_builtin_media_origins_without_overriding_mirrors() {
+        let default = crate::api::provider_manager::ProviderManager::default_configs()
+            .into_iter()
+            .find(|provider| provider.file_url.is_some() && provider.image_url.is_some())
+            .unwrap();
+        let mut settings = AppSettings::default();
+        let provider = settings
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == default.id)
+            .unwrap();
+        provider.file_url = Some(provider.api_url.clone());
+        provider.image_url = None;
+
+        settings.normalize();
+
+        let provider = settings
             .providers
             .iter()
-            .any(|p| p.id == "pawchive" && p.file_prefix.as_deref() == Some("file")));
-        assert!(settings
+            .find(|provider| provider.id == default.id)
+            .unwrap();
+        assert_eq!(provider.file_url, default.file_url);
+        assert_eq!(provider.image_url, default.image_url);
+
+        let mut mirror_settings = AppSettings::default();
+        let mirror = mirror_settings
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == default.id)
+            .unwrap();
+        mirror.api_url = "https://mirror.example".into();
+        mirror.file_url = None;
+        mirror.image_url = None;
+
+        mirror_settings.normalize();
+
+        let mirror = mirror_settings
             .providers
             .iter()
-            .any(|p| p.id == "coomer" && p.file_prefix.as_deref() == Some("c1")));
-        assert!(settings
-            .providers
-            .iter()
-            .any(|p| p.id == "onlyhaven" && p.file_prefix.as_deref() == Some("e1")));
+            .find(|provider| provider.id == default.id)
+            .unwrap();
+        assert_eq!(mirror.file_url, None);
+        assert_eq!(mirror.image_url, None);
     }
 }

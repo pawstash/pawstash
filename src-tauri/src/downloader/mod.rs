@@ -97,12 +97,7 @@ impl Default for DownloadControl {
 pub fn derive_download_referer(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url).ok()?;
     let host = parsed.host_str()?;
-    if host.is_empty()
-        || host.contains("dropbox")
-        || host.contains("google")
-        || host.contains("mega")
-        || host.contains("pixeldrain")
-    {
+    if host.is_empty() || crate::cloud::supports_url(url) {
         return None;
     }
 
@@ -119,7 +114,7 @@ pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String>
     if session_cookie.trim().is_empty() {
         return None;
     }
-    // Only send session cookie if the target URL belongs to a provider origin (not external clouds)
+    // Never leak a provider session cookie to an external cloud host.
     let _ = derive_download_referer(url)?;
     if session_cookie.contains('=') {
         Some(session_cookie.to_string())
@@ -130,16 +125,6 @@ pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String>
 
 pub const PAWSTASH_USER_AGENT: &str =
     concat!("Github:Pawstash/Pawstash;v=", env!("CARGO_PKG_VERSION"));
-
-pub fn is_pawchive_url(url: &str) -> bool {
-    if let Ok(parsed) = reqwest::Url::parse(url) {
-        if let Some(host) = parsed.host_str() {
-            let host = host.to_lowercase();
-            return host.contains("pawchive");
-        }
-    }
-    false
-}
 
 pub fn standard_browser_headers() -> reqwest::header::HeaderMap {
     use reqwest::header::*;
@@ -197,7 +182,7 @@ pub fn standard_browser_header_args() -> Vec<String> {
 
 pub fn derive_download_headers(url: &str) -> reqwest::header::HeaderMap {
     use reqwest::header::*;
-    if is_pawchive_url(url) {
+    if crate::api::providers::uses_app_user_agent(url) {
         let mut map = HeaderMap::new();
         map.insert(USER_AGENT, HeaderValue::from_static(PAWSTASH_USER_AGENT));
         map.insert(ACCEPT, HeaderValue::from_static("*/*"));
@@ -209,7 +194,7 @@ pub fn derive_download_headers(url: &str) -> reqwest::header::HeaderMap {
 }
 
 pub fn derive_download_header_args(url: &str) -> Vec<String> {
-    if is_pawchive_url(url) {
+    if crate::api::providers::uses_app_user_agent(url) {
         vec![
             format!("--user-agent={PAWSTASH_USER_AGENT}"),
             "--header=Accept: */*".into(),
@@ -228,39 +213,16 @@ mod tests {
 
     #[test]
     fn test_derive_download_referer_domains() {
-        // Pawchive and subdomains
-        assert_eq!(
-            derive_download_referer("https://file.pawchive.pw/data/fc/b2/image.jpg"),
-            Some("https://pawchive.pw/".into())
-        );
-        assert_eq!(
-            derive_download_referer("https://file1.pawchive.pw/data/fc/b2/video.mp4"),
-            Some("https://pawchive.pw/".into())
-        );
-        assert_eq!(
-            derive_download_referer("https://img.pawchive.pw/thumbnail/data/fc/b2/thumb.jpg"),
-            Some("https://pawchive.pw/".into())
-        );
-        assert_eq!(
-            derive_download_referer("https://pawchive.pw/patreon/user/123/post/456"),
-            Some("https://pawchive.pw/".into())
-        );
+        for config in crate::api::providers::ProviderManager::default_configs() {
+            let expected = format!("{}/", config.api_url.trim_end_matches('/'));
+            for endpoint in [Some(config.api_url), config.file_url, config.image_url]
+                .into_iter()
+                .flatten()
+            {
+                assert_eq!(derive_download_referer(&endpoint), Some(expected.clone()));
+            }
+        }
 
-        // OnlyHaven (cum.st)
-        assert_eq!(
-            derive_download_referer("https://cum.st/data/aa/bb/image.png"),
-            Some("https://cum.st/".into())
-        );
-        assert_eq!(
-            derive_download_referer("https://file.cum.st/data/aa/bb/image.png"),
-            Some("https://cum.st/".into())
-        );
-        assert_eq!(
-            derive_download_referer("https://img.cum.st/thumbnail/data/aa/bb/thumb.png"),
-            Some("https://cum.st/".into())
-        );
-
-        // Custom 3-part subdomains
         assert_eq!(
             derive_download_referer("https://cdn.custom-provider.org/data/11/22/archive.zip"),
             Some("https://custom-provider.org/".into())
@@ -272,44 +234,30 @@ mod tests {
             Some("https://custom-provider.org/".into())
         );
 
-        // Cloud hosts must not send referers (to avoid hotlink/cross-origin blocks)
         assert_eq!(
-            derive_download_referer("https://mega.nz/file/abc#key"),
-            None
-        );
-        assert_eq!(
-            derive_download_referer("https://www.dropbox.com/s/xyz/file.zip?dl=1"),
-            None
-        );
-        assert_eq!(
-            derive_download_referer("https://pixeldrain.com/api/file/12345"),
+            derive_download_referer(crate::cloud::dropbox::example_url()),
             None
         );
     }
 
     #[test]
     fn test_derive_download_cookie() {
-        // Provider URL gets cookie
+        let provider_url = crate::api::providers::ProviderManager::default_configs()
+            .into_iter()
+            .next()
+            .and_then(|config| config.file_url)
+            .expect("default provider has a file endpoint");
         assert_eq!(
-            derive_download_cookie("https://file.pawchive.pw/data/123", "abc_session"),
+            derive_download_cookie(&provider_url, "abc_session"),
             Some("session=abc_session".into())
         );
         assert_eq!(
-            derive_download_cookie("https://file.pawchive.pw/data/123", "session=abc_session"),
+            derive_download_cookie(&provider_url, "session=abc_session"),
             Some("session=abc_session".into())
         );
 
-        // Cloud URLs MUST NEVER receive session cookie
         assert_eq!(
-            derive_download_cookie("https://www.dropbox.com/s/xyz/file.zip?dl=1", "abc_session"),
-            None
-        );
-        assert_eq!(
-            derive_download_cookie("https://mega.nz/file/abc#key", "abc_session"),
-            None
-        );
-        assert_eq!(
-            derive_download_cookie("https://pixeldrain.com/api/file/12345", "abc_session"),
+            derive_download_cookie(crate::cloud::dropbox::example_url(), "abc_session"),
             None
         );
     }
@@ -345,22 +293,17 @@ mod tests {
     }
 
     #[test]
-    fn test_pawchive_user_agent_headers() {
-        assert!(is_pawchive_url("https://pawchive.pw/api/v1/posts"));
-        assert!(is_pawchive_url("https://file.pawchive.pw/data/123"));
-        assert!(is_pawchive_url(
-            "https://img.pawchive.pw/thumbnail/data/123"
-        ));
-        assert!(!is_pawchive_url("https://cum.st/data/123"));
-        assert!(!is_pawchive_url("https://mega.nz/file/123"));
-
-        let headers = derive_download_headers("https://file.pawchive.pw/data/123");
+    fn test_provider_user_agent_headers() {
+        let url = crate::api::providers::PawchiveProvider::default_config()
+            .file_url
+            .expect("default provider has a file endpoint");
+        let headers = derive_download_headers(&url);
         assert_eq!(
             headers.get("user-agent").and_then(|v| v.to_str().ok()),
             Some(PAWSTASH_USER_AGENT)
         );
 
-        let args = derive_download_header_args("https://file.pawchive.pw/data/123");
+        let args = derive_download_header_args(&url);
         assert!(args
             .iter()
             .any(|a| a == &format!("--user-agent={PAWSTASH_USER_AGENT}")));

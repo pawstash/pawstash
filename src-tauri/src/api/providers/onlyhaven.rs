@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use base64::prelude::*;
 use futures_util::future::join_all;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -308,19 +308,42 @@ impl OnlyHavenPostRow {
                     .or_else(|| a.sha256.clone())
                     .or_else(|| a.path.clone())
                     .or_else(|| a.id.clone());
+                let variant_name = a.variants.as_ref().and_then(|v| {
+                    v.iter()
+                        .find(|item| {
+                            item.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(|n| n.starts_with("original"))
+                                .unwrap_or(false)
+                        })
+                        .or_else(|| v.first())
+                        .and_then(|item| {
+                            item.get("name").and_then(|n| n.as_str()).map(String::from)
+                        })
+                });
+
+                let is_video = a.kind.as_deref() == Some("video")
+                    || a.mime_type
+                        .as_deref()
+                        .map(|m| m.starts_with("video/"))
+                        .unwrap_or(false);
+
                 let clean_path = storage_key.as_deref().map(|p| {
                     let c = p
                         .trim_start_matches('/')
                         .trim_start_matches("data/")
                         .trim_start_matches('/');
-                    format!("/{c}")
+                    if c.contains('/') || c.contains('.') {
+                        format!("/{c}")
+                    } else if let Some(ref v) = variant_name {
+                        let clean_v = v.trim_start_matches('/');
+                        format!("/{c}/{clean_v}")
+                    } else if is_video {
+                        format!("/{c}/original.mp4")
+                    } else {
+                        format!("/{c}/original.jpg")
+                    }
                 });
-
-                let variant_name = a
-                    .variants
-                    .as_ref()
-                    .and_then(|v| v.first())
-                    .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
 
                 let mut extra = HashMap::new();
                 if is_att_locked {
@@ -474,8 +497,10 @@ impl OnlyHavenPostRow {
             favorite_count: self.bookmarked.or(self.score),
             attachment_count: Some(att_count),
             thumbnail_url: None,
+            media_url: None,
             page_url: None,
             preview_path: None,
+            cloud_urls: Vec::new(),
             extra,
         };
         post.clean_extra();
@@ -492,8 +517,71 @@ pub struct OnlyHavenProvider {
 }
 
 impl OnlyHavenProvider {
+    fn archive_host_matches(url: &Url) -> bool {
+        url.host_str()
+            .map(str::to_ascii_lowercase)
+            .is_some_and(|host| host == "cum.st" || host.ends_with(".cum.st"))
+    }
+
+    pub fn parse_archive_post_url(url: &Url) -> Option<super::ProviderPostLink> {
+        if !Self::archive_host_matches(url) {
+            return None;
+        }
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        let (service, creator_id, post_id) = if segments.len() >= 5
+            && matches!(segments[1], "user" | "server" | "channel")
+            && segments[3] == "post"
+        {
+            (segments[0], segments[2], segments[4])
+        } else if segments.len() >= 5 && segments[0] == "creators" && segments[3] == "post" {
+            (segments[1], segments[2], segments[4])
+        } else {
+            return None;
+        };
+        Some(super::ProviderPostLink {
+            service: super::clean_link_segment(service)?,
+            creator_hint: Some(super::clean_link_segment(creator_id)?),
+            post_id: super::clean_link_segment(post_id)?,
+        })
+    }
+
+    pub fn parse_archive_creator_url(url: &Url) -> Option<super::ProviderCreatorLink> {
+        if !Self::archive_host_matches(url) {
+            return None;
+        }
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        let (service, creator_id) =
+            if segments.len() >= 3 && matches!(segments[1], "user" | "server" | "channel") {
+                (segments[0], segments[2])
+            } else if segments.len() >= 3 && segments[0] == "creators" {
+                (segments[1], segments[2])
+            } else {
+                return None;
+            };
+        Some(super::ProviderCreatorLink {
+            service: super::clean_link_segment(service)?,
+            creator_hint: super::clean_link_segment(creator_id)?,
+        })
+    }
+
+    pub fn matches_config(config: &ProviderConfig) -> bool {
+        config.id.eq_ignore_ascii_case("onlyhaven")
+            || config
+                .api_url
+                .parse::<Url>()
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+                .is_some_and(|host| host == "cum.st" || host.ends_with(".cum.st"))
+    }
+
     pub fn default_services() -> Vec<String> {
-        vec!["onlyfans".into(), "fansly".into()]
+        vec!["onlyfans".into(), "fansly".into(), "patreon".into()]
     }
 
     pub fn default_queue_config() -> ProviderQueueConfig {
@@ -1184,14 +1272,42 @@ impl SourceProvider for OnlyHavenProvider {
         let key = thumb_path
             .trim_start_matches('/')
             .trim_start_matches("data/")
-            .trim_start_matches('/');
+            .trim_start_matches('/')
+            .trim_start_matches("media/")
+            .trim_start_matches("thumbnail/");
+        let clean_key = key.split('/').next().unwrap_or(key);
         let base = conf
             .image_url
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim_end_matches('/').to_string())
             .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "img"));
-        format!("{base}/thumbnail/{key}/preview.webp")
+        format!("{base}/thumbnail/{clean_key}/preview.webp")
+    }
+
+    fn canonical_attachment_path(&self, attachment: &Attachment, path: &str) -> String {
+        let clean = path
+            .trim_start_matches('/')
+            .trim_start_matches("data/")
+            .trim_start_matches('/');
+        if clean.contains('/') || clean.contains('.') {
+            return path.to_string();
+        }
+
+        let extension = attachment
+            .name
+            .as_deref()
+            .and_then(|name| name.rsplit_once('.').map(|(_, extension)| extension))
+            .filter(|extension| {
+                !extension.is_empty()
+                    && extension.len() <= 10
+                    && extension
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+            });
+        extension
+            .map(|extension| format!("/{clean}/original.{}", extension.to_ascii_lowercase()))
+            .unwrap_or_else(|| path.to_string())
     }
 
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
@@ -1673,6 +1789,68 @@ mod tests {
         assert_eq!(
             provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2"),
             "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4"),
+            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
+        );
+        assert_eq!(
+            provider.resolve_thumbnail_url("/data/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.jpg"),
+            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
+        );
+    }
+
+    #[test]
+    fn test_onlyhaven_video_and_image_attachment_resolution() {
+        let raw_json = r#"{
+            "id": "12345",
+            "service": "onlyfans",
+            "creatorId": "30340311",
+            "attachments": [
+                {
+                    "storageKey": "dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b",
+                    "kind": "video",
+                    "variants": [
+                        { "name": "original.mp4", "bytes": 107505000 },
+                        { "name": "240p.mp4", "bytes": 28856538 }
+                    ]
+                },
+                {
+                    "storageKey": "f71cb7891234",
+                    "kind": "image",
+                    "variants": [
+                        { "name": "original.jpg", "bytes": 50000 }
+                    ]
+                },
+                {
+                    "storageKey": "aaaa11112222",
+                    "kind": "video"
+                }
+            ]
+        }"#;
+        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
+        let post = row.into_post("30340311", "onlyhaven");
+        let atts = post.attachments.expect("attachments should exist");
+        assert_eq!(atts.len(), 3);
+        assert_eq!(
+            atts[0].path.as_deref(),
+            Some("/dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b/original.mp4")
+        );
+        assert_eq!(atts[0].name.as_deref(), Some("original.mp4"));
+        assert_eq!(atts[1].path.as_deref(), Some("/f71cb7891234/original.jpg"));
+        assert_eq!(atts[1].name.as_deref(), Some("original.jpg"));
+        assert_eq!(atts[2].path.as_deref(), Some("/aaaa11112222/original.mp4"));
+
+        let provider = OnlyHavenProvider::new(OnlyHavenProvider::default_config()).unwrap();
+        let mut legacy_video = Attachment {
+            name: Some("legacy-video.MP4".into()),
+            path: Some("/abdd1153589ba0dd317b5e3337b12b31".into()),
+            ..Attachment::default()
+        };
+        provider.enrich_attachment(&mut legacy_video);
+        assert_eq!(
+            legacy_video.url.as_deref(),
+            Some("https://e1.cum.st/media/abdd1153589ba0dd317b5e3337b12b31/original.mp4")
         );
     }
 

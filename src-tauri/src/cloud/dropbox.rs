@@ -1,6 +1,41 @@
 use super::models::{CloudFolderResult, CloudNode};
 use reqwest::Client;
 
+pub fn supports_url(url: &str) -> bool {
+    super::url_host_matches(url, &["dropbox.com"])
+}
+
+#[cfg(test)]
+pub(crate) fn example_url() -> &'static str {
+    "https://www.dropbox.com/s/example/file.zip?dl=1"
+}
+
+pub fn should_proxy_stream(url: &str) -> bool {
+    super::url_host_matches(url, &["dropbox.com", "dropboxusercontent.com"])
+}
+
+pub fn normalize_direct_url(url: &str) -> Option<String> {
+    if !supports_url(url) {
+        return None;
+    }
+    let mut parsed = reqwest::Url::parse(url).ok()?;
+    let query = parsed
+        .query_pairs()
+        .filter(|(key, _)| key != "dl" && key != "raw")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    parsed
+        .query_pairs_mut()
+        .clear()
+        .extend_pairs(
+            query
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+        .append_pair("raw", "1");
+    Some(parsed.to_string())
+}
+
 pub async fn resolve_dropbox(client: &Client, url_str: &str) -> Result<CloudFolderResult, String> {
     let mut url = reqwest::Url::parse(url_str).map_err(|e| format!("Invalid Dropbox URL: {e}"))?;
 
@@ -105,4 +140,41 @@ pub async fn resolve_dropbox(client: &Client, url_str: &str) -> Result<CloudFold
         is_single_file: !is_folder,
         nodes: vec![node],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalizes_streams_for_the_local_proxy() {
+        let mut result = CloudFolderResult {
+            provider: "dropbox".into(),
+            url: "https://www.dropbox.com/s/xyz/video.mp4?dl=0".into(),
+            title: "video.mp4".into(),
+            total_files: 1,
+            total_size: 10,
+            is_single_file: true,
+            nodes: vec![CloudNode {
+                id: "xyz".into(),
+                parent_id: None,
+                name: "video.mp4".into(),
+                size: Some(10),
+                is_folder: false,
+                mime_type: Some("video/mp4".into()),
+                download_url: Some("https://www.dropbox.com/s/xyz/video.mp4?dl=1".into()),
+                stream_url: Some("https://www.dropbox.com/s/xyz/video.mp4?dl=0".into()),
+                thumbnail_url: None,
+                children: None,
+            }],
+        };
+
+        crate::cloud::canonicalize_cloud_result(&mut result);
+
+        let stream_url = result.nodes[0].stream_url.as_deref().unwrap();
+        assert!(stream_url.starts_with("/cloud_stream/proxy?url="));
+        assert!(stream_url.contains("name=video.mp4"));
+        assert!(!stream_url.contains("dl%3D0"));
+        assert!(stream_url.contains("raw%3D1"));
+    }
 }

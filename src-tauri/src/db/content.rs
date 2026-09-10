@@ -723,8 +723,10 @@ impl ContentRepository {
                     favorite_count: None,
                     attachment_count: None,
                     thumbnail_url: None,
+                    media_url: None,
                     page_url: None,
                     preview_path: None,
+                    cloud_urls: Vec::new(),
                     extra: Default::default(),
                 });
                 if let Some(pid) = provider_id {

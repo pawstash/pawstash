@@ -1,6 +1,10 @@
 use super::models::CloudFolderResult;
 use reqwest::Client;
 
+pub fn supports_url(url: &str) -> bool {
+    super::url_host_matches(url, &["iframely.net", "iframe.ly"])
+}
+
 pub async fn resolve_iframely(client: &Client, url_str: &str) -> Result<CloudFolderResult, String> {
     let resp = client
         .get(url_str)
@@ -74,18 +78,16 @@ pub async fn resolve_iframely(client: &Client, url_str: &str) -> Result<CloudFol
         "Could not extract target media or cloud URL from Iframely embed".to_string()
     })?;
 
-    // Now resolve the extracted target URL
-    let lower = target_url.to_lowercase();
-    if lower.contains("mega.nz") || lower.contains("mega.co.nz") {
+    if super::mega::supports_url(&target_url) {
         return super::mega::resolve_mega(client, &target_url).await;
     }
-    if lower.contains("pixeldrain.com") {
+    if super::pixeldrain::supports_url(&target_url) {
         return super::pixeldrain::resolve_pixeldrain(client, &target_url).await;
     }
-    if lower.contains("dropbox.com") {
+    if super::dropbox::supports_url(&target_url) {
         return super::dropbox::resolve_dropbox(client, &target_url).await;
     }
-    if lower.contains("drive.google.com") || lower.contains("docs.google.com") {
+    if super::googledrive::supports_url(&target_url) {
         return super::googledrive::resolve_googledrive(client, &target_url).await;
     }
 

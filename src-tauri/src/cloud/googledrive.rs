@@ -1,6 +1,21 @@
 use super::models::{CloudFolderResult, CloudNode};
 use reqwest::Client;
 
+pub fn supports_url(url: &str) -> bool {
+    super::url_host_matches(url, &["drive.google.com", "docs.google.com"])
+}
+
+pub fn should_proxy_stream(url: &str) -> bool {
+    super::url_host_matches(
+        url,
+        &[
+            "drive.google.com",
+            "drive.usercontent.google.com",
+            "docs.google.com",
+        ],
+    )
+}
+
 pub async fn resolve_googledrive(
     client: &Client,
     url_str: &str,

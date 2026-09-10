@@ -25,7 +25,7 @@
   import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
   import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
   import { serverPortState } from '$lib/state/serverPort.svelte';
-  import { extractCloudLinks, extractDirectMediaLinks, deriveCloudProviderFromUrl } from './RichContent.svelte';
+  import { extractDirectMediaLinks } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -143,7 +143,13 @@
   );
 
   const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
-  let entry = $derived.by(() => contentState.posts[postCacheKey(service, creatorId, postId, activeProviderId)] ?? emptyEntry);
+  let entry = $derived.by(() => {
+    const byActive = contentState.posts[postCacheKey(service, creatorId, postId, activeProviderId)];
+    if (byActive?.post) return byActive;
+    const byAuto = contentState.posts[postCacheKey(service, creatorId, postId)];
+    if (byAuto?.post) return byAuto;
+    return byActive ?? byAuto ?? emptyEntry;
+  });
   let rawPost = $derived(entry.post);
   let availableProviders = $derived.by<string[]>(() => {
     const raw = (rawPost as any)?.extra?.available_providers;
@@ -538,12 +544,6 @@
   let lastResolvedPostKey = '';
   $effect(() => {
     const currentPostKey = postKey;
-    const content = post?.content || post?.substring || '';
-    let sources = content;
-    if (postEmbed?.url) sources += ' ' + postEmbed.url;
-    if (postEmbed?.html) sources += ' ' + postEmbed.html;
-    if (postEmbed?.description) sources += ' ' + postEmbed.description;
-
     untrack(() => {
       const cachedNodes = globalPostCloudNodes.get(currentPostKey);
       if (cachedNodes && cachedNodes.length > 0) {
@@ -552,7 +552,7 @@
         return;
       }
 
-      const cloudUrls = extractCloudLinks(sources);
+      const cloudUrls = post?.cloud_urls || [];
       if (cloudUrls.length === 0) {
         resolvedCloudAttachments = [];
         globalPostCloudNodes.delete(currentPostKey);
@@ -697,15 +697,13 @@
       }
       const directMedia = extractDirectMediaLinks(post.content || post.substring || '');
       for (const d of directMedia) {
-        const provName = deriveCloudProviderFromUrl(d.url);
         const att: Attachment = {
           name: d.name,
           path: d.url,
           size: undefined,
           server: '',
-          is_cloud: true,
-          is_cloud_folder: false,
-          cloud_provider: provName
+          is_cloud: false,
+          is_cloud_folder: false
         } as any;
         const exists = items.some((existing) => isSameAttachment(existing, att));
         if (!exists) {
@@ -714,7 +712,6 @@
       }
     }
 
-    // Include completed downloaded items for this post (enables 100% offline playback)
     const postDownloads = downloadState.downloads.filter((d) =>
       d.service === service &&
       d.creator_id === creatorId &&
@@ -776,7 +773,7 @@
   function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
-      // If duration is known and video has 0 dimensions, video track cannot be decoded (e.g. HEVC in Chromium)
+      // Chromium reports zero dimensions when it can play audio but not the video codec.
       if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
         logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
         videoFailures[index] = { preset: 'unsupported_codec', format: 'H.265 / HEVC' };
@@ -886,13 +883,7 @@
   });
 
   let isEmbedResolvedToCloud = $derived(Boolean(
-    postEmbed?.url && (
-      postEmbed.url.includes('iframely.net') ||
-      postEmbed.url.includes('iframe.ly') ||
-      postEmbed.url.includes('mega.nz') ||
-      postEmbed.url.includes('dropbox.com') ||
-      postEmbed.url.includes('pixeldrain.com')
-    ) && resolvedCloudAttachments.length > 0
+    postEmbed?.url && resolvedCloudAttachments.length > 0
   ));
 
   let isEmbedLinkedPost = $derived(Boolean(
@@ -1345,19 +1336,16 @@
         targetFile = findTargetAttachment(initialMedia);
       }
 
-      // If target file is found (e.g. from local download disk or existing media), open immediately!
       if (targetFile) {
         initialViewerHandled = true;
         openMediaViewer(targetFile, currentMedia);
         return;
       }
 
-      // If looking for an un-downloaded online media item or initial post load, wait for post fetching/cloud resolve to finish
       if ((isPostLoading || isCloudResolving) && !entry.error) {
         return;
       }
 
-      // Fallback: if specific item was not found after loading finished but openViewer was requested, open first media item
       if (currentMedia.length > 0) {
         targetFile = post?.file || (post?.attachments && post.attachments.length > 0 ? post.attachments[0] : null) || currentMedia[0];
         if (targetFile) {
@@ -1742,7 +1730,7 @@
     return attachmentMediaUrl(file, service, post);
   }
 
-  function fileUrl(file: { path?: string; server?: string; name?: string; cloud_node_id?: string }) {
+  function fileUrl(file: Attachment) {
     const port = serverPortState.port || 0;
 
     const localJob = attachmentDownload(file);
@@ -1758,35 +1746,17 @@
       return convertFileSrc(localPath);
     }
 
-    if (file.path?.startsWith('/cloud_stream/')) {
+    const backendUrl = file.url || file.path || '';
+
+    if (backendUrl.startsWith('/cloud_stream/')) {
       if (port > 0) {
-        return serverPortState.mediaUrl(file.path);
+        return serverPortState.mediaUrl(backendUrl);
       }
       return '';
     }
 
-    if (file.path?.startsWith('http://') || file.path?.startsWith('https://')) {
-      let targetPath = file.path;
-      if (targetPath.includes('dropbox.com')) {
-        try {
-          const u = new URL(targetPath);
-          u.searchParams.delete('dl');
-          u.searchParams.set('raw', '1');
-          targetPath = u.toString();
-        } catch {
-          // ignore
-        }
-      }
-      if (
-        port > 0 &&
-        (targetPath.includes('dropbox.com') ||
-          targetPath.includes('pixeldrain.com') ||
-          targetPath.includes('drive.google.com') ||
-          targetPath.includes('dropboxusercontent.com'))
-      ) {
-        return serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(targetPath)}${file.name ? `&name=${encodeURIComponent(file.name)}` : ''}`);
-      }
-      return targetPath;
+    if (backendUrl.startsWith('http://') || backendUrl.startsWith('https://')) {
+      return backendUrl;
     }
 
     const remoteUrl = remoteFileUrl(file as Attachment);
@@ -1913,24 +1883,10 @@
     }
 
     if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
-      if (targetUrl.includes('dropbox.com')) {
-        try {
-          const u = new URL(targetPathSafe(targetUrl));
-          u.searchParams.delete('raw');
-          u.searchParams.set('dl', '1');
-          return u.toString();
-        } catch {
-          // ignore
-        }
-      }
       return targetUrl;
     }
 
     return remoteFileUrl(file as Attachment);
-  }
-
-  function targetPathSafe(url: string): string {
-    return url;
   }
 
   async function download(file: { path?: string; server?: string; name?: string; is_cloud?: boolean; cloud_folder_result?: any; cloud_node_id?: string }, index: number) {
@@ -2780,7 +2736,7 @@
                       {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                         <!-- svelte-ignore a11y_media_has_caption -->
                         <video
-                          src={embedAttachment ? fileUrl(embedAttachment) : (serverPortState.port > 0 ? serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(postEmbed.url)}`) : postEmbed.url)}
+                          src={embedAttachment ? fileUrl(embedAttachment) : postEmbed.url}
                           controls
                           playsinline
                           preload="none"
@@ -3217,7 +3173,7 @@
         <section class="post-content" bind:this={contentWrapperEl}>
           <div class="html-content-container" class:is-collapsed={isOverflowing && !contentExpanded}>
             <div class="html-content" bind:clientHeight={contentHeight}>
-              <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} onopencloud={handleOpenCloudFromText} />
+              <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} cloudUrls={post?.cloud_urls || []} onopencloud={handleOpenCloudFromText} />
             </div>
           </div>
 

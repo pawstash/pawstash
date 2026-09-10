@@ -23,13 +23,8 @@
   let modalOpen = $state(false);
 
   let providerName = $derived.by(() => {
-    const u = (url || '').toLowerCase();
-    if (u.includes('mega.nz') || u.includes('mega.co.nz')) return 'MEGA';
-    if (u.includes('pixeldrain.com')) return 'Pixeldrain';
-    if (u.includes('dropbox.com')) return 'Dropbox';
-    if (u.includes('drive.google.com')) return 'Google Drive';
-    if (u.includes('iframely.net') || u.includes('iframe.ly')) return 'Cloud Embed';
-    return 'Cloud';
+    if (!resolvedData?.provider) return 'Cloud';
+    return resolvedData.provider;
   });
 
   let providerBadgeClass = $derived.by(() => {

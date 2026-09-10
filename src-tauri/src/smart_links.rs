@@ -24,12 +24,7 @@ pub enum DeepLinkTarget {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalPostLink {
-    pub service: String,
-    pub post_id: String,
-    pub creator_hint: Option<String>,
-}
+pub type ExternalPostLink = crate::api::providers::ProviderPostLink;
 
 fn host_matches(host: &str, root: &str) -> bool {
     host == root || host.ends_with(&format!(".{root}"))
@@ -102,6 +97,10 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         .filter(|segment| !segment.is_empty())
         .collect();
 
+    if let Some(link) = crate::api::providers::parse_archive_post_url(&url) {
+        return Some(link);
+    }
+
     if host_matches(&host, "patreon.com") {
         let raw_id = segment_after(&segments, "posts")?;
         return Some(ExternalPostLink {
@@ -151,36 +150,6 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
         });
     }
 
-    if (host_matches(&host, "cum.st") || host.contains("pawchive") || host.contains("coomer"))
-        && segments.len() >= 5
-        && matches!(segments[1], "user" | "server" | "channel")
-        && segments[3] == "post"
-    {
-        let service = clean_segment(segments[0])?;
-        let creator_id = clean_segment(segments[2])?;
-        let post_id = clean_segment(segments[4])?;
-        return Some(ExternalPostLink {
-            service,
-            post_id,
-            creator_hint: Some(creator_id),
-        });
-    }
-
-    if host_matches(&host, "cum.st")
-        && segments.len() >= 5
-        && segments[0] == "creators"
-        && segments[3] == "post"
-    {
-        let service = clean_segment(segments[1])?;
-        let creator_id = clean_segment(segments[2])?;
-        let post_id = clean_segment(segments[4])?;
-        return Some(ExternalPostLink {
-            service,
-            post_id,
-            creator_hint: Some(creator_id),
-        });
-    }
-
     if (host_matches(&host, "discord.com") || host_matches(&host, "discordapp.com"))
         && segments.len() >= 4
         && segments[0] == "channels"
@@ -227,11 +196,7 @@ pub fn parse_external_post_link(raw: &str) -> Option<ExternalPostLink> {
     None
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalCreatorLink {
-    pub service: String,
-    pub creator_hint: String,
-}
+pub type ExternalCreatorLink = crate::api::providers::ProviderCreatorLink;
 
 pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
     let url = Url::parse(raw).ok()?;
@@ -247,25 +212,8 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
         .filter(|segment| !segment.is_empty())
         .collect();
 
-    if (host_matches(&host, "cum.st") || host.contains("pawchive") || host.contains("coomer"))
-        && segments.len() >= 3
-        && matches!(segments[1], "user" | "server" | "channel")
-    {
-        let service = clean_segment(segments[0])?;
-        let creator_id = clean_segment(segments[2])?;
-        return Some(ExternalCreatorLink {
-            service,
-            creator_hint: creator_id,
-        });
-    }
-
-    if host_matches(&host, "cum.st") && segments.len() >= 3 && segments[0] == "creators" {
-        let service = clean_segment(segments[1])?;
-        let creator_id = clean_segment(segments[2])?;
-        return Some(ExternalCreatorLink {
-            service,
-            creator_hint: creator_id,
-        });
+    if let Some(link) = crate::api::providers::parse_archive_creator_url(&url) {
+        return Some(link);
     }
 
     if host_matches(&host, "patreon.com") {
@@ -486,28 +434,6 @@ pub fn parse_external_creator_link(raw: &str) -> Option<ExternalCreatorLink> {
     None
 }
 
-pub fn parse_pawchive_post_url(
-    url: &Url,
-    expected_service: &str,
-    expected_post_id: &str,
-) -> Option<(String, String, String)> {
-    let segments: Vec<&str> = url
-        .path_segments()?
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    if segments.len() < 5
-        || !matches!(segments[1], "user" | "server" | "channel")
-        || segments[3] != "post"
-    {
-        return None;
-    }
-    let service = clean_segment(segments[0])?;
-    let creator_id = clean_segment(segments[2])?;
-    let post_id = clean_segment(segments[4])?;
-    (service.eq_ignore_ascii_case(expected_service) && post_id == expected_post_id)
-        .then_some((service, creator_id, post_id))
-}
-
 fn extract_domain_root(url_or_host: &str) -> Option<String> {
     let host = if let Ok(parsed) = Url::parse(url_or_host) {
         parsed.host_str()?.to_string()
@@ -717,7 +643,6 @@ pub fn parse_deep_link(
             .iter()
             .find(|p| matches_provider_domain(&host, p))
         {
-            // Case A: /{service}/user/{creator_id}/post/{post_id} or /{service}/server/{creator_id}/post/{post_id}
             if segments.len() >= 5
                 && matches!(segments[1], "user" | "server" | "channel")
                 && segments[3] == "post"
@@ -730,7 +655,6 @@ pub fn parse_deep_link(
                 });
             }
 
-            // Case B: /posts/{service}/{creator_id}/{post_id} (OnlyHaven / generic posts)
             if segments.len() >= 4 && (segments[0] == "posts" || segments[0] == "post") {
                 return Ok(DeepLinkTarget::Post {
                     provider_id: prov.id.clone(),
@@ -740,7 +664,6 @@ pub fn parse_deep_link(
                 });
             }
 
-            // Case C: /{service}/user/{creator_id} or /creators/{service}/{creator_id}
             if segments.len() >= 3 && (segments[1] == "user" || segments[0] == "creators") {
                 let service = if segments[0] == "creators" {
                     segments[1]
@@ -755,7 +678,6 @@ pub fn parse_deep_link(
                 });
             }
 
-            // Case D: /posts?q=... or /search?q=...
             if (segments.is_empty() || segments[0] == "posts" || segments[0] == "search")
                 && (url.query_pairs().any(|(k, _)| k == "q" || k == "query"))
             {
@@ -838,8 +760,11 @@ mod tests {
         assert_eq!(fanbox_at.service, "fanbox");
         assert_eq!(fanbox_at.creator_hint, "dakkokujiro");
 
-        let pawchive_creator =
-            parse_external_creator_link("https://pawchive.pw/fanbox/user/58552278").unwrap();
+        let archive_url = format!(
+            "{}/fanbox/user/58552278",
+            crate::api::providers::PawchiveProvider::default_config().api_url
+        );
+        let pawchive_creator = parse_external_creator_link(&archive_url).unwrap();
         assert_eq!(pawchive_creator.service, "fanbox");
         assert_eq!(pawchive_creator.creator_hint, "58552278");
     }
@@ -871,57 +796,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_full_pawchive_route() {
-        let url = Url::parse("https://pawchive.st/patreon/user/981501/post/130382350").unwrap();
-        assert_eq!(
-            parse_pawchive_post_url(&url, "patreon", "130382350"),
-            Some(("patreon".into(), "981501".into(), "130382350".into()))
-        );
-    }
-
-    #[test]
     fn test_parse_deep_link_custom_scheme() {
-        let providers = vec![
-            crate::api::providers::traits::ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into(), "fanbox".into()],
-                is_custom: false,
-                priority: 0,
-            },
-            crate::api::providers::traits::ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: true,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 1,
-            },
-        ];
+        let mut pawchive = crate::api::providers::PawchiveProvider::default_config();
+        pawchive.enabled = true;
+        pawchive.priority = 0;
+        let pawchive_id = pawchive.id.clone();
+        let pawchive_api_url = pawchive.api_url.clone();
+        let mut onlyhaven = crate::api::providers::OnlyHavenProvider::default_config();
+        onlyhaven.enabled = true;
+        onlyhaven.priority = 1;
+        let providers = vec![pawchive, onlyhaven];
 
         let res =
             parse_deep_link("pawstash://post/patreon/12516244/168022069", &providers).unwrap();
         assert_eq!(
             res,
             DeepLinkTarget::Post {
-                provider_id: "pawchive".into(),
+                provider_id: pawchive_id.clone(),
                 service: "patreon".into(),
                 creator_id: "12516244".into(),
                 post_id: "168022069".into()
@@ -932,7 +823,7 @@ mod tests {
         assert_eq!(
             res,
             DeepLinkTarget::Creator {
-                provider_id: "pawchive".into(),
+                provider_id: pawchive_id.clone(),
                 service: "fanbox".into(),
                 creator_id: "51803217".into()
             }
@@ -947,15 +838,13 @@ mod tests {
             }
         );
 
-        let res = parse_deep_link(
-            "pawstash://open?url=https%3A%2F%2Fpawchive.pw%2Ffanbox%2Fuser%2F51803217%2Fpost%2F12531297",
-            &providers,
-        )
-        .unwrap();
+        let archive_url = format!("{pawchive_api_url}/fanbox/user/51803217/post/12531297");
+        let deep_link = format!("pawstash://open?url={}", urlencoding::encode(&archive_url));
+        let res = parse_deep_link(&deep_link, &providers).unwrap();
         assert_eq!(
             res,
             DeepLinkTarget::Post {
-                provider_id: "pawchive".into(),
+                provider_id: pawchive_id,
                 service: "fanbox".into(),
                 creator_id: "51803217".into(),
                 post_id: "12531297".into()
@@ -982,25 +871,16 @@ mod tests {
                 is_custom: true,
                 priority: 0,
             },
-            crate::api::providers::traits::ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: true,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 1,
+            {
+                let mut config = crate::api::providers::OnlyHavenProvider::default_config();
+                config.enabled = true;
+                config.priority = 1;
+                config
             },
         ];
+        let onlyhaven_id = providers[1].id.clone();
+        let onlyhaven_api_url = providers[1].api_url.clone();
 
-        // Matched against custom user-configured mirror
         let res = parse_deep_link(
             "https://backup-mirror.net/patreon/user/123/post/456",
             &providers,
@@ -1016,34 +896,29 @@ mod tests {
             }
         );
 
-        // Matched against OnlyHaven web post link
-        let res = parse_deep_link(
-            "https://cum.st/posts/onlyfans/14644822/2702157105",
-            &providers,
-        )
-        .unwrap();
+        let onlyhaven_post_url = format!("{onlyhaven_api_url}/posts/onlyfans/14644822/2702157105");
+        let res = parse_deep_link(&onlyhaven_post_url, &providers).unwrap();
         assert_eq!(
             res,
             DeepLinkTarget::Post {
-                provider_id: "onlyhaven".into(),
+                provider_id: onlyhaven_id.clone(),
                 service: "onlyfans".into(),
                 creator_id: "14644822".into(),
                 post_id: "2702157105".into()
             }
         );
 
-        // Matched against OnlyHaven creator link
-        let res = parse_deep_link("https://cum.st/creators/onlyfans/14644822", &providers).unwrap();
+        let onlyhaven_creator_url = format!("{onlyhaven_api_url}/creators/onlyfans/14644822");
+        let res = parse_deep_link(&onlyhaven_creator_url, &providers).unwrap();
         assert_eq!(
             res,
             DeepLinkTarget::Creator {
-                provider_id: "onlyhaven".into(),
+                provider_id: onlyhaven_id,
                 service: "onlyfans".into(),
                 creator_id: "14644822".into()
             }
         );
 
-        // Matched against external Patreon post link
         let res = parse_deep_link(
             "https://www.patreon.com/posts/my-post-130382350",
             &providers,
@@ -1059,9 +934,10 @@ mod tests {
             }
         );
 
-        let coomer_post_link = parse_external_post_link(
-            "https://coomer.st/onlyfans/user/hotcurvyjasmine/post/2037748208",
-        );
+        let coomer_api_url = crate::api::providers::CoomerProvider::default_config().api_url;
+        let coomer_post_url =
+            format!("{coomer_api_url}/onlyfans/user/hotcurvyjasmine/post/2037748208");
+        let coomer_post_link = parse_external_post_link(&coomer_post_url);
         assert_eq!(
             coomer_post_link,
             Some(ExternalPostLink {
@@ -1071,8 +947,8 @@ mod tests {
             })
         );
 
-        let coomer_creator_link =
-            parse_external_creator_link("https://coomer.st/fansly/user/800702847065796609");
+        let coomer_creator_url = format!("{coomer_api_url}/fansly/user/800702847065796609");
+        let coomer_creator_link = parse_external_creator_link(&coomer_creator_url);
         assert_eq!(
             coomer_creator_link,
             Some(ExternalCreatorLink {

@@ -202,9 +202,7 @@ export function postPageUrl(_service: string, _creatorId: string, _postId: strin
 }
 
 export function postMediaUrl(post: Post): string | null {
-  const media = post.file?.path ? post.file : post.attachments?.find((item) => item.path);
-  if (!media) return null;
-  return media.url || (media.path && (media.path.startsWith('http://') || media.path.startsWith('https://')) ? media.path : null);
+  return post.media_url || null;
 }
 
 export function isPostUnarchived(post?: Post | null): boolean {
@@ -230,36 +228,27 @@ export function isPostUnarchived(post?: Post | null): boolean {
 
 export function attachmentMediaUrl(file: Attachment, _service?: string, _post?: Post | null): string {
   if (!file) return '';
-  if (file.url && (file.url.startsWith('http://') || file.url.startsWith('https://'))) {
+  if (file.url && (
+    file.url.startsWith('http://') ||
+    file.url.startsWith('https://') ||
+    file.url.startsWith('/cloud_stream/')
+  )) {
     return file.url;
   }
   if (file.path && (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/'))) {
     return file.path;
   }
 
-  const isPreviewOnly = (file as any).preview_only === true ||
-    (file.extra as any)?.preview_only === true ||
-    (file as any).deferred === true ||
-    (file.extra as any)?.deferred === true;
-
-  if (isPreviewOnly && file.thumbnail_url) {
-    return file.thumbnail_url;
-  }
-
-  return file.url || file.path || '';
+  return '';
 }
 
 export function attachmentThumbnailUrl(file: Attachment, _service?: string): string {
   if (!file) return '';
-  if (file.thumbnail_url) return file.thumbnail_url;
-  const thumb = (file as any)?.thumbnail || (file as any)?.preview || (file.extra as any)?.thumbnail || (file.extra as any)?.preview;
-  if (thumb && typeof thumb === 'string') return thumb;
-  if (file.path && (file.path.startsWith('http://') || file.path.startsWith('https://'))) return file.path;
-  return '';
+  return file.thumbnail_url || '';
 }
 
 export function postThumbnailUrl(post: Post): string | null {
-  return post.thumbnail_url || post.file?.thumbnail_url || post.attachments?.[0]?.thumbnail_url || null;
+  return post.thumbnail_url || null;
 }
 
 export function postThumbnailSrc(post?: Post | null): string | null {
@@ -287,22 +276,6 @@ export function postPlaceholderUrl(post?: Post | null): string | undefined {
 
   if (thumbhash && typeof thumbhash === 'string') {
     return thumbHashToUrl(thumbhash) || undefined;
-  }
-  return undefined;
-}
-
-export function deriveCdnThumbnailUrl(url?: string): string | undefined {
-  if (!url) return undefined;
-  const cleanUrl = url.split(/[?#]/)[0];
-  if (/\.(m4v|mkv|mov|mp4|webm)$/i.test(cleanUrl)) return undefined;
-  if (cleanUrl.includes('/data/')) {
-    return cleanUrl
-      .replace('/data/', '/thumbnail/data/')
-      .replace(/:\/\/(file\d*|c\d*|e\d*|n\d*)\./i, '://img.');
-  }
-  const match = cleanUrl.match(/\/media\/([^/]+)\/original/);
-  if (match) {
-    return cleanUrl.replace(/\/media\/[^/]+\/original.*/, `/thumbnail/${match[1]}/preview.webp`);
   }
   return undefined;
 }
@@ -615,13 +588,6 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
   return results;
 }
 
-export function extractCloudLinks(raw: string): string[] {
-  if (!raw) return [];
-  const regex = /https?:\/\/(?:[a-zA-Z0-9-]+\.)*(?:mega\.nz|mega\.co\.nz|pixeldrain\.com|dropbox\.com|drive\.google\.com|mediafire\.com|catbox\.moe|gofile\.io|iframely\.net|iframe\.ly)\/[^\s<>"')]+/gi;
-  const matches = raw.match(regex) || [];
-  return [...new Set(matches)];
-}
-
 export interface PostFileCounts {
   images: number;
   videos: number;
@@ -716,9 +682,7 @@ export function getPostFileCounts(post: Post): PostFileCounts {
     }
   }
 
-  const contentText = (post.content || post.substring || '') + ' ' + JSON.stringify(post.embed || {});
-  const cloudLinks = extractCloudLinks(contentText);
-  counts.clouds = cloudLinks.length;
+  counts.clouds = post.cloud_urls?.length || 0;
 
   counts.total = counts.images + counts.videos + counts.audios + counts.archives + counts.documents + counts.clouds;
   return counts;
@@ -974,7 +938,7 @@ export function diagnoseVideoFailure(
           message: mediaErr.message || undefined
         };
       }
-      // For remote web streams (MP4/WebM/HLS etc.), code 4 with empty/upstream error means 404/403/unavailable on source
+      // Browser error 4 is ambiguous remotely, so report it as source unavailability.
       return {
         preset: 'unavailable',
         message: mediaErr.message || undefined

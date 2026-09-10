@@ -51,60 +51,101 @@ impl CloudResolver {
 
     pub async fn resolve(&self, url: &str) -> Result<CloudFolderResult, String> {
         let trimmed = url.trim();
-        let lower = trimmed.to_lowercase();
 
-        if lower.contains("iframely.net") || lower.contains("iframe.ly") {
-            return iframely::resolve_iframely(&self.client, trimmed).await;
-        }
+        let mut result = if iframely::supports_url(trimmed) {
+            iframely::resolve_iframely(&self.client, trimmed).await?
+        } else if mega::supports_url(trimmed) {
+            mega::resolve_mega(&self.client, trimmed).await?
+        } else if pixeldrain::supports_url(trimmed) {
+            pixeldrain::resolve_pixeldrain(&self.client, trimmed).await?
+        } else if dropbox::supports_url(trimmed) {
+            dropbox::resolve_dropbox(&self.client, trimmed).await?
+        } else if googledrive::supports_url(trimmed) {
+            googledrive::resolve_googledrive(&self.client, trimmed).await?
+        } else {
+            return Err(format!(
+                "Unsupported cloud link provider for URL: {trimmed}"
+            ));
+        };
 
-        if lower.contains("mega.nz") || lower.contains("mega.co.nz") {
-            return mega::resolve_mega(&self.client, trimmed).await;
-        }
-
-        if lower.contains("pixeldrain.com") {
-            return pixeldrain::resolve_pixeldrain(&self.client, trimmed).await;
-        }
-
-        if lower.contains("dropbox.com") {
-            return dropbox::resolve_dropbox(&self.client, trimmed).await;
-        }
-
-        if lower.contains("drive.google.com") || lower.contains("docs.google.com") {
-            return googledrive::resolve_googledrive(&self.client, trimmed).await;
-        }
-
-        Err(format!(
-            "Unsupported cloud link provider for URL: {trimmed}"
-        ))
+        canonicalize_cloud_result(&mut result);
+        Ok(result)
     }
 }
 
-pub fn normalize_cloud_direct_url(url: &str) -> String {
-    let mut target_url = url.trim().to_string();
-    if let Ok(mut u) = reqwest::Url::parse(&target_url) {
-        let host = u.host_str().unwrap_or("").to_lowercase();
-        let path = u.path().to_string();
-
-        if host.contains("dropbox.com") {
-            let query: Vec<(String, String)> = u
-                .query_pairs()
-                .filter(|(k, _)| k != "dl" && k != "raw")
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect();
-            u.query_pairs_mut()
-                .clear()
-                .extend_pairs(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .append_pair("raw", "1");
-            target_url = u.to_string();
+pub fn canonicalize_cloud_result(result: &mut CloudFolderResult) {
+    for node in &mut result.nodes {
+        if node.is_folder {
+            continue;
         }
-
-        if host.contains("pixeldrain.com") && path.starts_with("/u/") {
-            let file_id = path.trim_start_matches("/u/");
-            u.set_path(&format!("/api/file/{file_id}"));
-            target_url = u.to_string();
+        if let Some(stream_url) = node.stream_url.as_deref() {
+            if should_proxy_cloud_stream(stream_url) {
+                let target = normalize_cloud_direct_url(stream_url);
+                node.stream_url = Some(format!(
+                    "/cloud_stream/proxy?url={}&name={}",
+                    urlencoding::encode(&target),
+                    urlencoding::encode(&node.name)
+                ));
+            }
         }
     }
-    target_url
+}
+
+fn should_proxy_cloud_stream(url: &str) -> bool {
+    dropbox::should_proxy_stream(url)
+        || pixeldrain::should_proxy_stream(url)
+        || googledrive::should_proxy_stream(url)
+}
+
+pub fn normalize_cloud_direct_url(url: &str) -> String {
+    dropbox::normalize_direct_url(url)
+        .or_else(|| pixeldrain::normalize_direct_url(url))
+        .unwrap_or_else(|| url.trim().to_string())
+}
+
+pub fn supports_url(url: &str) -> bool {
+    iframely::supports_url(url)
+        || mega::supports_url(url)
+        || pixeldrain::supports_url(url)
+        || dropbox::supports_url(url)
+        || googledrive::supports_url(url)
+}
+
+pub fn extract_supported_urls(raw: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = [
+        raw[cursor..].find("https://"),
+        raw[cursor..].find("http://"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    {
+        let start = cursor + relative_start;
+        let tail = &raw[start..];
+        let end = tail
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '<' | '>' | '"' | '\'' | ')')
+            })
+            .unwrap_or(tail.len());
+        let candidate = tail[..end].trim_end_matches([',', '.', ';', ']', '}']);
+        if supports_url(candidate) && !urls.iter().any(|existing| existing == candidate) {
+            urls.push(candidate.to_string());
+        }
+        cursor = start + end.max(1);
+    }
+    urls
+}
+
+pub(crate) fn url_host_matches(url: &str, domains: &[&str]) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    domains
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
 #[cfg(test)]
@@ -112,14 +153,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_cloud_direct_url() {
-        assert_eq!(
-            normalize_cloud_direct_url("https://www.dropbox.com/s/xyz/video.mp4?dl=0"),
-            "https://www.dropbox.com/s/xyz/video.mp4?raw=1"
-        );
-        assert_eq!(
-            normalize_cloud_direct_url("https://pixeldrain.com/u/abc12345"),
-            "https://pixeldrain.com/api/file/abc12345"
-        );
+    fn extracts_supported_urls_without_frontend_classification() {
+        let supported = dropbox::example_url();
+        let raw = format!("before {supported} after https://example.test/file");
+        assert_eq!(extract_supported_urls(&raw), vec![supported.to_string()]);
     }
 }

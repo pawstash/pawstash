@@ -39,12 +39,9 @@ fn sanitize_cache_key(value: &str) -> String {
 }
 
 fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, String> {
-    let id_lower = config.id.to_lowercase();
-    let url_lower = config.api_url.to_lowercase();
-
-    if id_lower == "onlyhaven" || url_lower.contains("cum.st") {
+    if OnlyHavenProvider::matches_config(&config) {
         Ok(Arc::new(OnlyHavenProvider::new(config)?))
-    } else if id_lower == "coomer" || url_lower.contains("coomer") {
+    } else if CoomerProvider::matches_config(&config) {
         Ok(Arc::new(CoomerProvider::new(config)?))
     } else {
         Ok(Arc::new(PawchiveProvider::new(config)?))
@@ -142,6 +139,44 @@ impl ProviderManager {
     pub async fn get_provider_by_id(&self, id: &str) -> Option<Arc<dyn SourceProvider>> {
         let providers = self.providers.read().await;
         providers.iter().find(|p| p.config().id == id).cloned()
+    }
+
+    async fn get_provider_for_resolution(
+        &self,
+        service: &str,
+        provider_id: Option<&str>,
+    ) -> Option<Arc<dyn SourceProvider>> {
+        if let Some(provider) = match provider_id {
+            Some(id) => self.get_provider_by_id(id).await,
+            None => None,
+        } {
+            return Some(provider);
+        }
+        if let Some(provider) = self
+            .get_providers_for_service(service)
+            .await
+            .into_iter()
+            .next()
+        {
+            return Some(provider);
+        }
+        if let Some(provider) = self.get_all_enabled_providers().await.into_iter().next() {
+            return Some(provider);
+        }
+        if let Some(provider) = self.providers.read().await.first().cloned() {
+            return Some(provider);
+        }
+
+        Self::default_configs()
+            .into_iter()
+            .find(|config| {
+                config
+                    .services
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(service))
+            })
+            .or_else(|| Self::default_configs().into_iter().next())
+            .and_then(|config| create_provider(config).ok())
     }
 
     pub async fn get_queue_for_url(&self, url: &str) -> Arc<ProviderRequestQueue> {
@@ -1307,34 +1342,10 @@ impl ProviderManager {
         if file_path.starts_with("http://") || file_path.starts_with("https://") {
             return file_path.to_string();
         }
-        if let Some(id) = provider_id {
-            if let Some(p) = self.get_provider_by_id(id).await {
-                return p.resolve_media_url(file_path, server);
-            }
-        }
-        let candidates = self.get_providers_for_service(service).await;
-        if let Some(first) = candidates.first() {
-            first.resolve_media_url(file_path, server)
-        } else {
-            let enabled = self.get_all_enabled_providers().await;
-            if let Some(first) = enabled.first() {
-                first.resolve_media_url(file_path, server)
-            } else if let Some(first) = self.providers.read().await.first() {
-                first.resolve_media_url(file_path, server)
-            } else {
-                let confs = Self::default_configs();
-                let config = confs
-                    .into_iter()
-                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
-                    .or_else(|| Self::default_configs().into_iter().next());
-                if let Some(cfg) = config {
-                    if let Ok(prov) = create_provider(cfg) {
-                        return prov.resolve_media_url(file_path, server);
-                    }
-                }
-                String::new()
-            }
-        }
+        self.get_provider_for_resolution(service, provider_id)
+            .await
+            .map(|provider| provider.resolve_media_url(file_path, server))
+            .unwrap_or_default()
     }
 
     pub async fn resolve_thumbnail_url(
@@ -1346,34 +1357,10 @@ impl ProviderManager {
         if thumb_path.starts_with("http://") || thumb_path.starts_with("https://") {
             return thumb_path.to_string();
         }
-        if let Some(id) = provider_id {
-            if let Some(p) = self.get_provider_by_id(id).await {
-                return p.resolve_thumbnail_url(thumb_path);
-            }
-        }
-        let candidates = self.get_providers_for_service(service).await;
-        if let Some(first) = candidates.first() {
-            first.resolve_thumbnail_url(thumb_path)
-        } else {
-            let enabled = self.get_all_enabled_providers().await;
-            if let Some(first) = enabled.first() {
-                first.resolve_thumbnail_url(thumb_path)
-            } else if let Some(first) = self.providers.read().await.first() {
-                first.resolve_thumbnail_url(thumb_path)
-            } else {
-                let confs = Self::default_configs();
-                let config = confs
-                    .into_iter()
-                    .find(|c| c.services.iter().any(|s| s.eq_ignore_ascii_case(service)))
-                    .or_else(|| Self::default_configs().into_iter().next());
-                if let Some(cfg) = config {
-                    if let Ok(prov) = create_provider(cfg) {
-                        return prov.resolve_thumbnail_url(thumb_path);
-                    }
-                }
-                String::new()
-            }
-        }
+        self.get_provider_for_resolution(service, provider_id)
+            .await
+            .map(|provider| provider.resolve_thumbnail_url(thumb_path))
+            .unwrap_or_default()
     }
 
     pub async fn resolve_post_url(
@@ -1656,11 +1643,24 @@ impl ProviderManager {
     }
 
     pub async fn enrich_post(&self, post: &mut Post) {
-        let prov_id = post
+        let mut prov_id = post
             .extra
             .get("provider_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        if prov_id.is_none() {
+            prov_id = self
+                .get_providers_for_service(&post.service)
+                .await
+                .first()
+                .map(|provider| provider.id().to_string());
+            if let Some(provider_id) = prov_id.as_ref() {
+                post.extra.insert(
+                    "provider_id".to_string(),
+                    serde_json::Value::String(provider_id.clone()),
+                );
+            }
+        }
 
         if post.page_url.as_deref().unwrap_or("").is_empty() {
             let url = self
@@ -1672,64 +1672,85 @@ impl ProviderManager {
         }
 
         if let Some(ref mut file) = post.file {
-            if let Some(ref path) = file.path {
-                if file.url.as_deref().unwrap_or("").is_empty() {
-                    file.url = Some(
-                        self.resolve_media_url(
-                            &post.service,
-                            path,
-                            file.server.as_deref(),
-                            prov_id.as_deref(),
-                        )
-                        .await,
-                    );
-                }
-                if file.thumbnail_url.as_deref().unwrap_or("").is_empty() {
-                    file.thumbnail_url = Some(
-                        self.resolve_thumbnail_url(&post.service, path, prov_id.as_deref())
-                            .await,
-                    );
+            if file.path.is_some() {
+                let file_provider_id = file
+                    .extra
+                    .get("provider_id")
+                    .and_then(|value| value.as_str())
+                    .or(prov_id.as_deref())
+                    .map(str::to_string);
+                if let Some(provider) = self
+                    .get_provider_for_resolution(&post.service, file_provider_id.as_deref())
+                    .await
+                {
+                    provider.enrich_attachment(file);
                 }
             }
         }
 
         if let Some(ref mut attachments) = post.attachments {
             for att in attachments.iter_mut() {
-                if let Some(ref path) = att.path {
-                    if att.url.as_deref().unwrap_or("").is_empty() {
-                        att.url = Some(
-                            self.resolve_media_url(
-                                &post.service,
-                                path,
-                                att.server.as_deref(),
-                                prov_id.as_deref(),
-                            )
-                            .await,
-                        );
-                    }
-                    if att.thumbnail_url.as_deref().unwrap_or("").is_empty() {
-                        att.thumbnail_url = Some(
-                            self.resolve_thumbnail_url(&post.service, path, prov_id.as_deref())
-                                .await,
-                        );
+                if att.path.is_some() {
+                    let attachment_provider_id = att
+                        .extra
+                        .get("provider_id")
+                        .and_then(|value| value.as_str())
+                        .or(prov_id.as_deref())
+                        .map(str::to_string);
+                    if let Some(provider) = self
+                        .get_provider_for_resolution(
+                            &post.service,
+                            attachment_provider_id.as_deref(),
+                        )
+                        .await
+                    {
+                        provider.enrich_attachment(att);
                     }
                 }
             }
         }
 
-        if post.thumbnail_url.as_deref().unwrap_or("").is_empty() {
-            if let Some(ref file) = post.file {
-                if let Some(ref t) = file.thumbnail_url {
-                    post.thumbnail_url = Some(t.clone());
-                }
-            }
-            if post.thumbnail_url.is_none() {
-                if let Some(ref attachments) = post.attachments {
-                    if let Some(first) = attachments.iter().find_map(|a| a.thumbnail_url.as_ref()) {
-                        post.thumbnail_url = Some(first.clone());
-                    }
-                }
-            }
+        let mut cloud_source = post.content.as_deref().unwrap_or_default().to_string();
+        if let Some(substring) = post.substring.as_deref() {
+            cloud_source.push(' ');
+            cloud_source.push_str(substring);
+        }
+        if let Some(embed) = post.embed.as_ref() {
+            cloud_source.push(' ');
+            cloud_source.push_str(&embed.to_string());
+        }
+        if !cloud_source.trim().is_empty() {
+            post.cloud_urls = crate::cloud::extract_supported_urls(&cloud_source);
+        }
+
+        let derived_media_url = post
+            .file
+            .as_ref()
+            .and_then(|attachment| attachment.url.clone())
+            .or_else(|| {
+                post.attachments.as_ref().and_then(|attachments| {
+                    attachments
+                        .iter()
+                        .find_map(|attachment| attachment.url.clone())
+                })
+            });
+        if derived_media_url.is_some() {
+            post.media_url = derived_media_url;
+        }
+
+        let derived_thumbnail_url = post
+            .file
+            .as_ref()
+            .and_then(|attachment| attachment.thumbnail_url.clone())
+            .or_else(|| {
+                post.attachments.as_ref().and_then(|attachments| {
+                    attachments
+                        .iter()
+                        .find_map(|attachment| attachment.thumbnail_url.clone())
+                })
+            });
+        if derived_thumbnail_url.is_some() {
+            post.thumbnail_url = derived_thumbnail_url;
         }
 
         if post.preview_path.is_none() {
@@ -1960,42 +1981,20 @@ impl ProviderManager {
 mod tests {
     use super::*;
 
+    fn enabled(mut config: ProviderConfig, priority: u32) -> ProviderConfig {
+        config.enabled = true;
+        config.priority = priority;
+        config
+    }
+
     #[tokio::test]
     async fn test_provider_service_isolation_no_unwanted_fallback() {
-        let configs = vec![
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: true,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: String::new(),
-                username: String::new(),
-                services: vec!["onlyfans".into(), "fansly".into(), "candfans".into()],
-                is_custom: false,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: false,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: String::new(),
-                username: String::new(),
-                services: vec!["patreon".into(), "fanbox".into(), "discord".into()],
-                is_custom: false,
-                priority: 2,
-            },
-        ];
+        let coomer = enabled(CoomerProvider::default_config(), 1);
+        let coomer_id = coomer.id.clone();
+        let mut pawchive = PawchiveProvider::default_config();
+        pawchive.enabled = false;
+        pawchive.priority = 2;
+        let configs = vec![coomer, pawchive];
 
         let manager = ProviderManager::new(configs);
         let patreon_providers = manager.get_providers_for_service("patreon").await;
@@ -2006,210 +2005,91 @@ mod tests {
 
         let fansly_providers = manager.get_providers_for_service("fansly").await;
         assert_eq!(fansly_providers.len(), 1);
-        assert_eq!(fansly_providers[0].id(), "coomer");
+        assert_eq!(fansly_providers[0].id(), coomer_id);
     }
 
     #[test]
     fn test_create_provider_distinct_types() {
-        let coomer_cfg = ProviderConfig {
-            id: "coomer".into(),
-            name: "Coomer".into(),
-            enabled: true,
-            api_url: "https://coomer.st".into(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["onlyfans".into()],
-            is_custom: false,
-            priority: 1,
-        };
+        let coomer_cfg = enabled(CoomerProvider::default_config(), 1);
+        let coomer_id = coomer_cfg.id.clone();
+        let coomer_name = coomer_cfg.name.clone();
         let coomer_prov = create_provider(coomer_cfg).unwrap();
-        assert_eq!(coomer_prov.id(), "coomer");
-        assert_eq!(coomer_prov.name(), "Coomer");
+        assert_eq!(coomer_prov.id(), coomer_id);
+        assert_eq!(coomer_prov.name(), coomer_name);
         assert!(!coomer_prov.auth_schema().supports_remote_favorites);
 
-        let oh_cfg = ProviderConfig {
-            id: "onlyhaven".into(),
-            name: "OnlyHaven".into(),
-            enabled: true,
-            api_url: "https://cum.st".into(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["fansly".into()],
-            is_custom: false,
-            priority: 2,
-        };
+        let oh_cfg = enabled(OnlyHavenProvider::default_config(), 2);
+        let oh_id = oh_cfg.id.clone();
+        let oh_name = oh_cfg.name.clone();
         let oh_prov = create_provider(oh_cfg).unwrap();
-        assert_eq!(oh_prov.id(), "onlyhaven");
-        assert_eq!(oh_prov.name(), "OnlyHaven");
+        assert_eq!(oh_prov.id(), oh_id);
+        assert_eq!(oh_prov.name(), oh_name);
 
-        let paw_cfg = ProviderConfig {
-            id: "pawchive".into(),
-            name: "Pawchive".into(),
-            enabled: true,
-            api_url: "https://pawchive.pw".into(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["patreon".into()],
-            is_custom: false,
-            priority: 3,
-        };
+        let paw_cfg = enabled(PawchiveProvider::default_config(), 3);
+        let paw_id = paw_cfg.id.clone();
+        let paw_name = paw_cfg.name.clone();
         let paw_prov = create_provider(paw_cfg).unwrap();
-        assert_eq!(paw_prov.id(), "pawchive");
-        assert_eq!(paw_prov.name(), "Pawchive");
+        assert_eq!(paw_prov.id(), paw_id);
+        assert_eq!(paw_prov.name(), paw_name);
         assert!(paw_prov.auth_schema().supports_remote_favorites);
     }
 
     #[tokio::test]
     async fn test_manager_multi_provider_priority_and_filtering() {
-        let configs = vec![
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: true,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: true,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 2,
-            },
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into(), "fanbox".into()],
-                is_custom: false,
-                priority: 3,
-            },
-        ];
+        let coomer = enabled(CoomerProvider::default_config(), 1);
+        let coomer_id = coomer.id.clone();
+        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 2);
+        let onlyhaven_id = onlyhaven.id.clone();
+        let pawchive = enabled(PawchiveProvider::default_config(), 3);
+        let pawchive_id = pawchive.id.clone();
+        let configs = vec![coomer, onlyhaven, pawchive];
         let manager = ProviderManager::new(configs);
 
         let of_providers = manager.get_providers_for_service("onlyfans").await;
         assert_eq!(of_providers.len(), 2);
-        assert_eq!(of_providers[0].id(), "coomer");
-        assert_eq!(of_providers[1].id(), "onlyhaven");
+        assert_eq!(of_providers[0].id(), coomer_id);
+        assert_eq!(of_providers[1].id(), onlyhaven_id);
 
         let patreon_providers = manager.get_providers_for_service("patreon").await;
-        assert_eq!(patreon_providers.len(), 1);
-        assert_eq!(patreon_providers[0].id(), "pawchive");
+        assert_eq!(patreon_providers.len(), 2);
+        assert_eq!(patreon_providers[0].id(), onlyhaven_id);
+        assert_eq!(patreon_providers[1].id(), pawchive_id);
 
-        let unknown = manager.get_providers_for_service("gumroad").await;
+        let unknown = manager
+            .get_providers_for_service("unsupported-test-service")
+            .await;
         assert!(unknown.is_empty());
     }
 
     #[tokio::test]
     async fn live_manager_multi_provider_contracts() {
-        let configs = vec![
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: true,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://c1.coomer.st".into()),
-                image_url: Some("https://img.coomer.st".into()),
-                file_prefix: Some("c1".into()),
-                image_prefix: Some("img".into()),
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: true,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://e1.cum.st".into()),
-                image_url: Some("https://img.cum.st".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 2,
-            },
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://file.pawchive.pw".into()),
-                image_url: Some("https://img.pawchive.pw".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into(), "fanbox".into()],
-                is_custom: false,
-                priority: 3,
-            },
-        ];
+        let coomer = enabled(CoomerProvider::default_config(), 1);
+        let coomer_id = coomer.id.clone();
+        let coomer_file_url = coomer.file_url.clone().unwrap();
+        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 2);
+        let onlyhaven_id = onlyhaven.id.clone();
+        let onlyhaven_file_url = onlyhaven.file_url.clone().unwrap();
+        let pawchive = enabled(PawchiveProvider::default_config(), 3);
+        let pawchive_id = pawchive.id.clone();
+        let pawchive_file_url = pawchive.file_url.clone().unwrap();
+        let configs = vec![coomer, onlyhaven, pawchive];
         let manager = ProviderManager::new(configs);
 
-        let coomer_health = manager.test_provider_health("coomer").await.unwrap();
+        let coomer_health = manager.test_provider_health(&coomer_id).await.unwrap();
         assert!(
             coomer_health.is_healthy,
             "Coomer health failed: {:?}",
             coomer_health.error
         );
 
-        let onlyhaven_health = manager.test_provider_health("onlyhaven").await.unwrap();
+        let onlyhaven_health = manager.test_provider_health(&onlyhaven_id).await.unwrap();
         assert!(
             onlyhaven_health.is_healthy,
             "OnlyHaven health failed: {:?}",
             onlyhaven_health.error
         );
 
-        let pawchive_health = manager.test_provider_health("pawchive").await.unwrap();
+        let pawchive_health = manager.test_provider_health(&pawchive_id).await.unwrap();
         assert!(
             pawchive_health.is_healthy,
             "Pawchive health failed: {:?}",
@@ -2296,94 +2176,51 @@ mod tests {
         let _ = revisions;
 
         let coomer_media = manager
-            .resolve_media_url("onlyfans", "/data/aa/bb/c.mp4", None, Some("coomer"))
+            .resolve_media_url("onlyfans", "/data/aa/bb/c.mp4", None, Some(&coomer_id))
             .await;
-        assert!(coomer_media.starts_with("https://c1.coomer.st/data/"));
+        assert!(coomer_media.starts_with(&coomer_file_url));
 
         let pawchive_media = manager
-            .resolve_media_url("patreon", "/data/aa/bb/c.mp4", None, Some("pawchive"))
+            .resolve_media_url("patreon", "/data/aa/bb/c.mp4", None, Some(&pawchive_id))
             .await;
-        assert!(pawchive_media.starts_with("https://file.pawchive.pw/data/"));
+        assert!(pawchive_media.starts_with(&pawchive_file_url));
 
         let onlyhaven_media = manager
             .resolve_media_url(
                 "fansly",
                 "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2",
                 None,
-                Some("onlyhaven"),
+                Some(&onlyhaven_id),
             )
             .await;
-        assert!(onlyhaven_media.starts_with("https://e1.cum.st/media/"));
+        assert!(onlyhaven_media.starts_with(&onlyhaven_file_url));
     }
 
     #[tokio::test]
     async fn live_capabilities_and_coomer_popular_periods() {
-        let configs = vec![
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: true,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://c1.coomer.st".into()),
-                image_url: Some("https://img.coomer.st".into()),
-                file_prefix: Some("c1".into()),
-                image_prefix: Some("img".into()),
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://pawchive.pw".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://file.pawchive.pw".into()),
-                image_url: Some("https://img.pawchive.pw".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into(), "fanbox".into()],
-                is_custom: false,
-                priority: 2,
-            },
-            ProviderConfig {
-                id: "onlyhaven".into(),
-                name: "OnlyHaven".into(),
-                enabled: true,
-                api_url: "https://cum.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://e1.cum.st".into()),
-                image_url: Some("https://img.cum.st".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into(), "fansly".into()],
-                is_custom: false,
-                priority: 3,
-            },
-        ];
+        let coomer = enabled(CoomerProvider::default_config(), 1);
+        let coomer_id = coomer.id.clone();
+        let pawchive = enabled(PawchiveProvider::default_config(), 2);
+        let pawchive_id = pawchive.id.clone();
+        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 3);
+        let onlyhaven_id = onlyhaven.id.clone();
+        let configs = vec![coomer, pawchive, onlyhaven];
         let manager = ProviderManager::new(configs);
 
         let all_caps = manager.get_provider_capabilities().await;
-        let coomer_cap = all_caps.get("coomer").unwrap();
+        let coomer_cap = all_caps.get(&coomer_id).unwrap();
         assert!(coomer_cap.popular.supported);
         assert_eq!(coomer_cap.popular.periods.len(), 4);
         assert!(coomer_cap.popular.periods.iter().any(|p| p.id == "recent"));
         assert!(coomer_cap.popular.supports_date);
 
-        let pawchive_cap = all_caps.get("pawchive").unwrap();
+        let pawchive_cap = all_caps.get(&pawchive_id).unwrap();
         assert!(pawchive_cap.popular.supported);
         assert_eq!(pawchive_cap.popular.periods.len(), 5);
         assert!(pawchive_cap.popular.periods.iter().any(|p| p.id == "all"));
         assert!(pawchive_cap.popular.supports_date);
 
-        let onlyhaven_cap = all_caps.get("onlyhaven").unwrap();
+        let onlyhaven_cap = all_caps.get(&onlyhaven_id).unwrap();
         assert!(onlyhaven_cap.popular.supported);
         assert_eq!(onlyhaven_cap.popular.periods.len(), 3);
         assert!(onlyhaven_cap.popular.supports_date);
@@ -2400,7 +2237,7 @@ mod tests {
         assert_eq!(period_ids, vec!["day", "week", "month"]);
         assert!(active_cap.popular.supports_date);
 
-        let coomer_provider = manager.get_provider_by_id("coomer").await.unwrap();
+        let coomer_provider = manager.get_provider_by_id(&coomer_id).await.unwrap();
 
         let popular_week = coomer_provider
             .fetch_popular_posts("week", None, 0)
@@ -2429,7 +2266,7 @@ mod tests {
             "Coomer popular with date returned 0 posts"
         );
 
-        let onlyhaven_provider = manager.get_provider_by_id("onlyhaven").await.unwrap();
+        let onlyhaven_provider = manager.get_provider_by_id(&onlyhaven_id).await.unwrap();
         let oh_popular_week = onlyhaven_provider
             .fetch_popular_posts("week", None, 0)
             .await
@@ -2442,53 +2279,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_queue_for_url_dynamic_routing() {
-        let configs = vec![
-            ProviderConfig {
-                id: "pawchive".into(),
-                name: "Pawchive".into(),
-                enabled: true,
-                api_url: "https://my-custom-pawchive.org".into(),
-                fallback_urls: vec!["https://mirror-pawchive.net".into()],
-                file_url: Some("https://file.custom-pawchive.org".into()),
-                image_url: Some("https://img.custom-pawchive.org".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into()],
-                is_custom: true,
-                priority: 1,
-            },
-            ProviderConfig {
-                id: "coomer".into(),
-                name: "Coomer".into(),
-                enabled: true,
-                api_url: "https://coomer.st".into(),
-                fallback_urls: vec![],
-                file_url: Some("https://c1.coomer.st".into()),
-                image_url: Some("https://img.coomer.st".into()),
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["onlyfans".into()],
-                is_custom: false,
-                priority: 2,
-            },
-        ];
+        let mut pawchive = enabled(PawchiveProvider::default_config(), 1);
+        pawchive.api_url = "https://source-one.test".into();
+        pawchive.fallback_urls = vec!["https://source-one-mirror.test".into()];
+        pawchive.file_url = Some("https://source-one-files.test".into());
+        pawchive.image_url = Some("https://source-one-images.test".into());
+        pawchive.is_custom = true;
+        let pawchive_id = pawchive.id.clone();
+        let coomer = enabled(CoomerProvider::default_config(), 2);
+        let coomer_id = coomer.id.clone();
+        let coomer_file_url = coomer.file_url.clone().unwrap();
+        let configs = vec![pawchive, coomer];
         let manager = ProviderManager::new(configs);
 
         let q1 = manager
-            .get_queue_for_url("https://file.custom-pawchive.org/data/aa/bb/image.jpg")
+            .get_queue_for_url("https://source-one-files.test/data/aa/bb/image.jpg")
             .await;
-        let pawchive_prov = manager.get_provider_by_id("pawchive").await.unwrap();
+        let pawchive_prov = manager.get_provider_by_id(&pawchive_id).await.unwrap();
         assert_eq!(
             q1.provider_id(),
             pawchive_prov.request_queue().unwrap().provider_id()
         );
 
         let q2 = manager
-            .get_queue_for_url("https://mirror-pawchive.net/api/v1/posts")
+            .get_queue_for_url("https://source-one-mirror.test/api/v1/posts")
             .await;
         assert_eq!(
             q2.provider_id(),
@@ -2496,9 +2310,9 @@ mod tests {
         );
 
         let q3 = manager
-            .get_queue_for_url("https://c1.coomer.st/data/11/22/video.mp4")
+            .get_queue_for_url(&format!("{coomer_file_url}/data/11/22/video.mp4"))
             .await;
-        let coomer_prov = manager.get_provider_by_id("coomer").await.unwrap();
+        let coomer_prov = manager.get_provider_by_id(&coomer_id).await.unwrap();
         assert_eq!(
             q3.provider_id(),
             coomer_prov.request_queue().unwrap().provider_id()

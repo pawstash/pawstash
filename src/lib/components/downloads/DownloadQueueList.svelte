@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
-  import { deriveCdnThumbnailUrl, resolveLocalMediaUrl } from '$lib/utils/media';
+  import { resolveLocalMediaUrl } from '$lib/utils/media';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -286,8 +286,6 @@
     const filename = (item.filename || '').toLowerCase();
     const isImage = /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(filename);
     if (isImage) {
-      const cdnThumb = deriveCdnThumbnailUrl(item.url);
-      if (cdnThumb) return cdnThumb;
       return previewUrl(item);
     }
 

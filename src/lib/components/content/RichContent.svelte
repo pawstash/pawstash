@@ -18,7 +18,6 @@
       const host = u.hostname.toLowerCase();
       return (
         host.includes('google.com') ||
-        host.includes('docs.google.com') ||
         host.includes('forms.gle') ||
         host.includes('strawpoll.com') ||
         host.includes('strawpoll.me') ||
@@ -30,87 +29,14 @@
         host.includes('soundcloud.com') ||
         host.includes('spotify.com') ||
         host.includes('bilibili.com') ||
-        host.includes('nicovideo.jp') ||
-        host.includes('iframely.net') ||
-        host.includes('iframe.ly') ||
-        host.includes('mega.nz') ||
-        host.includes('pawchive') ||
-        host.includes('coomer') ||
-        host.includes('cum.st') ||
-        host.includes('onlyhaven')
+        host.includes('nicovideo.jp')
       );
     } catch {
       return false;
     }
   }
 
-  export function smartLinkPlatform(raw: string): string | null {
-    try {
-      const url = new URL(raw);
-      if (!['http:', 'https:'].includes(url.protocol)) return null;
-      const host = url.hostname.replace(/^www\./, '').toLocaleLowerCase();
-      if (host === 'patreon.com' || host.endsWith('.patreon.com')) return 'patreon';
-      if (host === 'fanbox.cc' || host.endsWith('.fanbox.cc')) return 'fanbox';
-      if (host === 'fantia.jp' || host.endsWith('.fantia.jp')) return 'fantia';
-      if (host === 'subscribestar.com' || host.endsWith('.subscribestar.com') || host === 'subscribestar.adult' || host.endsWith('.subscribestar.adult')) return 'subscribestar';
-      if (host === 'boosty.to' || host.endsWith('.boosty.to')) return 'boosty';
-      if (host === 'afdian.com' || host.endsWith('.afdian.com') || host === 'afdian.net' || host.endsWith('.afdian.net')) return 'afdian';
-      if (host === 'onlyfans.com' || host.endsWith('.onlyfans.com')) return 'onlyfans';
-      if (host === 'fansly.com' || host.endsWith('.fansly.com')) return 'fansly';
-      if (host === 'candfans.jp' || host.endsWith('.candfans.jp')) return 'candfans';
-      if (host.includes('proton.me') || host.includes('protondrive.com')) return 'proton';
-      if (host.includes('bunny.net') || host.includes('mediadelivery.net') || host.includes('b-cdn.net')) return 'bunny';
-      if (host.includes('gofile.io')) return 'gofile';
-      if (host.includes('mediafire.com')) return 'mediafire';
-      if (host.includes('terabox.com') || host.includes('1024tera.com') || host.includes('teraboxapp.com')) return 'terabox';
-      if (host.includes('catbox.moe') || host.includes('files.catbox.moe')) return 'catbox';
-      if (host.includes('workupload.com')) return 'workupload';
-      if (host.includes('qiwi.gg')) return 'qiwi';
-      if (host.includes('send.cm')) return 'sendcm';
-      if (host.includes('pawchive')) return 'pawchive';
-      if (host.includes('coomer')) return 'coomer';
-      if (host.includes('cum.st') || host.includes('onlyhaven')) return 'onlyhaven';
-      if (host === 'gumroad.com' || host.endsWith('.gumroad.com')) return 'gumroad';
-      if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'mega';
-      if (host.includes('pixeldrain.com')) return 'pixeldrain';
-      if (host.includes('dropbox.com')) return 'dropbox';
-      if (host.includes('drive.google.com')) return 'googledrive';
-      if (['bit.ly', 'buff.ly', 'cutt.ly', 'goo.gl', 'is.gd', 'lnkd.in', 'ow.ly', 'rb.gy', 'rebrand.ly', 'shorturl.at', 't.co', 'tiny.one', 'tinyurl.com', 'v.gd', 'x.gd'].includes(host)) return 'shortlink';
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  export { isDirectMediaUrl, extractDirectMediaLinks, extractCloudLinks } from '$lib/utils/media';
-
-  export function deriveCloudProviderFromUrl(url: string): string {
-    try {
-      const u = new URL(url);
-      const host = u.hostname.replace(/^www\./, '').toLowerCase();
-      if (host.includes('b-cdn.net') || host.includes('bunny.net') || host.includes('mediadelivery.net')) return 'Bunny';
-      if (host.includes('proton.me') || host.includes('protondrive.com')) return 'Proton';
-      if (host.includes('gofile.io')) return 'Gofile';
-      if (host.includes('mediafire.com')) return 'MediaFire';
-      if (host.includes('terabox.com') || host.includes('1024tera.com')) return 'TeraBox';
-      if (host.includes('catbox.moe')) return 'Catbox';
-      if (host.includes('workupload.com')) return 'WorkUpload';
-      if (host.includes('qiwi.gg')) return 'Qiwi';
-      if (host.includes('send.cm')) return 'Send.cm';
-      if (host.includes('mega.nz') || host.includes('mega.co.nz')) return 'MEGA';
-      if (host.includes('dropbox.com')) return 'Dropbox';
-      if (host.includes('pixeldrain.com')) return 'Pixeldrain';
-      if (host.includes('drive.google.com')) return 'Google Drive';
-      const parts = host.split('.');
-      if (parts.length >= 2) {
-        const name = parts[parts.length - 2];
-        return name.charAt(0).toUpperCase() + name.slice(1);
-      }
-      return host;
-    } catch {
-      return 'Cloud';
-    }
-  }
+  export { isDirectMediaUrl, extractDirectMediaLinks } from '$lib/utils/media';
 
   function safeHttpUrl(raw: string): string | null {
     try {
@@ -125,28 +51,21 @@
     if (!content) return '';
     let res = content;
 
-    // Unescape encoded HTML tags like &lt;strong&gt;, &lt;em&gt;, &lt;p&gt;, &lt;br&gt;, &lt;a href=...&gt;
     if (res.includes('&lt;') && res.includes('&gt;')) {
       res = res.replace(/&lt;(\/?(?:strong|b|em|i|u|s|del|p|br|div|span|h[1-6]|ul|ol|li|blockquote|a|code|pre)(?:\s+[^&>]*)?)&gt;/gi, '<$1>');
     }
 
-    // Convert markdown links: [text](https://...) -> <a href="https://...">text</a>
     res = res.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
-    // Convert markdown bold: **bold** or __bold__ -> <strong>bold</strong>
     res = res.replace(/(\*{2}|_{2})(.*?)\1/g, '<strong>$2</strong>');
 
-    // Convert markdown italic: *italic* or _italic_ -> <em>italic</em>
     res = res.replace(/(^|[^\w*])\*([^\*\n]+)\*([^\w*]|$)/g, '$1<em>$2</em>$3');
     res = res.replace(/(^|[^\w_])_([^\_\n]+)_([^\w_]|$)/g, '$1<em>$2</em>$3');
 
-    // Convert markdown strikethrough: ~~strike~~ -> <del>strike</del>
     res = res.replace(/~~(.*?)~~/g, '<del>$1</del>');
 
-    // Convert markdown code: `code` -> <code>code</code>
     res = res.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-    // If there are no HTML paragraph/break tags, preserve newlines as <br>
     if (!/<(p|br|div|h[1-6]|ul|ol|li|blockquote)[^>]*>/i.test(res)) {
       res = res.replace(/\n/g, '<br>');
     }
@@ -256,6 +175,7 @@
     html: string;
     currentService?: string;
     currentCreatorId?: string;
+    cloudUrls?: string[];
     onopencloud?: (url: string) => void;
   }
 
@@ -268,7 +188,7 @@
     resolvedPost?: ResolvedPostLink;
   }
 
-  let { html, currentService, currentCreatorId, onopencloud }: Props = $props();
+  let { html, currentService, currentCreatorId, cloudUrls = [], onopencloud }: Props = $props();
   let root = $state<HTMLDivElement>();
   let generation = 0;
   let safeHtml = $derived(sanitizeRichHtml(html));
@@ -281,11 +201,20 @@
     anchor.title = i18n.t(resolved ? 'post.link_open_internal' : 'post.link_open_external');
   }
 
-  const POST_PLATFORMS = new Set([
-    'patreon', 'fanbox', 'discord', 'onlyfans', 'fansly', 'candfans', 'pawchive', 'onlyhaven', 'coomer'
-  ]);
-
-  const CLOUD_PLATFORMS = new Set(['mega', 'dropbox', 'pixeldrain', 'googledrive']);
+  function isCloudLink(raw: string): boolean {
+    try {
+      const normalized = new URL(raw).href;
+      return cloudUrls.some((candidate) => {
+        try {
+          return new URL(candidate).href === normalized;
+        } catch {
+          return candidate === raw;
+        }
+      });
+    } catch {
+      return false;
+    }
+  }
 
   async function enhanceLinks() {
     await tick();
@@ -294,13 +223,15 @@
     const anchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')];
     const smartAnchors: HTMLAnchorElement[] = [];
     for (const anchor of anchors) {
-      const platform = smartLinkPlatform(anchor.href);
-      anchor.dataset.linkPlatform = platform || 'external';
-      anchor.title ||= i18n.t('post.link_open_external');
-      if (platform && (POST_PLATFORMS.has(platform) || platform === 'shortlink')) {
-        anchor.dataset.smartState = 'checking';
-        smartAnchors.push(anchor);
+      if (isCloudLink(anchor.href)) {
+        anchor.dataset.linkPlatform = 'cloud';
+        anchor.dataset.smartState = 'resolved';
+        continue;
       }
+      anchor.dataset.linkPlatform = 'external';
+      anchor.title ||= i18n.t('post.link_open_external');
+      anchor.dataset.smartState = 'checking';
+      smartAnchors.push(anchor);
     }
 
     let cursor = 0;
@@ -323,9 +254,7 @@
     event.stopPropagation();
 
     const url = anchor.href;
-    const platform = smartLinkPlatform(url);
-
-    if (platform && CLOUD_PLATFORMS.has(platform)) {
+    if (isCloudLink(url)) {
       linkPopover = {
         url,
         x: event.clientX,
@@ -336,20 +265,18 @@
       return;
     }
 
-    if (platform && (POST_PLATFORMS.has(platform) || platform === 'shortlink')) {
-      anchor.dataset.smartState = 'checking';
-      const resolved = await resolveSmartLink(url, currentService, currentCreatorId);
-      markResolved(anchor, resolved);
-      if (resolved) {
-        linkPopover = {
-          url,
-          x: event.clientX,
-          y: event.clientY,
-          canOpenInApp: true,
-          resolvedPost: resolved
-        };
-        return;
-      }
+    anchor.dataset.smartState = 'checking';
+    const resolved = await resolveSmartLink(url, currentService, currentCreatorId);
+    markResolved(anchor, resolved);
+    if (resolved) {
+      linkPopover = {
+        url,
+        x: event.clientX,
+        y: event.clientY,
+        canOpenInApp: true,
+        resolvedPost: resolved
+      };
+      return;
     }
 
     void apiOpenInBrowser(url);
@@ -359,6 +286,7 @@
     safeHtml;
     currentService;
     currentCreatorId;
+    cloudUrls;
     void enhanceLinks();
   });
 </script>

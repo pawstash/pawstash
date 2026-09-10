@@ -1,13 +1,11 @@
 use super::traits::{
-    AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema, ProviderCapabilities,
-    ProviderConfig, ProviderHealth, SortOption, SourceProvider,
+    path_has_image_mime, AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema,
+    ProviderCapabilities, ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
 use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use crate::config::settings::{AppSettings, ProxyMode};
-use crate::smart_links::{
-    is_known_shortener_url, parse_external_post_link, parse_pawchive_post_url,
-};
+use crate::smart_links::{is_known_shortener_url, parse_external_post_link};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::header::{
@@ -586,7 +584,8 @@ impl PawchiveClient {
         }
 
         let final_url = response.url().clone();
-        if let Some(identity) = parse_pawchive_post_url(&final_url, service, post_id) {
+        if let Some(identity) = PawchiveProvider::parse_post_identity(&final_url, service, post_id)
+        {
             return Ok(Some(identity));
         }
         if response
@@ -616,7 +615,9 @@ impl PawchiveClient {
                 let Ok(candidate_url) = final_url.join(candidate) else {
                     continue;
                 };
-                if let Some(identity) = parse_pawchive_post_url(&candidate_url, service, post_id) {
+                if let Some(identity) =
+                    PawchiveProvider::parse_post_identity(&candidate_url, service, post_id)
+                {
                     return Ok(Some(identity));
                 }
             }
@@ -814,8 +815,10 @@ impl PawchiveClient {
                     favorite_count,
                     attachment_count,
                     thumbnail_url: None,
+                    media_url: None,
                     page_url: None,
                     preview_path: None,
+                    cloud_urls: Vec::new(),
                     extra: HashMap::new(),
                 })
             })
@@ -1187,6 +1190,71 @@ pub struct PawchiveProvider {
 }
 
 impl PawchiveProvider {
+    fn archive_host_matches(url: &Url) -> bool {
+        url.host_str()
+            .map(str::to_ascii_lowercase)
+            .is_some_and(|host| host == "pawchive.pw" || host.ends_with(".pawchive.pw"))
+    }
+
+    fn parse_archive_post_path(url: &Url) -> Option<super::ProviderPostLink> {
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        if segments.len() < 5
+            || !matches!(segments[1], "user" | "server" | "channel")
+            || segments[3] != "post"
+        {
+            return None;
+        }
+        Some(super::ProviderPostLink {
+            service: super::clean_link_segment(segments[0])?,
+            creator_hint: Some(super::clean_link_segment(segments[2])?),
+            post_id: super::clean_link_segment(segments[4])?,
+        })
+    }
+
+    pub fn parse_archive_post_url(url: &Url) -> Option<super::ProviderPostLink> {
+        Self::archive_host_matches(url)
+            .then(|| Self::parse_archive_post_path(url))
+            .flatten()
+    }
+
+    pub fn parse_archive_creator_url(url: &Url) -> Option<super::ProviderCreatorLink> {
+        if !Self::archive_host_matches(url) {
+            return None;
+        }
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        if segments.len() < 3 || !matches!(segments[1], "user" | "server" | "channel") {
+            return None;
+        }
+        Some(super::ProviderCreatorLink {
+            service: super::clean_link_segment(segments[0])?,
+            creator_hint: super::clean_link_segment(segments[2])?,
+        })
+    }
+
+    pub fn parse_post_identity(
+        url: &Url,
+        expected_service: &str,
+        expected_post_id: &str,
+    ) -> Option<(String, String, String)> {
+        let link = Self::parse_archive_post_path(url)?;
+        let creator_id = link.creator_hint?;
+        (link.service.eq_ignore_ascii_case(expected_service) && link.post_id == expected_post_id)
+            .then_some((link.service, creator_id, link.post_id))
+    }
+
+    pub fn uses_app_user_agent(url: &str) -> bool {
+        url.parse::<Url>()
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+            .is_some_and(|host| host == "pawchive.pw" || host.ends_with(".pawchive.pw"))
+    }
+
     pub fn default_services() -> Vec<String> {
         vec![
             "patreon".into(),
@@ -1266,6 +1334,32 @@ impl PawchiveProvider {
 
     pub fn queue(&self) -> Arc<ProviderRequestQueue> {
         self.client.queue()
+    }
+
+    fn prepare_post(&self, mut post: Post) -> Post {
+        if post
+            .file
+            .as_ref()
+            .is_some_and(Attachment::is_empty_placeholder)
+        {
+            post.file = None;
+        }
+
+        let provider_id = serde_json::Value::String(self.id.clone());
+        post.extra
+            .insert("provider_id".to_string(), provider_id.clone());
+        if let Some(file) = post.file.as_mut() {
+            file.extra
+                .insert("provider_id".to_string(), provider_id.clone());
+        }
+        if let Some(attachments) = post.attachments.as_mut() {
+            for attachment in attachments {
+                attachment
+                    .extra
+                    .insert("provider_id".to_string(), provider_id.clone());
+            }
+        }
+        post
     }
 }
 
@@ -1501,18 +1595,14 @@ impl SourceProvider for PawchiveProvider {
         offset: u32,
         query: Option<&str>,
     ) -> Result<Vec<Post>, String> {
-        let mut posts = self
+        let posts = self
             .client
             .fetch_creator_posts(service, creator_id, query, offset)
             .await?;
-        let prov_id = self.id().to_string();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        Ok(posts
+            .into_iter()
+            .map(|post| self.prepare_post(post))
+            .collect())
     }
 
     async fn fetch_post(
@@ -1522,13 +1612,7 @@ impl SourceProvider for PawchiveProvider {
         post_id: &str,
     ) -> Result<Option<Post>, String> {
         match self.client.fetch_post(service, creator_id, post_id).await {
-            Ok(mut post) => {
-                post.extra.insert(
-                    "provider_id".to_string(),
-                    serde_json::Value::String(self.id().to_string()),
-                );
-                Ok(Some(post))
-            }
+            Ok(post) => Ok(Some(self.prepare_post(post))),
             Err(e) if e.contains("404") => Ok(None),
             Err(e) => Err(e),
         }
@@ -1550,15 +1634,11 @@ impl SourceProvider for PawchiveProvider {
         query: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        let mut posts = self.client.fetch_recent_posts(query, offset).await?;
-        let prov_id = self.id().to_string();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        let posts = self.client.fetch_recent_posts(query, offset).await?;
+        Ok(posts
+            .into_iter()
+            .map(|post| self.prepare_post(post))
+            .collect())
     }
 
     async fn fetch_popular_posts(
@@ -1567,18 +1647,14 @@ impl SourceProvider for PawchiveProvider {
         date: Option<&str>,
         offset: u32,
     ) -> Result<Vec<Post>, String> {
-        let mut posts = self
+        let posts = self
             .client
             .fetch_popular_posts(period, date, offset)
             .await?;
-        let prov_id = self.id().to_string();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        Ok(posts
+            .into_iter()
+            .map(|post| self.prepare_post(post))
+            .collect())
     }
 
     async fn fetch_post_comments(
@@ -1718,6 +1794,9 @@ impl SourceProvider for PawchiveProvider {
     }
 
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
+        if !path_has_image_mime(thumb_path) {
+            return String::new();
+        }
         let conf = self.config.read().unwrap();
         let clean = thumb_path
             .trim_start_matches('/')
@@ -1737,6 +1816,14 @@ impl SourceProvider for PawchiveProvider {
 
         let base = super::traits::derive_subdomain_url(&conf.api_url, default_image_prefix);
         format!("{base}/thumbnail/data/{clean}")
+    }
+
+    fn attachment_uses_thumbnail(&self, attachment: &Attachment) -> bool {
+        attachment
+            .extra
+            .get("preview_only")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
     }
 
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
@@ -1923,6 +2010,28 @@ mod tests {
     use crate::api::providers::traits::SourceProvider;
 
     #[test]
+    fn prepare_post_removes_empty_file_placeholder() {
+        let provider = PawchiveProvider::new(PawchiveProvider::default_config()).unwrap();
+        let post = Post {
+            id: "169172541".into(),
+            user: "5249582".into(),
+            service: "patreon".into(),
+            file: Some(Attachment::default()),
+            attachments: Some(Vec::new()),
+            ..Post::default()
+        };
+        let post = provider.prepare_post(post);
+
+        assert!(post.file.is_none());
+        assert_eq!(
+            post.extra
+                .get("provider_id")
+                .and_then(|value| value.as_str()),
+            Some("pawchive")
+        );
+    }
+
+    #[test]
     fn session_cookie_is_normalized() {
         assert_eq!(
             PawchiveClient::cookie_header("token")
@@ -1999,6 +2108,12 @@ mod tests {
             provider.resolve_thumbnail_url("ab/cd/thumb.jpg"),
             "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
         );
+        assert!(provider
+            .resolve_thumbnail_url("/data/ab/cd/video.mp4")
+            .is_empty());
+        assert!(provider
+            .resolve_thumbnail_url("/data/ab/cd/archive.zip")
+            .is_empty());
 
         let fallback_conf = ProviderConfig {
             id: "pawchive".into(),
@@ -2025,6 +2140,26 @@ mod tests {
             fallback_provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
             "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
         );
+    }
+
+    #[test]
+    fn preview_only_attachments_use_the_thumbnail_object() {
+        let provider = PawchiveProvider::new(PawchiveProvider::default_config()).unwrap();
+        let mut attachment = Attachment {
+            name: Some("preview.jpg".into()),
+            path: Some("/10/e5/preview.jpg".into()),
+            url: Some("https://stale.invalid/data/preview.jpg".into()),
+            extra: HashMap::from([("preview_only".into(), serde_json::Value::Bool(true))]),
+            ..Attachment::default()
+        };
+
+        provider.enrich_attachment(&mut attachment);
+
+        assert_eq!(attachment.url, attachment.thumbnail_url);
+        assert!(attachment
+            .url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("https://img.pawchive.pw/thumbnail/data/")));
     }
 
     #[test]

@@ -70,7 +70,6 @@ impl MediaServer {
             .with_state(state)
             .layer(cors);
 
-        // Bind to dynamic loopback port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let port = addr.port();
@@ -290,11 +289,7 @@ async fn serve_mega_stream_handler(
         ));
     };
 
-    let api_url = if let Some(ref fid) = params.folder_id {
-        format!("https://g.api.mega.co.nz/cs?n={fid}")
-    } else {
-        "https://g.api.mega.co.nz/cs".to_string()
-    };
+    let api_url = crate::cloud::mega::api_url(params.folder_id.as_deref());
 
     let api_resp = client
         .post(&api_url)
@@ -578,7 +573,6 @@ async fn serve_cloud_proxy_stream_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // If upstream returned an HTML page (e.g. Dropbox "File Deleted" or login page), fail
     if upstream_content_type.starts_with("text/html") {
         tracing::warn!(
             "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
@@ -612,7 +606,6 @@ async fn serve_cloud_proxy_stream_handler(
         }
     }
 
-    // Ensure valid streaming MIME type if upstream returned non-media or generic type (e.g. Dropbox returning application/json)
     let is_not_media = !upstream_content_type.starts_with("video/")
         && !upstream_content_type.starts_with("audio/")
         && !upstream_content_type.starts_with("image/");
@@ -729,40 +722,35 @@ mod tests {
 
     #[test]
     fn test_is_public_ipv4_allows_fakeip_and_cgnat() {
-        // Fake-IP (Clash, Mihomo, Sing-box TUN adapter) must be allowed
+        // Fake-IP ranges used by TUN adapters must remain reachable.
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 37)));
         assert!(is_public_ipv4(Ipv4Addr::new(198, 19, 255, 254)));
 
-        // CGNAT (Carrier-Grade NAT, Tailscale) must be allowed
+        // CGNAT addresses are also used by peer-to-peer overlays such as Tailscale.
         assert!(is_public_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(100, 100, 100, 100)));
 
-        // Public internet IPs must be allowed
         assert!(is_public_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
     }
 
     #[test]
     fn test_is_public_ipv4_blocks_private_and_local() {
-        // Loopback
         assert!(!is_public_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
-        // RFC 1918 Private LAN
         assert!(!is_public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
         assert!(!is_public_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
         assert!(!is_public_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
-        // Link-local / Cloud metadata (AWS/GCP/Azure: 169.254.169.254)
+        // Cloud metadata endpoints are link-local and must stay blocked.
         assert!(!is_public_ipv4(Ipv4Addr::new(169, 254, 169, 254)));
-        // Broadcast and Multicast
         assert!(!is_public_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
         assert!(!is_public_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
-        // Zero address
         assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
     }
 
     #[tokio::test]
     async fn test_validate_proxy_target_dropbox() {
-        let res = validate_proxy_target("https://www.dropbox.com/scl/fi/dzou30iaabzttgdkofk0s/KEI-FULL-VIDEO.mp4?rlkey=d69eq3s4u7ds888h9ia9qrhwn&st=vna292xr&raw=1").await;
+        let res = validate_proxy_target(crate::cloud::dropbox::example_url()).await;
         assert!(
             res.is_ok(),
             "Failed to validate proxy target: {:?}",

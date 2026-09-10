@@ -48,11 +48,9 @@
 
   let selectedIds = $state<Set<string>>(new Set());
 
-  // Folder navigation history
   let currentFolderId = $state<string | null>(null);
   let history = $state<{ id: string | null; name: string }[]>([]);
 
-  // Media previewer state
   let previewIndex = $state<number | null>(null);
 
   onMount(() => {
@@ -67,12 +65,10 @@
       }
     }
 
-    // Find top-level root container (nodes without a parent in the dataset)
     const roots = nodes.filter((n) => !n.parent_id || !nodes.some((p) => p.id === n.parent_id));
     if (roots.length === 1 && roots[0].is_folder) {
       const root = roots[0];
       const children = nodes.filter((n) => n.parent_id === root.id);
-      // If root container only contains 1 folder child, start directly inside that folder
       if (children.length === 1 && children[0].is_folder) {
         return { id: children[0].id, name: children[0].name };
       }
@@ -117,7 +113,6 @@
     return ext ? `${ext.toUpperCase()} file` : 'File';
   }
 
-  // Collect all file nodes recursively inside a folder
   function getAllDescendantFiles(folderId: string): CloudNode[] {
     if (!folder?.nodes) return [];
     const result: CloudNode[] = [];
@@ -137,7 +132,6 @@
     return result;
   }
 
-  // Compute folder total size from all descendant files
   function getFolderTotalSize(folderId: string): number {
     const descendantFiles = getAllDescendantFiles(folderId);
     return descendantFiles.reduce((sum, f) => sum + (f.size || 0), 0);
@@ -244,18 +238,7 @@
     if (node.download_url?.startsWith('/cloud_stream/') && port > 0) {
       return serverPortState.mediaUrl(node.download_url);
     }
-    const rawUrl = node.stream_url || node.download_url || '';
-    if (
-      port > 0 &&
-      rawUrl &&
-      (rawUrl.includes('dropbox.com') ||
-        rawUrl.includes('pixeldrain.com') ||
-        rawUrl.includes('drive.google.com') ||
-        rawUrl.includes('dropboxusercontent.com'))
-    ) {
-      return serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(node.name)}`);
-    }
-    return rawUrl;
+    return node.stream_url || '';
   }
 
   function resolveDownloadUrl(node: CloudNode): string {
@@ -425,7 +408,6 @@
     if (!folder || selectedFiles.length === 0) return;
     const targetPost = getDownloadPost();
 
-    // Filter out files that are already completed or currently downloading
     const filesToDownload = selectedFiles.filter((f) => {
       const job = getNodeDownloadJob(f);
       if (job?.status === 'completed') return false;
@@ -447,7 +429,6 @@
         await apiStartDownload(targetPost, f.id, dlUrl, f.name);
         started++;
       } catch {
-        // ignore
       }
     }
 
@@ -471,7 +452,6 @@
         return;
       }
 
-      // Filter out files that are already completed or currently downloading
       const filesToDownload = files.filter((f) => {
         const job = getNodeDownloadJob(f);
         if (job?.status === 'completed') return false;
@@ -492,7 +472,6 @@
           await apiStartDownload(targetPost, f.id, dlUrl, f.name);
           started++;
         } catch {
-          // ignore
         }
       }
 
@@ -522,7 +501,6 @@
       await apiStartDownload(targetPost, node.id, dlUrl, node.name);
       toast.success(i18n.t('feed.download_started') || 'Download started', { description: node.name });
     } catch {
-      // ignore
     }
   }
 
@@ -540,7 +518,6 @@
   {#if folder}
     <div class="mega-explorer flex flex-col w-full h-full text-[var(--fg-default)] select-none">
       
-      <!-- Breadcrumbs Bar (Fixed 44px height to prevent any layout shifts) -->
       <div class="mega-breadcrumbs h-11 min-h-[44px] max-h-[44px] flex items-center gap-1 px-4 text-[13px] text-[var(--fg-muted)] bg-transparent overflow-x-auto whitespace-nowrap shrink-0 border-b border-white/[0.04]">
         {#if history.length > 1}
           <button
@@ -569,7 +546,6 @@
         {/each}
       </div>
 
-      <!-- MEGA Style Full-Width Table (flex-1 with fixed scroll container) -->
       <div class="mega-table-container flex-1 min-h-0 relative overflow-hidden w-full bg-transparent" use:scrollable>
         <table class="mega-table w-full sm:min-w-[500px] border-collapse text-left bg-transparent">
           <thead class="bg-transparent">
@@ -610,7 +586,6 @@
                   style={isDownloading && progress.percent > 0 ? `--row-progress: ${progress.percent}%;` : ''}
                   onclick={() => isFolder ? navigateIntoFolder(node) : toggleSelect(node)}
                 >
-                  <!-- Checkbox Column -->
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <td class="py-2 px-3 sm:px-4 text-center relative z-[1]" onclick={(e) => e.stopPropagation()}>
@@ -620,7 +595,6 @@
                     />
                   </td>
 
-                  <!-- Name Column with Icon & Mobile Subtitle -->
                   <td class="py-2 px-2 sm:px-3 min-w-0 relative z-[1]">
                     <div class="flex items-center gap-2.5 sm:gap-3 min-w-0">
                       <div class="flex items-center justify-center w-6 h-6 shrink-0">
@@ -652,12 +626,10 @@
                     </div>
                   </td>
 
-                  <!-- Type Column -->
                   <td class="py-2 px-3 text-[var(--fg-muted)] text-[12px] font-normal relative z-[1] hidden sm:table-cell">
                     {typeLabel}
                   </td>
 
-                  <!-- Size Column (for both Files and Folders) -->
                   <td class="py-2 px-4 text-right text-[12px] font-mono whitespace-nowrap relative z-[1] hidden sm:table-cell">
                     {#if isDownloading}
                       <span class="text-[var(--accent)] font-medium">
@@ -674,7 +646,6 @@
                     {/if}
                   </td>
 
-                  <!-- Actions Column (Fixed 3-icon slot width to prevent layout shifts) -->
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <td class="py-1 px-2 sm:px-4 text-right whitespace-nowrap w-auto sm:w-[124px] relative z-[1]" onclick={(e) => e.stopPropagation()}>

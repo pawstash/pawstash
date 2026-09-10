@@ -2,6 +2,26 @@ use super::models::{CloudFolderResult, CloudNode};
 use reqwest::Client;
 use serde::Deserialize;
 
+pub fn supports_url(url: &str) -> bool {
+    super::url_host_matches(url, &["pixeldrain.com"])
+}
+
+pub fn should_proxy_stream(url: &str) -> bool {
+    supports_url(url)
+}
+
+pub fn normalize_direct_url(url: &str) -> Option<String> {
+    if !supports_url(url) {
+        return None;
+    }
+    let mut parsed = reqwest::Url::parse(url).ok()?;
+    let path = parsed.path().to_string();
+    if let Some(file_id) = path.strip_prefix("/u/") {
+        parsed.set_path(&format!("/api/file/{file_id}"));
+    }
+    Some(parsed.to_string())
+}
+
 #[derive(Debug, Deserialize)]
 struct PixeldrainFileInfo {
     id: String,
@@ -11,6 +31,19 @@ struct PixeldrainFileInfo {
     size: Option<u64>,
     #[serde(default)]
     mime_type: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_public_file_urls() {
+        assert_eq!(
+            normalize_direct_url("https://pixeldrain.com/u/abc12345").as_deref(),
+            Some("https://pixeldrain.com/api/file/abc12345")
+        );
+    }
 }
 
 #[derive(Debug, Deserialize)]

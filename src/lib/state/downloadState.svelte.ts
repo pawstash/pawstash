@@ -12,7 +12,7 @@ import {
   apiResolveCloudLink
 } from '$lib/utils/ipc';
 import type { Post } from '$lib/types/content';
-import { getPostDownloadTargets, extractCloudLinks } from '$lib/utils/media';
+import { getPostDownloadTargets } from '$lib/utils/media';
 import { contentState, postCacheKey } from '$lib/state/contentState.svelte';
 import { serverPortState } from '$lib/state/serverPort.svelte';
 import { logger } from '$lib/utils/logger';
@@ -143,7 +143,7 @@ export class DownloadState {
         return merged;
       }
     } catch {
-      // ignore and use fallback post
+      // A cached summary is sufficient when the detail lookup fails.
     }
     return post;
   }
@@ -161,14 +161,7 @@ export class DownloadState {
       count++;
     }
 
-    const contentSources = [
-      fullPost.content,
-      fullPost.substring,
-      (fullPost.embed as any)?.url,
-      (fullPost.embed as any)?.description
-    ].filter(Boolean).join(' ');
-
-    const cloudLinks = extractCloudLinks(contentSources);
+    const cloudLinks = fullPost.cloud_urls || [];
     if (cloudLinks.length > 0) {
       await serverPortState.ensurePort();
       const port = serverPortState.port || 0;

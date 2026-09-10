@@ -1,7 +1,7 @@
 use super::queue::{ProviderQueueConfig, ProviderRequestQueue};
 use super::traits::{
-    AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema, ProviderCapabilities,
-    ProviderConfig, ProviderHealth, SortOption, SourceProvider,
+    path_has_image_mime, AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema,
+    ProviderCapabilities, ProviderConfig, ProviderHealth, SortOption, SourceProvider,
 };
 use crate::api::models::*;
 use async_trait::async_trait;
@@ -22,6 +22,64 @@ pub struct CoomerProvider {
 }
 
 impl CoomerProvider {
+    fn archive_host_matches(url: &Url) -> bool {
+        url.host_str()
+            .map(str::to_ascii_lowercase)
+            .is_some_and(|host| {
+                ["coomer.st", "coomer.su", "coomer.party"]
+                    .iter()
+                    .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+            })
+    }
+
+    pub fn parse_archive_post_url(url: &Url) -> Option<super::ProviderPostLink> {
+        if !Self::archive_host_matches(url) {
+            return None;
+        }
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        if segments.len() < 5
+            || !matches!(segments[1], "user" | "server" | "channel")
+            || segments[3] != "post"
+        {
+            return None;
+        }
+        Some(super::ProviderPostLink {
+            service: super::clean_link_segment(segments[0])?,
+            creator_hint: Some(super::clean_link_segment(segments[2])?),
+            post_id: super::clean_link_segment(segments[4])?,
+        })
+    }
+
+    pub fn parse_archive_creator_url(url: &Url) -> Option<super::ProviderCreatorLink> {
+        if !Self::archive_host_matches(url) {
+            return None;
+        }
+        let segments: Vec<&str> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        if segments.len() < 3 || !matches!(segments[1], "user" | "server" | "channel") {
+            return None;
+        }
+        Some(super::ProviderCreatorLink {
+            service: super::clean_link_segment(segments[0])?,
+            creator_hint: super::clean_link_segment(segments[2])?,
+        })
+    }
+
+    pub fn matches_config(config: &ProviderConfig) -> bool {
+        config.id.eq_ignore_ascii_case("coomer")
+            || config
+                .api_url
+                .parse::<Url>()
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+                .is_some_and(|host| host == "coomer.st" || host.ends_with(".coomer.st"))
+    }
+
     pub fn default_services() -> Vec<String> {
         vec!["onlyfans".into(), "fansly".into(), "candfans".into()]
     }
@@ -89,13 +147,49 @@ impl CoomerProvider {
         &self.queue
     }
 
+    fn prepare_post(
+        &self,
+        mut post: Post,
+        authoritative_attachments: Option<Vec<Attachment>>,
+    ) -> Post {
+        if authoritative_attachments
+            .as_ref()
+            .is_some_and(|attachments| !attachments.is_empty())
+        {
+            post.attachments = authoritative_attachments;
+        }
+        if post
+            .file
+            .as_ref()
+            .is_some_and(Attachment::is_empty_placeholder)
+        {
+            post.file = None;
+        }
+
+        let provider_id = serde_json::Value::String(self.id.clone());
+        post.extra
+            .insert("provider_id".to_string(), provider_id.clone());
+        if let Some(file) = post.file.as_mut() {
+            file.extra
+                .insert("provider_id".to_string(), provider_id.clone());
+        }
+        if let Some(attachments) = post.attachments.as_mut() {
+            for attachment in attachments {
+                attachment
+                    .extra
+                    .insert("provider_id".to_string(), provider_id.clone());
+            }
+        }
+        post
+    }
+
     pub fn build_headers(config: &ProviderConfig) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
             HeaderValue::from_static(crate::downloader::PAWSTASH_USER_AGENT),
         );
-        // Coomer is behind DDoS-Guard (DDG), which requires Accept: text/css to avoid 403 blocks
+        // DDoS-Guard rejects this endpoint unless it receives the CSS accept header.
         headers.insert(ACCEPT, HeaderValue::from_static("text/css"));
         let cookie_raw = config.session_cookie.trim();
         if !cookie_raw.is_empty() {
@@ -573,15 +667,11 @@ impl SourceProvider for CoomerProvider {
         }
 
         let resp: CoomerPostsResponse = self.get_json(&path, &params).await?;
-        let mut posts = resp.into_posts();
-        let prov_id = self.id.clone();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        Ok(resp
+            .into_posts()
+            .into_iter()
+            .map(|post| self.prepare_post(post, None))
+            .collect())
     }
 
     async fn fetch_post(
@@ -597,40 +687,14 @@ impl SourceProvider for CoomerProvider {
             Self::segment(post_id)
         );
         match self.get_json::<CoomerSinglePostResponse>(&path, &[]).await {
-            Ok(CoomerSinglePostResponse::Wrapped {
-                mut post,
-                attachments,
-            }) => {
-                if (post.attachments.is_none()
-                    || post.attachments.as_ref().is_some_and(|a| a.is_empty()))
-                    && attachments.is_some()
-                {
-                    post.attachments = attachments;
-                }
-                post.extra.insert(
-                    "provider_id".to_string(),
-                    serde_json::Value::String(self.id.clone()),
-                );
-                Ok(Some(post))
+            Ok(CoomerSinglePostResponse::Wrapped { post, attachments }) => {
+                Ok(Some(self.prepare_post(post, attachments)))
             }
-            Ok(CoomerSinglePostResponse::Direct(mut post)) => {
-                post.extra.insert(
-                    "provider_id".to_string(),
-                    serde_json::Value::String(self.id.clone()),
-                );
-                Ok(Some(post))
-            }
-            Ok(CoomerSinglePostResponse::Array(posts)) => {
-                if let Some(mut post) = posts.into_iter().next() {
-                    post.extra.insert(
-                        "provider_id".to_string(),
-                        serde_json::Value::String(self.id.clone()),
-                    );
-                    Ok(Some(post))
-                } else {
-                    Ok(None)
-                }
-            }
+            Ok(CoomerSinglePostResponse::Direct(post)) => Ok(Some(self.prepare_post(post, None))),
+            Ok(CoomerSinglePostResponse::Array(posts)) => Ok(posts
+                .into_iter()
+                .next()
+                .map(|post| self.prepare_post(post, None))),
             Err(e) if e.contains("404") => Ok(None),
             Err(e) => Err(e),
         }
@@ -661,15 +725,11 @@ impl SourceProvider for CoomerProvider {
             params.push(("q", q.to_string()));
         }
         let resp: CoomerPostsResponse = self.get_json("/posts", &params).await?;
-        let mut posts = resp.into_posts();
-        let prov_id = self.id.clone();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        Ok(resp
+            .into_posts()
+            .into_iter()
+            .map(|post| self.prepare_post(post, None))
+            .collect())
     }
 
     async fn fetch_popular_posts(
@@ -689,21 +749,17 @@ impl SourceProvider for CoomerProvider {
         let res = self
             .get_json::<CoomerPostsResponse>("/posts/popular", &params)
             .await;
-        let mut posts = match res {
+        let posts = match res {
             Ok(p) => p.into_posts(),
             Err(_) => self
                 .get_json::<CoomerPostsResponse>("/popular", &params)
                 .await?
                 .into_posts(),
         };
-        let prov_id = self.id.clone();
-        for p in &mut posts {
-            p.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_id.clone()),
-            );
-        }
-        Ok(posts)
+        Ok(posts
+            .into_iter()
+            .map(|post| self.prepare_post(post, None))
+            .collect())
     }
 
     async fn fetch_post_comments(
@@ -806,6 +862,9 @@ impl SourceProvider for CoomerProvider {
     }
 
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String {
+        if !path_has_image_mime(thumb_path) {
+            return String::new();
+        }
         let conf = self.config.read().unwrap();
         let clean = thumb_path
             .trim_start_matches('/')
@@ -1025,6 +1084,43 @@ mod tests {
     }
 
     #[test]
+    fn prepare_post_removes_empty_file_and_uses_wrapper_attachments() {
+        let provider = CoomerProvider::new(test_config("https://coomer.st".into())).unwrap();
+        let post = Post {
+            id: "812407167322693632".into(),
+            user: "800702847065796609".into(),
+            service: "fansly".into(),
+            file: Some(Attachment::default()),
+            attachments: Some(vec![Attachment {
+                name: Some("video.mp4".into()),
+                path: Some("/15/d4/video.mp4".into()),
+                ..Attachment::default()
+            }]),
+            ..Post::default()
+        };
+        let post = provider.prepare_post(
+            post,
+            Some(vec![Attachment {
+                name: Some("video.mp4".into()),
+                path: Some("/15/d4/video.mp4".into()),
+                server: Some("https://n1.coomer.st".into()),
+                ..Attachment::default()
+            }]),
+        );
+
+        assert!(post.file.is_none());
+        let attachment = &post.attachments.unwrap()[0];
+        assert_eq!(attachment.server.as_deref(), Some("https://n1.coomer.st"));
+        assert_eq!(
+            attachment
+                .extra
+                .get("provider_id")
+                .and_then(|value| value.as_str()),
+            Some("coomer")
+        );
+    }
+
+    #[test]
     fn test_coomer_url_resolution() {
         let conf = test_config("https://coomer.st".into());
         let provider = CoomerProvider::new(conf).unwrap();
@@ -1040,6 +1136,9 @@ mod tests {
             provider.resolve_thumbnail_url("/data/aa/bb/thumb.jpg"),
             "https://img.coomer.st/thumbnail/data/aa/bb/thumb.jpg"
         );
+        assert!(provider
+            .resolve_thumbnail_url("/data/aa/bb/video.mp4")
+            .is_empty());
         assert_eq!(
             provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2")),
             "https://c2.coomer.st/data/aa/bb/video.mp4"
@@ -1206,7 +1305,11 @@ mod tests {
                 let media_url = provider.resolve_media_url(path, None);
                 assert!(media_url.starts_with("https://c1.coomer.st/data/"));
                 let thumb_url = provider.resolve_thumbnail_url(path);
-                assert!(thumb_url.starts_with("https://img.coomer.st/thumbnail/data/"));
+                if path_has_image_mime(path) {
+                    assert!(thumb_url.starts_with("https://img.coomer.st/thumbnail/data/"));
+                } else {
+                    assert!(thumb_url.is_empty());
+                }
             }
         }
         let custom_srv_url = provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2"));

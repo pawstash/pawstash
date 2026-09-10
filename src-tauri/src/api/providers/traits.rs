@@ -2,6 +2,12 @@ use crate::api::models::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+pub fn path_has_image_mime(path: &str) -> bool {
+    mime_guess::from_path(path)
+        .first_raw()
+        .is_some_and(|mime| mime.starts_with("image/"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderConfig {
     pub id: String,
@@ -326,6 +332,44 @@ pub trait SourceProvider: Send + Sync {
 
     fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String;
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String;
+
+    fn canonical_attachment_path(&self, _attachment: &Attachment, path: &str) -> String {
+        path.to_string()
+    }
+
+    fn attachment_uses_thumbnail(&self, _attachment: &Attachment) -> bool {
+        false
+    }
+
+    fn enrich_attachment(&self, attachment: &mut Attachment) {
+        let Some(path) = attachment.path.clone() else {
+            return;
+        };
+        if path.starts_with("http://") || path.starts_with("https://") {
+            attachment.url = Some(crate::cloud::normalize_cloud_direct_url(&path));
+            return;
+        }
+        if path.starts_with("/cloud_stream/") {
+            attachment.url = Some(path);
+            return;
+        }
+        if path.starts_with("cloud:") || path.starts_with("cloud_folder:") {
+            return;
+        }
+
+        let canonical_path = self.canonical_attachment_path(attachment, &path);
+        let thumbnail_url = self.resolve_thumbnail_url(&canonical_path);
+        attachment.thumbnail_url = (!thumbnail_url.is_empty()).then_some(thumbnail_url);
+
+        if self.attachment_uses_thumbnail(attachment) {
+            attachment.url = attachment.thumbnail_url.clone();
+            return;
+        }
+
+        let media_url = self.resolve_media_url(&canonical_path, attachment.server.as_deref());
+        attachment.url = (!media_url.is_empty()).then_some(media_url);
+    }
+
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String;
     fn resolve_creator_url(&self, service: &str, creator_id: &str) -> String;
     fn resolve_avatar_url(&self, service: &str, creator_id: &str) -> String;

@@ -305,6 +305,7 @@ pub async fn save_settings(
             }
         }
     }
+    settings.normalize();
     ProviderManager::validate_configs(&settings.providers)?;
     state
         .pawchive_client
@@ -361,6 +362,7 @@ pub async fn save_providers(
             }
         }
     }
+    settings.normalize();
     ProviderManager::validate_configs(&settings.providers)?;
     state.config_manager.save(&settings)?;
     if let Err(error) = state
@@ -1070,9 +1072,16 @@ pub async fn fetch_post(
             Ok(reconciled.post)
         }
         Ok(None) => {
-            if prov_key == "auto" {
-                if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id)
-                {
+            if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id) {
+                let matches_provider = match provider_id.as_deref() {
+                    Some("auto") | None => true,
+                    Some(pid) => post
+                        .extra
+                        .get("provider_id")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|p| p.eq_ignore_ascii_case(pid)),
+                };
+                if matches_provider {
                     enrich_posts(std::slice::from_mut(&mut post), &state.provider_manager).await;
                     return Ok(post);
                 }
@@ -1080,9 +1089,16 @@ pub async fn fetch_post(
             Err(format!("Post not found on provider '{prov_key}'"))
         }
         Err(error) => {
-            if prov_key == "auto" {
-                if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id)
-                {
+            if let Ok(Some(mut post)) = state.content.get_post(&service, &creator_id, &post_id) {
+                let matches_provider = match provider_id.as_deref() {
+                    Some("auto") | None => true,
+                    Some(pid) => post
+                        .extra
+                        .get("provider_id")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|p| p.eq_ignore_ascii_case(pid)),
+                };
+                if matches_provider {
                     enrich_posts(std::slice::from_mut(&mut post), &state.provider_manager).await;
                     return Ok(post);
                 }
@@ -1215,7 +1231,6 @@ pub async fn resolve_external_post_link(
         }
     }
 
-    // Check for creator profile links
     let target_url = expanded_opt.as_deref().unwrap_or(&url);
     if let Some(creator_link) = parse_external_creator_link(target_url) {
         if let Some(creator_id) = state
@@ -1315,7 +1330,7 @@ pub async fn fetch_account_favorites(
             .fetch_account_favorites(None, Some(kind))
             .await
         {
-            // Pin remote favorites locally so they persist offline too
+            // Account favorites are pinned so they remain available offline.
             for fav in &remote_items {
                 if kind == "post" {
                     let user_id = fav
@@ -1357,8 +1372,10 @@ pub async fn fetch_account_favorites(
                             favorite_count: None,
                             attachment_count: None,
                             thumbnail_url: None,
+                            media_url: None,
                             page_url: None,
                             preview_path: None,
+                            cloud_urls: Vec::new(),
                             extra: fav.extra.clone(),
                         };
                         post.clean_extra();
@@ -1424,7 +1441,6 @@ pub async fn fetch_account_favorites(
                 }
             }
 
-            // Build map of local favorites with their faved_at timestamps from content_pins
             let mut local_map = std::collections::HashMap::new();
             for loc in local_favorites {
                 let srv = loc.service.as_deref().unwrap_or("").to_lowercase();
@@ -1435,7 +1451,7 @@ pub async fn fetch_account_favorites(
             let mut merged = Vec::new();
             let mut seen_keys = std::collections::HashSet::new();
 
-            // First include all remote items, carrying over any local faved_at if already pinned
+            // Remote state wins except for metadata that the API does not return.
             for mut item in remote_items {
                 let srv = item.service.as_deref().unwrap_or("").to_lowercase();
                 let id = item.id.to_lowercase();
@@ -1464,7 +1480,6 @@ pub async fn fetch_account_favorites(
                 }
             }
 
-            // If persist_in_app_favorites_locally is enabled, also keep all local favorites that aren't on remote
             if settings.persist_in_app_favorites_locally || kind == "post" {
                 for (key, loc) in &local_map {
                     if seen_keys.insert((key.0.clone(), key.1.clone())) {
@@ -1472,7 +1487,7 @@ pub async fn fetch_account_favorites(
                     }
                 }
             } else {
-                // Clean up stale account pins that are no longer present on remote
+                // Without local persistence, mirror removals from the account.
                 for key in local_map.keys() {
                     if !seen_keys.contains(key) {
                         let _ = state.content.set_pin(
@@ -3280,10 +3295,11 @@ pub async fn resolve_cloud_link(
     url: String,
     state: State<'_, AppState>,
 ) -> Result<crate::cloud::CloudFolderResult, String> {
-    if let Ok(Some(cached)) = state
+    if let Ok(Some(mut cached)) = state
         .content
         .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
     {
+        crate::cloud::canonicalize_cloud_result(&mut cached);
         return Ok(cached);
     }
 
@@ -3297,10 +3313,11 @@ pub async fn resolve_cloud_link(
             Ok(result)
         }
         Err(error) => {
-            if let Ok(Some(cached)) = state
+            if let Ok(Some(mut cached)) = state
                 .content
                 .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
             {
+                crate::cloud::canonicalize_cloud_result(&mut cached);
                 return Ok(cached);
             }
             Err(error)

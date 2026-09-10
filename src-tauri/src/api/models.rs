@@ -16,6 +16,32 @@ pub struct Attachment {
     pub extra: HashMap<String, Value>,
 }
 
+impl Attachment {
+    pub fn is_empty_placeholder(&self) -> bool {
+        self.name
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .path
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .server
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self.size.is_none()
+            && self
+                .url
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .thumbnail_url
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self.extra.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Post {
     #[serde(deserialize_with = "deserialize_flexible_id")]
@@ -63,9 +89,13 @@ pub struct Post {
     #[serde(default)]
     pub thumbnail_url: Option<String>,
     #[serde(default)]
+    pub media_url: Option<String>,
+    #[serde(default)]
     pub page_url: Option<String>,
     #[serde(default)]
     pub preview_path: Option<String>,
+    #[serde(default)]
+    pub cloud_urls: Vec<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
@@ -100,6 +130,11 @@ impl Post {
             "favorites",
             "fav_count",
             "attachment_count",
+            "thumbnail_url",
+            "media_url",
+            "page_url",
+            "preview_path",
+            "cloud_urls",
             "extra",
         ];
         for k in &known_keys {
@@ -154,8 +189,10 @@ impl Post {
             favorite_count: self.favorite_count,
             attachment_count: self.attachment_count,
             thumbnail_url: self.thumbnail_url.clone(),
+            media_url: self.media_url.clone(),
             page_url: self.page_url.clone(),
             preview_path: self.preview_path.clone(),
+            cloud_urls: self.cloud_urls.clone(),
             extra: HashMap::new(),
         }
     }
@@ -282,6 +319,25 @@ impl Post {
                         .or_else(|| obj.get("favorites"))
                         .and_then(|v| v.as_u64());
                     let attachment_count = obj.get("attachment_count").and_then(|v| v.as_u64());
+                    let string_field = |key: &str| {
+                        obj.get(key)
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    };
+                    let thumbnail_url = string_field("thumbnail_url");
+                    let media_url = string_field("media_url");
+                    let page_url = string_field("page_url");
+                    let preview_path = string_field("preview_path");
+                    let cloud_urls = obj
+                        .get("cloud_urls")
+                        .and_then(Value::as_array)
+                        .map(|urls| {
+                            urls.iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
                     let known_keys = [
                         "id",
@@ -311,6 +367,11 @@ impl Post {
                         "favorites",
                         "fav_count",
                         "attachment_count",
+                        "thumbnail_url",
+                        "media_url",
+                        "page_url",
+                        "preview_path",
+                        "cloud_urls",
                         "extra",
                     ];
                     for k in &known_keys {
@@ -344,9 +405,11 @@ impl Post {
                         prev,
                         favorite_count,
                         attachment_count,
-                        thumbnail_url: None,
-                        page_url: None,
-                        preview_path: None,
+                        thumbnail_url,
+                        media_url,
+                        page_url,
+                        preview_path,
+                        cloud_urls,
                         extra,
                     })
                 } else {

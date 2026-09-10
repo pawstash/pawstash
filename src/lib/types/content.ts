@@ -35,8 +35,10 @@ export interface Post {
   favorite_count?: number;
   attachment_count?: number;
   thumbnail_url?: string;
+  media_url?: string;
   page_url?: string;
   preview_path?: string;
+  cloud_urls?: string[];
   [key: string]: unknown;
 }
 

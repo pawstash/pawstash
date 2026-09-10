@@ -5,9 +5,9 @@ export class ConfigState {
   settings = $state<AppSettings>({
     download_dir: 'Downloads/Pawstash',
     cache_max_mb: 128,
-    api_domain: 'pawchive.pw',
-    file_domain: 'file.pawchive.pw',
-    image_domain: 'img.pawchive.pw',
+    api_domain: '',
+    file_domain: '',
+    image_domain: '',
     session_cookie: '',
     pawchive_username: '',
     theme: 'glass',

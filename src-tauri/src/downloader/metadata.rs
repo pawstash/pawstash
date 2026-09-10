@@ -142,6 +142,10 @@ mod tests {
             std::env::temp_dir().join(format!("pawstash_test_meta_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        let source_url = format!(
+            "{}/creators/onlyfans/creator1/post/post123",
+            crate::api::providers::OnlyHavenProvider::default_config().api_url
+        );
         let meta_oh = PostMetadataExport {
             service: "onlyfans",
             creator_id: "creator1",
@@ -152,15 +156,15 @@ mod tests {
             content: Some("Hello <p>world</p>"),
             tags: None,
             origin_url: None,
-            source_url: Some("https://cum.st/creators/onlyfans/creator1/post/post123".to_string()),
+            source_url: Some(source_url.clone()),
         };
         save_post_metadata(&temp_dir, &meta_oh, &settings).unwrap();
 
         let txt = std::fs::read_to_string(temp_dir.join("info.txt")).unwrap();
-        assert!(txt.contains("Source: https://cum.st/creators/onlyfans/creator1/post/post123"));
+        assert!(txt.contains(&format!("Source: {source_url}")));
 
         let json_str = std::fs::read_to_string(temp_dir.join("post.json")).unwrap();
-        assert!(json_str.contains("https://cum.st/creators/onlyfans/creator1/post/post123"));
+        assert!(json_str.contains(&source_url));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
