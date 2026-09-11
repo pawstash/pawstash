@@ -544,18 +544,21 @@
     }
   }
 
-  let lastResolvedPostKey = '';
+  let lastResolvedKey = '';
   $effect(() => {
     const currentPostKey = postKey;
+    const cloudUrls = post?.cloud_urls || [];
+    const resolveKey = `${currentPostKey}:${cloudUrls.join('|')}`;
+
     untrack(() => {
       const cachedNodes = globalPostCloudNodes.get(currentPostKey);
-      if (cachedNodes && cachedNodes.length > 0) {
+      const hasMissingCloudSizes = cachedNodes?.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0));
+      if (cachedNodes && cachedNodes.length > 0 && !hasMissingCloudSizes) {
         resolvedCloudAttachments = cachedNodes;
         cloudResolving = false;
         return;
       }
 
-      const cloudUrls = post?.cloud_urls || [];
       if (cloudUrls.length === 0) {
         resolvedCloudAttachments = [];
         globalPostCloudNodes.delete(currentPostKey);
@@ -563,18 +566,19 @@
         return;
       }
 
-      if (lastResolvedPostKey === currentPostKey && resolvedCloudAttachments.length > 0) {
+      if (lastResolvedKey === resolveKey && resolvedCloudAttachments.length > 0 && !resolvedCloudAttachments.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0))) {
         return;
       }
-      lastResolvedPostKey = currentPostKey;
+      lastResolvedKey = resolveKey;
       cloudResolving = true;
 
       (async () => {
-        const allCloudNodes: Attachment[] = [];
-        for (const url of cloudUrls) {
+        let currentResolved: Attachment[] = [];
+        const resolveSingleUrl = async (url: string): Promise<Attachment[]> => {
           try {
             let res = globalCloudFolderCache.get(url);
-            if (!res) {
+            const resHasMissingSizes = res?.nodes.some((n) => !n.is_folder && (!n.size || n.size === 0));
+            if (!res || resHasMissingSizes) {
               res = await apiResolveCloudLink(url);
               globalCloudFolderCache.set(url, res);
               logger.info(`[Cloud] Resolved link: ${url} (${res.nodes.length} items)`);
@@ -583,11 +587,12 @@
 
             const fileNodes = res.nodes.filter((n) => !n.is_folder);
             const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
+            const nodes: Attachment[] = [];
 
             for (const node of nodesToDisplay) {
               if (node.is_folder) {
                 const childrenCount = res.nodes.filter((n) => n.parent_id === node.id).length;
-                allCloudNodes.push({
+                nodes.push({
                   name: node.name,
                   path: `cloud_folder:${res.provider}:${node.id}`,
                   size: undefined,
@@ -601,10 +606,15 @@
                   cloud_child_count: childrenCount
                 } as any);
               } else {
-                allCloudNodes.push({
+                nodes.push({
                   name: node.name,
+                  url: node.stream_url || node.download_url,
                   path: node.stream_url || node.download_url || `cloud:${res.provider}:${node.id}`,
-                  size: typeof node.size === 'number' && node.size > 0 ? node.size : undefined,
+                  size: typeof node.size === 'number' && node.size > 0
+                    ? node.size
+                    : (nodesToDisplay.length === 1 && typeof res.total_size === 'number' && res.total_size > 0)
+                      ? res.total_size
+                      : undefined,
                   server: '',
                   is_cloud: true,
                   is_cloud_folder: false,
@@ -615,18 +625,29 @@
                 } as any);
               }
             }
+            return nodes;
           } catch (err) {
             logger.warn(`Failed to auto-resolve cloud link for post gallery: ${url}`, err);
+            return [];
           }
-        }
+        };
+
+        await Promise.allSettled(
+          cloudUrls.map(async (url) => {
+            const nodes = await resolveSingleUrl(url);
+            if (nodes.length > 0 && postKey === currentPostKey) {
+              currentResolved = [...currentResolved, ...nodes];
+              resolvedCloudAttachments = currentResolved;
+              cloudResolvedVersion++;
+            }
+          })
+        );
 
         if (postKey === currentPostKey) {
-          resolvedCloudAttachments = allCloudNodes;
-          if (allCloudNodes.length > 0) {
-            globalPostCloudNodes.set(currentPostKey, allCloudNodes);
+          if (currentResolved.length > 0) {
+            globalPostCloudNodes.set(currentPostKey, currentResolved);
           }
           cloudResolving = false;
-          cloudResolvedVersion++;
         }
       })();
     });
@@ -3401,9 +3422,9 @@
           </div>
         {/if}
       </section>
-      {:else if entry.loading}
+      {:else if entry.loading || !entry.loaded}
         <div class="detail-loading py-16 flex flex-col items-center justify-center gap-3">
-          <IconLoading class="w-8 h-8 text-accent animate-spin" />
+          <IconLoading class="w-8 h-8 text-accent" />
           <span class="text-sm text-[var(--fg-muted)]">{i18n.t('feed.loading') || 'Loading post...'}</span>
         </div>
       {:else}

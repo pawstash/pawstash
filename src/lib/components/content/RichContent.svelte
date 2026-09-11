@@ -29,7 +29,8 @@
         host.includes('soundcloud.com') ||
         host.includes('spotify.com') ||
         host.includes('bilibili.com') ||
-        host.includes('nicovideo.jp')
+        host.includes('nicovideo.jp') ||
+        host.includes('pixiv.net')
       );
     } catch {
       return false;

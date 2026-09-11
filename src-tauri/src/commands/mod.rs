@@ -664,8 +664,8 @@ pub async fn fetch_posts(
         .await
     {
         Ok(mut posts) => {
-            state.content.save_post_list(&list_key, offset, &posts)?;
             enrich_posts(&mut posts, &state.provider_manager).await;
+            state.content.save_post_list(&list_key, offset, &posts)?;
             Ok(posts)
         }
         Err(error) => {
@@ -693,8 +693,8 @@ pub async fn fetch_recent_posts(
         .await
     {
         Ok(mut posts) => {
-            state.content.save_post_list(&list_key, offset, &posts)?;
             enrich_posts(&mut posts, &state.provider_manager).await;
+            state.content.save_post_list(&list_key, offset, &posts)?;
             Ok(posts)
         }
         Err(error) => {
@@ -726,6 +726,7 @@ pub async fn fetch_popular_posts(
         .await
     {
         Ok(mut posts) => {
+            enrich_posts(&mut posts, &state.provider_manager).await;
             state.content.save_post_list(&list_key, offset, &posts)?;
             if let Ok(mut cached) = state.content.load_post_list(&list_key, offset) {
                 if cached.len() == posts.len() {
@@ -733,7 +734,6 @@ pub async fn fetch_popular_posts(
                     return Ok(cached);
                 }
             }
-            enrich_posts(&mut posts, &state.provider_manager).await;
             Ok(posts)
         }
         Err(error) => {
@@ -774,8 +774,8 @@ pub async fn fetch_creator_posts(
         .await;
     match result {
         Ok(mut posts) => {
-            state.content.save_post_list(&list_key, offset, &posts)?;
             enrich_posts(&mut posts, &state.provider_manager).await;
+            state.content.save_post_list(&list_key, offset, &posts)?;
             Ok(posts)
         }
         Err(error) => {
@@ -1044,11 +1044,18 @@ pub async fn fetch_post(
         .await
     {
         Ok(Some(mut reconciled)) => {
+            enrich_posts(
+                std::slice::from_mut(&mut reconciled.post),
+                &state.provider_manager,
+            )
+            .await;
             state
                 .content
                 .save_posts(std::slice::from_ref(&reconciled.post))?;
             if !reconciled.revisions.is_empty() {
-                for rev in &reconciled.revisions {
+                for rev in &mut reconciled.revisions {
+                    enrich_posts(std::slice::from_mut(&mut rev.post), &state.provider_manager)
+                        .await;
                     let pid = rev
                         .post
                         .extra
@@ -1064,11 +1071,6 @@ pub async fn fetch_post(
                     );
                 }
             }
-            enrich_posts(
-                std::slice::from_mut(&mut reconciled.post),
-                &state.provider_manager,
-            )
-            .await;
             Ok(reconciled.post)
         }
         Ok(None) => {
@@ -3306,8 +3308,14 @@ pub async fn resolve_cloud_link(
         .content
         .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
     {
-        crate::cloud::canonicalize_cloud_result(&mut cached);
-        return Ok(cached);
+        let has_missing_sizes = cached
+            .nodes
+            .iter()
+            .any(|n| !n.is_folder && (n.size.is_none() || n.size == Some(0)));
+        if !has_missing_sizes {
+            crate::cloud::canonicalize_cloud_result(&mut cached);
+            return Ok(cached);
+        }
     }
 
     let settings = state.config_manager.load().ok();

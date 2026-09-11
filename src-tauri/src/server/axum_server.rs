@@ -583,21 +583,46 @@ async fn serve_cloud_proxy_stream_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if upstream_content_type.starts_with("text/html") {
-        tracing::warn!(
-            "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
-            target_url
-        );
-        return Err((
-            StatusCode::NOT_FOUND,
-            "Upstream returned HTML page instead of media stream".to_string(),
-        ));
-    }
+    let final_upstream = if upstream_content_type.starts_with("text/html") {
+        let html_bytes = upstream.bytes().await.unwrap_or_default();
+        let html_str = String::from_utf8_lossy(&html_bytes);
+
+        if let Some(confirmed_resp) = crate::cloud::follow_cloud_stream_html_warning(
+            &client,
+            &target_url,
+            &upstream_headers,
+            &html_str,
+            is_head,
+            headers.get(header::RANGE),
+        )
+        .await
+        {
+            confirmed_resp
+        } else {
+            tracing::warn!(
+                "Cloud proxy upstream returned HTML instead of media for target '{}' (file may be deleted)",
+                target_url
+            );
+            return Err((
+                StatusCode::NOT_FOUND,
+                "Upstream returned HTML page instead of media stream".to_string(),
+            ));
+        }
+    } else {
+        upstream
+    };
+
+    let status = final_upstream.status();
+    let upstream_headers = final_upstream.headers().clone();
+    let upstream_content_type = upstream_headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
     let body = if is_head {
         Body::empty()
     } else {
-        Body::from_stream(upstream.bytes_stream())
+        Body::from_stream(final_upstream.bytes_stream())
     };
 
     let mut response = Response::builder()
@@ -724,7 +749,6 @@ fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
     let segments = ip.segments();
     segments[0] == 0x2001 && segments[1] == 0x0db8
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

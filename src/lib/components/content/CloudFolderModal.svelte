@@ -238,7 +238,7 @@
     if (node.download_url?.startsWith('/cloud_stream/') && port > 0) {
       return serverPortState.mediaUrl(node.download_url);
     }
-    return node.stream_url || '';
+    return node.stream_url || node.download_url || '';
   }
 
   function resolveDownloadUrl(node: CloudNode): string {
