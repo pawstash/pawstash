@@ -143,12 +143,15 @@
   );
 
   const emptyEntry: CachedPost = { post: null, loading: false, loaded: false, error: null };
+  let autoEntry = $derived(contentState.posts[postCacheKey(service, creatorId, postId)]);
   let entry = $derived.by(() => {
     const byActive = contentState.posts[postCacheKey(service, creatorId, postId, activeProviderId)];
+    if (activeProviderId && activeProviderId !== 'auto') {
+      return byActive ?? emptyEntry;
+    }
     if (byActive?.post) return byActive;
-    const byAuto = contentState.posts[postCacheKey(service, creatorId, postId)];
-    if (byAuto?.post) return byAuto;
-    return byActive ?? byAuto ?? emptyEntry;
+    if (autoEntry?.post) return autoEntry;
+    return byActive ?? autoEntry ?? emptyEntry;
   });
   let rawPost = $derived(entry.post);
   let availableProviders = $derived.by<string[]>(() => {
@@ -2491,11 +2494,13 @@
       {/if}
     </div>
 
-    {#if post || (entry.loaded && !entry.loading)}
+    {#if post || (entry.loaded && !entry.loading) || (activeProviderId && activeProviderId !== 'auto') || candidateProviders.length > 0}
       <header class="detail-header">
         <div class="min-w-0 flex-1">
           {#if post}
             <h1>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
+          {:else if autoEntry?.post?.title}
+            <h1 class="opacity-75">{cleanPostTitle(autoEntry.post.title)}</h1>
           {/if}
           {#if publishedDateStr}
             <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
@@ -3222,9 +3227,7 @@
             </div>
           {/if}
         </section>
-      {/if}
 
-      {#if post}
         {#if allMediaDownloaded || media.length > 0 || post.file}
           <div class="post-footer-actions-row">
             {#if allMediaDownloaded}
@@ -3398,6 +3401,30 @@
           </div>
         {/if}
       </section>
+      {:else if entry.loading}
+        <div class="detail-loading py-16 flex flex-col items-center justify-center gap-3">
+          <IconLoading class="w-8 h-8 text-accent animate-spin" />
+          <span class="text-sm text-[var(--fg-muted)]">{i18n.t('feed.loading') || 'Loading post...'}</span>
+        </div>
+      {:else}
+        <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
+          <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
+          <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
+            {i18n.t('post.not_found_on_provider', { provider: currentProviderName }) || `Post not found on ${currentProviderName}`}
+          </h2>
+          <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
+            {i18n.t('post.not_found_on_provider_desc', { provider: currentProviderName }) || `This post does not exist on ${currentProviderName}. You can switch to Merged view or select another provider.`}
+          </p>
+          {#if candidateProviders.length > 1}
+            <Button
+              variant="accent"
+              onclick={() => onProviderChange('auto')}
+            >
+              <IconSparkle class="w-4 h-4 mr-1.5" />
+              <span>{i18n.t('post.switch_to_merged') || 'Switch to Merged'}</span>
+            </Button>
+          {/if}
+        </div>
       {/if}
     {:else if entry.loading}
       <div class="detail-loading">{i18n.t('feed.loading')}</div>

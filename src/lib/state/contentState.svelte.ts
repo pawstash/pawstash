@@ -143,7 +143,11 @@ export class ContentState {
     if (!entry.post || !entry.post.detail_fetched) {
       try {
         const cached = await apiGetCachedPost(String(service), String(creatorId), String(postId), providerId);
-        if (cached && cached.detail_fetched) {
+        const isSpecificProvider = Boolean(providerId && providerId !== 'auto');
+        const cachedProv = (cached?.extra as any)?.provider_id;
+        const matchesProvider = !isSpecificProvider || (typeof cachedProv === 'string' && Boolean(providerId) && cachedProv.toLowerCase() === providerId!.toLowerCase());
+
+        if (cached && cached.detail_fetched && matchesProvider) {
           this.posts[key] = {
             post: {
               ...(entry.post || {}),
@@ -156,7 +160,7 @@ export class ContentState {
           };
           logger.debug(`[Content] Hydrated post ${service}:${creatorId}:${postId}${providerId ? `:${providerId}` : ''} from local cache`);
           return;
-        } else if (cached && !entry.post) {
+        } else if (cached && !entry.post && matchesProvider) {
           this.posts[key] = {
             post: cached,
             loading: false,
@@ -194,7 +198,11 @@ export class ContentState {
       };
     } catch (error) {
       const msg = errorMessage(error);
-      const fallbackPost = currentEntry.post || this.getPost(service, creatorId, postId).post;
+      const isSpecificProvider = Boolean(providerId && providerId !== 'auto');
+      const currentProv = (currentEntry.post?.extra as any)?.provider_id;
+      const fallbackPost = (isSpecificProvider && providerId)
+        ? (typeof currentProv === 'string' && currentProv.toLowerCase() === providerId.toLowerCase() ? currentEntry.post : null)
+        : (currentEntry.post || this.getPost(service, creatorId, postId).post);
       if (fallbackPost) {
         this.posts[key] = {
           ...currentEntry,
@@ -365,6 +373,7 @@ export class ContentState {
       this.creators[key] = {
         ...cur,
         loading: false,
+        loaded: true,
         error: errorMessage(error)
       };
       logger.error(`Error loading creator ${service}:${creatorId}`, error);
@@ -439,6 +448,7 @@ export class ContentState {
       this.creators[key] = {
         ...cur,
         loading: false,
+        loaded: true,
         error: errorMessage(error)
       };
       logger.error(`Error refreshing creator ${service}:${creatorId}`, error);

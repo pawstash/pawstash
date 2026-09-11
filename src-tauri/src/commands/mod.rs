@@ -1121,17 +1121,24 @@ pub async fn get_cached_post(
         if let Some(ref pid) = provider_id {
             if pid != "auto" {
                 let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
-                let avail = post
-                    .extra
-                    .get("available_providers")
-                    .and_then(|v| v.as_array());
                 let matches_prov = prov_id.is_some_and(|p| p.eq_ignore_ascii_case(pid));
-                let matches_avail = avail.is_some_and(|arr| {
-                    arr.iter()
-                        .any(|v| v.as_str().is_some_and(|p| p.eq_ignore_ascii_case(pid)))
-                });
-                if !matches_prov && !matches_avail {
-                    return Ok(None);
+                if !matches_prov {
+                    if let Ok(revs) =
+                        state
+                            .content
+                            .load_post_revisions(&service, &creator_id, &post_id)
+                    {
+                        if let Some(matching_rev) = revs.into_iter().find(|r| {
+                            let rev_prov = r.post.extra.get("provider_id").and_then(|v| v.as_str());
+                            rev_prov.is_some_and(|p| p.eq_ignore_ascii_case(pid))
+                        }) {
+                            *post = matching_rev.post;
+                        } else {
+                            return Ok(None);
+                        }
+                    } else {
+                        return Ok(None);
+                    }
                 }
             }
         }

@@ -99,6 +99,7 @@
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconImageOff from '~icons/fluent/image-off-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
+  import IconWarning from '~icons/fluent/warning-24-regular';
   import { notify } from '$lib/utils/toast';
   import { tooltip } from '$lib/motion';
 
@@ -182,7 +183,10 @@
     hasMore: true
   };
 
+  let autoEntry = $derived(contentState.creators[creatorCacheKey(service, creatorId)]);
   let entry = $derived.by(() => contentState.creators[creatorCacheKey(service, creatorId, activeProviderId)] ?? emptyEntry);
+  let canonicalProfile = $derived(autoEntry?.profile ?? contentState.creators[creatorCacheKey(service, creatorId)]?.profile ?? null);
+  let profile = $derived(entry.profile ?? canonicalProfile ?? null);
   let subscription = $derived(subscriptionState.forCreator(service, creatorId));
   let subscriptionMenuOpen = $state(false);
   let saving = $state(false);
@@ -280,24 +284,24 @@
   });
 
   let creatorName = $derived.by<string>(() => {
-    if (typeof entry.profile?.name === 'string' && entry.profile.name !== creatorId) {
-      return entry.profile.name;
+    if (typeof profile?.name === 'string' && profile.name !== creatorId) {
+      return profile.name;
     }
     const fromMap = creatorsState.creatorsMap.get(`${service.toLowerCase()}:${creatorId.toLowerCase()}`);
     if (fromMap && fromMap !== creatorId) {
       return fromMap;
     }
-    return (typeof entry.profile?.name === 'string' && entry.profile.name) || String(creatorId);
+    return (typeof profile?.name === 'string' && profile.name) || String(creatorId);
   });
   let avatarLoaded = $state(false);
   let avatarErrorIndex = $state(0);
   let bannerFailed = $state(false);
-  let avatarPlaceholder = $derived(creatorPlaceholderUrl(entry.profile));
-  let bannerPlaceholder = $derived(creatorBannerPlaceholderUrl(entry.profile));
-  let avatarUrl = $derived(creatorAvatarSrc(entry.profile));
-  let bannerUrl = $derived(creatorBannerSrc(entry.profile));
+  let avatarPlaceholder = $derived(creatorPlaceholderUrl(profile));
+  let bannerPlaceholder = $derived(creatorBannerPlaceholderUrl(profile));
+  let avatarUrl = $derived(creatorAvatarSrc(profile));
+  let bannerUrl = $derived(creatorBannerSrc(profile));
   let candidateAvatarUrls = $derived.by<string[]>(() => {
-    const extraCandidate = entry.profile?.extra?.candidate_avatar_urls;
+    const extraCandidate = profile?.extra?.candidate_avatar_urls;
     const fromExtra = Array.isArray(extraCandidate) ? (extraCandidate as string[]) : [];
     const main = avatarUrl;
     if (!main) return fromExtra;
@@ -324,15 +328,15 @@
   let initialLetter = $derived(creatorName ? creatorName.charAt(0).toUpperCase() : '?');
 
   let rawUpdated = $derived(
-    entry.profile?.updated ||
-    (entry.profile?.extra as any)?.updated_at ||
-    (entry.profile?.extra as any)?.updated ||
+    profile?.updated ||
+    (profile?.extra as any)?.updated_at ||
+    (profile?.extra as any)?.updated ||
     null
   );
   let rawIndexed = $derived(
-    entry.profile?.indexed ||
-    (entry.profile?.extra as any)?.indexed_at ||
-    (entry.profile?.extra as any)?.indexed ||
+    profile?.indexed ||
+    (profile?.extra as any)?.indexed_at ||
+    (profile?.extra as any)?.indexed ||
     null
   );
   let latestPost = $derived(entry.posts.length > 0 ? entry.posts[0] : null);
@@ -371,7 +375,7 @@
     }
 
     if (entry.posts.length === 0) {
-      const direct = parseTags(entry.profile?.tags || (entry.profile?.extra as any)?.tags || (entry.profile?.extra as any)?.categories);
+      const direct = parseTags(profile?.tags || (profile?.extra as any)?.tags || (profile?.extra as any)?.categories);
       for (const t of [...direct, ...apiCreatorTags]) {
         const clean = t.replace(/^#+/, '').trim();
         if (!clean) continue;
@@ -534,7 +538,7 @@
 
   let creatorTabOptions = $derived.by(() => {
     let postsCount: string | number | undefined;
-    const rawPostCount = (entry.profile?.extra as any)?.post_count ?? (entry.profile?.extra as any)?.postCount;
+    const rawPostCount = (profile?.extra as any)?.post_count ?? (profile?.extra as any)?.postCount;
     const totalProfileCount = typeof rawPostCount === 'number' && rawPostCount > 0
       ? rawPostCount
       : (typeof rawPostCount === 'string' && Number(rawPostCount) > 0 ? Number(rawPostCount) : undefined);
@@ -549,6 +553,8 @@
       } else {
         postsCount = `${entry.posts.length}${entry.hasMore ? '+' : ''}`;
       }
+    } else if (entry.loaded || entry.error) {
+      postsCount = 0;
     } else if (totalProfileCount) {
       postsCount = totalProfileCount;
     }
@@ -860,8 +866,8 @@
 
     let cancelled = false;
     const cachedAccent = contentState.getCreatorAccent(service, creatorId);
-    const headerThumb = (entry.profile?.extra as any)?.header_thumbhash;
-    const avatarThumb = (entry.profile?.extra as any)?.avatar_thumbhash;
+    const headerThumb = (profile?.extra as any)?.header_thumbhash;
+    const avatarThumb = (profile?.extra as any)?.avatar_thumbhash;
     const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumb) || thumbHashToAverageColor(avatarThumb);
 
     if (thumbColor) {
@@ -1014,7 +1020,7 @@
 
   function openInProvider(targetProvId?: string) {
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-    const pageUrl = typeof entry.profile?.page_url === 'string' ? entry.profile.page_url : undefined;
+    const pageUrl = typeof profile?.page_url === 'string' ? profile.page_url : undefined;
     if (!effectiveProvId && pageUrl) {
       void apiOpenInBrowser(pageUrl).catch((err) => logger.warn('Failed to open creator in provider', err));
       return;
@@ -1027,7 +1033,7 @@
   }
 
   function openOriginalProfile() {
-    const url = getPlatformProfileUrl(service, creatorId, entry.profile?.public_id);
+    const url = getPlatformProfileUrl(service, creatorId, profile?.public_id);
     if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator original profile', err));
   }
 
@@ -1821,8 +1827,49 @@
           </div>
         {:else if postSearchError && visibleCreatorPosts.length === 0}
           <div class="creator-error">{postSearchError}</div>
-        {:else if entry.error && entry.posts.length === 0}
-          <div class="creator-error">{entry.error}</div>
+        {:else if (entry.error || (entry.loaded && entry.posts.length === 0)) && activeProviderId && activeProviderId !== 'auto' && !isPostsFiltered && !entry.loading}
+          <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
+            <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
+            <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
+              {i18n.t('creator.not_found_on_provider', { provider: currentProviderName }) || `No posts found on ${currentProviderName}`}
+            </h2>
+            <p class="text-sm text-[var(--fg-muted)] max-w-md mb-2">
+              {i18n.t('creator.not_found_on_provider_desc', { provider: currentProviderName }) || `This creator has no posts available on ${currentProviderName}. You can switch to Merged view or select another provider.`}
+            </p>
+            {#if autoEntry && autoEntry.posts.length > 0}
+              <p class="text-xs text-[var(--fg-subtle)] mb-6">
+                {i18n.t('creator.available_on_other_sources', { count: autoEntry.posts.length }) || `${autoEntry.posts.length} posts available in Merged view`}
+              </p>
+            {:else}
+              <div class="mb-4"></div>
+            {/if}
+            {#if candidateProviders.length > 1}
+              <Button
+                variant="accent"
+                onclick={() => handleProviderChange('auto')}
+              >
+                <IconSparkle class="w-4 h-4 mr-1.5" />
+                <span>{i18n.t('post.switch_to_merged') || 'Switch to Merged'}</span>
+              </Button>
+            {/if}
+          </div>
+        {:else if entry.error && entry.posts.length === 0 && !entry.loading}
+          <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
+            <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
+            <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
+              {i18n.t('common.error') || 'Error'}
+            </h2>
+            <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
+              {entry.error}
+            </p>
+            <Button
+              variant="tonal"
+              onclick={() => contentState.refreshCreator(service, creatorId, activeProviderId)}
+            >
+              <IconArrowClockwise class="w-4 h-4 mr-1.5" />
+              <span>{i18n.t('common.retry') || 'Retry'}</span>
+            </Button>
+          </div>
         {:else}
           <PostGrid
             posts={visibleCreatorPosts}
