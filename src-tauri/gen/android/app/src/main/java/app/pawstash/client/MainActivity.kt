@@ -163,7 +163,22 @@ class MainActivity : TauriActivity() {
   private val openDocumentTreeLauncher = registerForActivityResult(
     ActivityResultContracts.OpenDocumentTree()
   ) { uri: Uri? ->
+    if (uri != null) {
+      try {
+        val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        contentResolver.takePersistableUriPermission(uri, takeFlags)
+      } catch (e: Throwable) {
+        e.printStackTrace()
+      }
+    }
     val path = uri?.let { resolveTreeUriToPath(it) }
+    if (path != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+      val isPublicDownload = path.startsWith("/storage/emulated/0/Download", ignoreCase = true) ||
+                             path.contains("/Android/data/", ignoreCase = true)
+      if (!isPublicDownload && !Environment.isExternalStorageManager()) {
+        requestAllFilesAccess()
+      }
+    }
     onFolderPicked(path)
   }
 
@@ -182,6 +197,10 @@ class MainActivity : TauriActivity() {
       if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
           requestNotificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+      } else if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.Q) {
+        if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+          requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE, android.Manifest.permission.READ_EXTERNAL_STORAGE), 101)
         }
       }
     } catch (e: Throwable) {
@@ -285,6 +304,39 @@ class MainActivity : TauriActivity() {
   fun launchFolderPicker() {
     runOnUiThread {
       openDocumentTreeLauncher.launch(null)
+    }
+  }
+
+  fun hasAllFilesAccess(): Boolean {
+    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+      Environment.isExternalStorageManager()
+    } else {
+      true
+    }
+  }
+
+  fun requestAllFilesAccess() {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+      runOnUiThread {
+        try {
+          val intent = Intent(
+            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName")
+          ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(intent)
+        } catch (e: Throwable) {
+          try {
+            val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+          } catch (e2: Throwable) {
+            android.util.Log.e("Pawstash", "requestAllFilesAccess error", e2)
+          }
+        }
+      }
     }
   }
 

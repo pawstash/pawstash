@@ -444,27 +444,52 @@ impl DownloadManager {
         #[cfg(target_os = "android")]
         {
             let pkg = crate::db::storage::android_package_name();
-            let candidates = [
-                PathBuf::from(preferred),
-                PathBuf::from("/storage/emulated/0/Download/Pawstash"),
-                PathBuf::from("/storage/emulated/0/Download"),
-                PathBuf::from(format!(
-                    "/storage/emulated/0/Android/data/{pkg}/files/Download",
-                )),
-                PathBuf::from(format!("/data/user/0/{pkg}/files/Pawstash/Downloads")),
-                PathBuf::from(format!("/data/data/{pkg}/files/Pawstash/Downloads")),
-            ];
+            let preferred_trimmed = preferred.trim();
+            let mut candidates = Vec::new();
 
-            for candidate in candidates {
+            if !preferred_trimmed.is_empty() {
+                let p = PathBuf::from(preferred_trimmed);
+                if p.is_absolute() {
+                    candidates.push(p);
+                } else {
+                    candidates.push(PathBuf::from(format!(
+                        "/storage/emulated/0/{preferred_trimmed}"
+                    )));
+                }
+            }
+
+            candidates.push(PathBuf::from("/storage/emulated/0/Download/Pawstash"));
+            candidates.push(PathBuf::from("/storage/emulated/0/Download"));
+            candidates.push(PathBuf::from(format!(
+                "/storage/emulated/0/Android/data/{pkg}/files/Download",
+            )));
+            candidates.push(PathBuf::from(format!(
+                "/data/user/0/{pkg}/files/Pawstash/Downloads"
+            )));
+            candidates.push(PathBuf::from(format!(
+                "/data/data/{pkg}/files/Pawstash/Downloads"
+            )));
+
+            for (idx, candidate) in candidates.iter().enumerate() {
                 if candidate.as_os_str().is_empty() {
                     continue;
                 }
-                if std::fs::create_dir_all(&candidate).is_ok() {
+                if std::fs::create_dir_all(candidate).is_ok() {
                     let test_file = candidate.join(".write_test");
                     if std::fs::write(&test_file, b"ok").is_ok() {
                         let _ = std::fs::remove_file(&test_file);
-                        return Ok(candidate);
+                        return Ok(candidate.clone());
+                    } else if idx == 0 && !preferred_trimmed.is_empty() {
+                        log::warn!(
+                            "Preferred download directory {:?} write test failed, falling back to default candidate",
+                            candidate
+                        );
                     }
+                } else if idx == 0 && !preferred_trimmed.is_empty() {
+                    log::warn!(
+                        "Could not create preferred download directory {:?}, falling back to default candidate",
+                        candidate
+                    );
                 }
             }
             return Err("Unable to access any writable download directory on Android".to_string());
