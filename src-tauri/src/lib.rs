@@ -25,6 +25,7 @@ use std::sync::Arc;
 use subscriptions::SubscriptionManager;
 use sync::manager::SyncManager;
 use sync::repository::SyncRepository;
+#[allow(unused_imports)]
 use tauri::{Emitter, Listener, Manager};
 
 #[cfg(target_os = "linux")]

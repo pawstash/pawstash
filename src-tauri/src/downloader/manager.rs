@@ -480,13 +480,13 @@ impl DownloadManager {
                         let _ = std::fs::remove_file(&test_file);
                         return Ok(candidate.clone());
                     } else if idx == 0 && !preferred_trimmed.is_empty() {
-                        log::warn!(
+                        tracing::warn!(
                             "Preferred download directory {:?} write test failed, falling back to default candidate",
                             candidate
                         );
                     }
                 } else if idx == 0 && !preferred_trimmed.is_empty() {
-                    log::warn!(
+                    tracing::warn!(
                         "Could not create preferred download directory {:?}, falling back to default candidate",
                         candidate
                     );
@@ -721,6 +721,7 @@ impl DownloadManager {
             let _ = tokio::fs::remove_file(&job.temp_path).await;
         }
 
+        #[cfg(not(target_os = "android"))]
         let relative_blob = PathBuf::from(".media").join(&sha256[0..2]).join(&sha256);
         #[cfg(not(target_os = "android"))]
         let mut blob_stored = false;
