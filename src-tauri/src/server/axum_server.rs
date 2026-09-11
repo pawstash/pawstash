@@ -131,6 +131,16 @@ async fn serve_media_handler(
     if !allowed_roots.contains(&user_dir) {
         allowed_roots.push(user_dir);
     }
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(ensured) = crate::downloader::manager::DownloadManager::ensure_download_root(
+            &settings.download_dir,
+        ) {
+            if !allowed_roots.contains(&ensured) {
+                allowed_roots.push(ensured);
+            }
+        }
+    }
     let allowed = allowed_roots.iter().any(|root| {
         if let Ok(clean_root) = dunce::canonicalize(root) {
             target.starts_with(clean_root)
