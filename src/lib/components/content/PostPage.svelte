@@ -3173,7 +3173,25 @@
         <section class="post-content" bind:this={contentWrapperEl}>
           <div class="html-content-container" class:is-collapsed={isOverflowing && !contentExpanded}>
             <div class="html-content" bind:clientHeight={contentHeight}>
-              <RichContent html={richContent} currentService={service} currentCreatorId={creatorId} cloudUrls={post?.cloud_urls || []} onopencloud={handleOpenCloudFromText} />
+              <RichContent
+                html={richContent}
+                currentService={service}
+                currentCreatorId={creatorId}
+                cloudUrls={post?.cloud_urls || []}
+                onopencloud={handleOpenCloudFromText}
+                onopenmedia={(src, alt) => {
+                  const existing = media.find((f) => f.path && (f.path === src || src.includes(f.path)));
+                  if (existing) {
+                    openMediaViewer(existing, activeGalleryItems);
+                  } else {
+                    const inlineAtt: Attachment = {
+                      name: alt || src.split('/').pop()?.split('?')[0] || 'Image',
+                      path: src
+                    } as any;
+                    openMediaViewer(inlineAtt, [inlineAtt, ...activeGalleryItems]);
+                  }
+                }}
+              />
             </div>
           </div>
 

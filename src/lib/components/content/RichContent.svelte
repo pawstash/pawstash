@@ -165,6 +165,7 @@
   import { i18n } from '$lib/i18n';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { apiOpenInBrowser } from '$lib/utils/ipc';
+  import { isDirectMediaUrl } from '$lib/utils/media';
   import { toast } from 'svelte-sonner';
   import { ripple } from '$lib/motion';
   import IconFolder from '~icons/fluent/folder-open-24-regular';
@@ -177,6 +178,7 @@
     currentCreatorId?: string;
     cloudUrls?: string[];
     onopencloud?: (url: string) => void;
+    onopenmedia?: (src: string, alt?: string) => void;
   }
 
   interface LinkPopoverState {
@@ -188,7 +190,7 @@
     resolvedPost?: ResolvedPostLink;
   }
 
-  let { html, currentService, currentCreatorId, cloudUrls = [], onopencloud }: Props = $props();
+  let { html, currentService, currentCreatorId, cloudUrls = [], onopencloud, onopenmedia }: Props = $props();
   let root = $state<HTMLDivElement>();
   let generation = 0;
   let safeHtml = $derived(sanitizeRichHtml(html));
@@ -248,6 +250,18 @@
   async function handleClick(event: MouseEvent) {
     if (!(event.target instanceof Element)) return;
     const target = event.target;
+
+    const img = target.closest<HTMLImageElement>('img[src]');
+    if (img && root?.contains(img)) {
+      const anchor = img.closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || anchor.href === img.src || isDirectMediaUrl(anchor.href)) {
+        event.preventDefault();
+        event.stopPropagation();
+        onopenmedia?.(img.src, img.alt || '');
+        return;
+      }
+    }
+
     const anchor = target.closest<HTMLAnchorElement>('a[href]');
     if (!anchor || !root?.contains(anchor)) return;
     event.preventDefault();
@@ -458,6 +472,17 @@
     background: var(--bg-card, #1c1c1f);
     margin: 1rem 0;
     display: block;
+  }
+
+  .rich-content-root :global(img) {
+    cursor: zoom-in;
+    border-radius: 8px;
+    max-width: 100%;
+    transition: opacity 120ms ease;
+  }
+
+  .rich-content-root :global(img:hover) {
+    opacity: 0.94;
   }
 
   .rich-content-root :global(.iframely-responsive) {

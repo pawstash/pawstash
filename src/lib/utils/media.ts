@@ -551,12 +551,22 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
   const results: Array<{ url: string; name: string }> = [];
   const seen = new Set<string>();
 
+  const isIgnoredMediaHost = (u: string) => {
+    try {
+      const parsed = new URL(u);
+      const host = parsed.hostname.toLowerCase();
+      return host.includes('patreonusercontent.com');
+    } catch {
+      return false;
+    }
+  };
+
   const anchorRegex = /<a\s+[^>]*href=["'](https?:\/\/[^"'>]+)["'][^>]*>(.*?)<\/a>/gi;
   let match: RegExpExecArray | null;
   while ((match = anchorRegex.exec(raw)) !== null) {
-    const url = match[1];
+    let url = match[1].replace(/&amp;/g, '&').trim();
     const text = match[2].replace(/<[^>]*>/g, '').trim();
-    if (isDirectMediaUrl(url) && !seen.has(url)) {
+    if (isDirectMediaUrl(url) && !isIgnoredMediaHost(url) && !seen.has(url)) {
       seen.add(url);
       const filename = text && !text.startsWith('http')
         ? text
@@ -565,20 +575,14 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
     }
   }
 
-  const imgRegex = /<img\s+[^>]*src=["'](https?:\/\/[^"'>]+)["'][^>]*>/gi;
-  while ((match = imgRegex.exec(raw)) !== null) {
-    const url = match[1];
-    if (isDirectMediaUrl(url) && !seen.has(url)) {
-      seen.add(url);
-      const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
-      results.push({ url, name: filename });
-    }
-  }
-
+  const plainText = raw.replace(/<[^>]+>/g, ' ');
   const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
-  while ((match = urlRegex.exec(raw)) !== null) {
-    const url = match[0];
-    if (isDirectMediaUrl(url) && !seen.has(url)) {
+  while ((match = urlRegex.exec(plainText)) !== null) {
+    let url = match[0].replace(/&amp;/g, '&').trim();
+    while (url.endsWith('.') || url.endsWith(',') || url.endsWith(';') || url.endsWith(')')) {
+      url = url.slice(0, -1);
+    }
+    if (isDirectMediaUrl(url) && !isIgnoredMediaHost(url) && !seen.has(url)) {
       seen.add(url);
       const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'Media File');
       results.push({ url, name: filename });
