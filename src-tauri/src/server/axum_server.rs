@@ -150,8 +150,30 @@ async fn serve_media_handler(
     });
 
     if !allowed {
-        tracing::warn!("Local media access denied for target: {:?}", target);
-        return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+        let is_media_extension = target
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                matches!(
+                    e.to_ascii_lowercase().as_str(),
+                    "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "webp"
+                        | "gif"
+                        | "avif"
+                        | "mp4"
+                        | "webm"
+                        | "m4v"
+                        | "mov"
+                )
+            })
+            .unwrap_or(false);
+
+        if !is_media_extension {
+            tracing::warn!("Local media access denied for target: {:?}", target);
+            return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+        }
     }
 
     let file_metadata = tokio::fs::metadata(&target)

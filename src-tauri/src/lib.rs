@@ -244,6 +244,7 @@ pub fn run() {
             open_download_file,
             show_in_folder,
             pick_folder,
+            pick_file,
             save_settings,
             list_providers,
             save_providers,

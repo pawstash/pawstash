@@ -3,6 +3,7 @@
   import { backgroundState, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import { resolveLocalMediaUrl } from '$lib/utils/media';
 
   onMount(() => {
     backgroundState.init();
@@ -13,9 +14,11 @@
   function toAssetUrl(path: string): string {
     if (!path) return '';
     if (/^(https?:|asset:|blob:|data:)/i.test(path)) return path;
+    const local = resolveLocalMediaUrl(path);
+    if (local) return local;
     try {
       return convertFileSrc(path);
-    } catch (e) {
+    } catch {
       return path;
     }
   }
@@ -38,21 +41,25 @@
   {:else if settings.type === 'custom'}
     {#if settings.customKind === 'video' && settings.videoUrl}
       {@const videoSrc = toAssetUrl(settings.videoUrl)}
-      <video
-        src={videoSrc}
-        autoplay
-        loop
-        muted
-        playsinline
-        class="custom-background-media"
-        style={filterStyle}
-      ></video>
+      {#key `${videoSrc}:${backgroundState.version}`}
+        <video
+          src={videoSrc}
+          autoplay
+          loop
+          muted
+          playsinline
+          class="custom-background-media"
+          style={filterStyle}
+        ></video>
+      {/key}
     {:else if settings.customKind === 'image' && settings.imageUrl}
       {@const imgSrc = toAssetUrl(settings.imageUrl)}
-      <div
-        class="custom-background-media bg-cover bg-center"
-        style="background-image: url('{imgSrc}'); {filterStyle}"
-      ></div>
+      {#key `${imgSrc}:${backgroundState.version}`}
+        <div
+          class="custom-background-media bg-cover bg-center"
+          style="background-image: url('{imgSrc}'); {filterStyle}"
+        ></div>
+      {/key}
     {:else if settings.customKind === 'palette'}
       {@const p = themeState.palette}
       <div
@@ -71,9 +78,15 @@
 <style>
   .custom-background-media {
     position: absolute;
-    inset: -5%;
-    width: 110%;
-    height: 110%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 112%;
+    height: 112%;
+    min-width: 112%;
+    min-height: 112%;
+    max-width: none !important;
+    max-height: none !important;
     object-fit: cover;
     transition: filter var(--duration-normal), opacity var(--duration-normal);
   }

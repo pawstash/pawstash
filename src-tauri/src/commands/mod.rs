@@ -67,31 +67,29 @@ pub fn store_custom_background(
 ) -> Result<String, String> {
     let allowed_extensions: &[&str] = match kind.as_str() {
         "image" => &["png", "jpg", "jpeg", "webp", "gif", "avif"],
-        "video" => &["mp4", "webm"],
+        "video" => &["mp4", "webm", "m4v", "mov"],
         _ => return Err("Unsupported custom background type".to_string()),
     };
     let source = std::path::Path::new(&source_path);
     if !source.is_file() {
         return Err("Selected background file does not exist".to_string());
     }
-    let extension = source
+    let _extension = source
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase)
         .filter(|value| allowed_extensions.contains(&value.as_str()))
         .ok_or_else(|| "Unsupported custom background file format".to_string())?;
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("background");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let destination = directory.join(format!("custom-{kind}.{extension}"));
-    let importing = directory.join(format!(".importing-{kind}"));
-    std::fs::copy(source, &importing).map_err(|error| error.to_string())?;
-    remove_custom_background_files(&directory, &kind)?;
-    std::fs::rename(&importing, &destination).map_err(|error| error.to_string())?;
-    Ok(destination.to_string_lossy().to_string())
+
+    // Clean up any legacy copied background files from internal app data to reclaim space
+    if let Ok(dir) = app.path().app_data_dir().map(|d| d.join("background")) {
+        if dir.is_dir() {
+            let _ = remove_custom_background_files(&dir, &kind);
+        }
+    }
+
+    let clean_path = dunce::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+    Ok(clean_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -144,12 +142,13 @@ pub fn clear_custom_background(app: tauri::AppHandle, kind: String) -> Result<()
     if kind != "image" && kind != "video" {
         return Err("Unsupported custom background type".to_string());
     }
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("background");
-    remove_custom_background_files(&directory, &kind)
+    // Clean up any legacy copied background files from internal app data
+    if let Ok(dir) = app.path().app_data_dir().map(|d| d.join("background")) {
+        if dir.is_dir() {
+            let _ = remove_custom_background_files(&dir, &kind);
+        }
+    }
+    Ok(())
 }
 
 fn remove_custom_background_files(directory: &std::path::Path, kind: &str) -> Result<(), String> {
@@ -3023,6 +3022,10 @@ static FOLDER_PICKER_TX: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Op
     std::sync::Mutex::new(None);
 
 #[cfg(target_os = "android")]
+static FILE_PICKER_TX: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_app_pawstash_client_MainActivity_onFolderPicked(
     mut env: jni::JNIEnv,
@@ -3038,6 +3041,28 @@ pub extern "C" fn Java_app_pawstash_client_MainActivity_onFolderPicked(
     };
 
     if let Ok(mut lock) = FOLDER_PICKER_TX.lock() {
+        if let Some(tx) = lock.take() {
+            let _ = tx.send(path);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_app_pawstash_client_MainActivity_onFilePicked(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    path_jstr: jni::objects::JString,
+) {
+    let path: Option<String> = if !path_jstr.is_null() {
+        env.get_string(&path_jstr)
+            .ok()
+            .map(|s| s.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    if let Ok(mut lock) = FILE_PICKER_TX.lock() {
         if let Some(tx) = lock.take() {
             let _ = tx.send(path);
         }
@@ -3168,6 +3193,23 @@ fn launch_folder_picker_android() -> Result<(), String> {
     })
 }
 
+#[cfg(target_os = "android")]
+fn launch_file_picker_android(kind: &str) -> Result<(), String> {
+    with_android_context(|env, context| {
+        let kind_jstr = env
+            .new_string(kind)
+            .map_err(|e| format!("Failed to create Java string: {e}"))?;
+        env.call_method(
+            context,
+            "launchFilePicker",
+            "(Ljava/lang/String;)V",
+            &[jni::objects::JValue::Object(&kind_jstr)],
+        )
+        .map_err(|e| format!("Failed to launch native file picker: {e}"))?;
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn open_app_links_settings() -> Result<(), String> {
     #[cfg(target_os = "android")]
@@ -3235,6 +3277,33 @@ pub async fn pick_folder() -> Result<Option<String>, String> {
 
     #[cfg(not(target_os = "android"))]
     {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn pick_file(kind: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut lock = FILE_PICKER_TX
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            *lock = Some(tx);
+        }
+
+        launch_file_picker_android(&kind)?;
+
+        match rx.await {
+            Ok(path) => Ok(path),
+            Err(_) => Ok(None),
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = kind;
         Ok(None)
     }
 }

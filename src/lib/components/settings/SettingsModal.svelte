@@ -290,12 +290,9 @@
     if (programmaticScrollTimeout) clearTimeout(programmaticScrollTimeout);
   });
 
-  let bgImageInput = $state<HTMLInputElement | null>(null);
-  let bgVideoInput = $state<HTMLInputElement | null>(null);
-
   async function selectDownloadDir() {
     try {
-      if (layoutState.isMobile) {
+      if (layoutState.isMobileDevice) {
         const selected = await invoke<string | null>('pick_folder');
         if (selected && typeof selected === 'string') {
           settings.download_dir = selected;
@@ -320,64 +317,33 @@
   }
 
   async function selectCustomBackground(kind: 'image' | 'video') {
-    if (layoutState.isMobile) {
-      if (kind === 'image') bgImageInput?.click();
-      else bgVideoInput?.click();
-      return;
-    }
     try {
-      const selected = await open({
-        multiple: false,
-        title: i18n.t(kind === 'image' ? 'settings.choose_background_image' : 'settings.choose_background_video'),
-        filters: [{
-          name: kind === 'image' ? 'Images' : 'Videos',
-          extensions: kind === 'image'
-            ? ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']
-            : ['mp4', 'webm']
-        }]
-      });
+      let selected: string | null | undefined;
+      if (layoutState.isMobileDevice) {
+        selected = await invoke<string | null>('pick_file', { kind });
+      } else {
+        selected = await open({
+          multiple: false,
+          title: i18n.t(kind === 'image' ? 'settings.choose_background_image' : 'settings.choose_background_video'),
+          filters: [{
+            name: kind === 'image' ? 'Images' : 'Videos',
+            extensions: kind === 'image'
+              ? ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']
+              : ['mp4', 'webm', 'm4v', 'mov']
+          }]
+        });
+      }
       if (selected && typeof selected === 'string') {
-        const storedPath = await invoke<string>('store_custom_background', { sourcePath: selected, kind });
-        if (kind === 'image') backgroundState.setImageUrl(storedPath);
-        else backgroundState.setVideoUrl(storedPath);
+        const validatedPath = await invoke<string>('store_custom_background', { sourcePath: selected, kind });
+        if (kind === 'image') backgroundState.setImageUrl(validatedPath);
+        else backgroundState.setVideoUrl(validatedPath);
         notify.success(
           i18n.t(kind === 'image' ? 'settings.background_saved' : 'settings.background_video_saved'),
-          storedPath.split(/[/\\]/).pop() || storedPath
+          validatedPath.split(/[/\\]/).pop() || validatedPath
         );
       }
-    } catch {
-      if (kind === 'image') bgImageInput?.click();
-      else bgVideoInput?.click();
-    }
-  }
-
-  async function handleFileInputChange(event: Event, kind: 'image' | 'video') {
-    const target = event.target as HTMLInputElement;
-    const file = target.files?.[0];
-    if (!file) return;
-    try {
-      const reader = new FileReader();
-      const base64Data = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = (e) => reject(e);
-        reader.readAsDataURL(file);
-      });
-      const ext = file.name.split('.').pop() || (kind === 'image' ? 'png' : 'mp4');
-      const storedPath = await invoke<string>('store_custom_background_bytes', {
-        dataBase64: base64Data,
-        extension: ext,
-        kind
-      });
-      if (kind === 'image') backgroundState.setImageUrl(storedPath);
-      else backgroundState.setVideoUrl(storedPath);
-      notify.success(
-        i18n.t(kind === 'image' ? 'settings.background_saved' : 'settings.background_video_saved'),
-        file.name
-      );
     } catch (error) {
       notify.error(i18n.t('settings.background_file_failed'), error);
-    } finally {
-      target.value = '';
     }
   }
 
@@ -2292,21 +2258,6 @@
   onclose={() => (showWipeConfirm = false)}
 />
 
-<input
-  bind:this={bgImageInput}
-  type="file"
-  accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
-  class="hidden"
-  onchange={(e) => void handleFileInputChange(e, 'image')}
-/>
-
-<input
-  bind:this={bgVideoInput}
-  type="file"
-  accept="video/mp4,video/webm"
-  class="hidden"
-  onchange={(e) => void handleFileInputChange(e, 'video')}
-/>
 
 <style>
   .settings-page {

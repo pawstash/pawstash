@@ -24,6 +24,9 @@ class MainActivity : TauriActivity() {
     external fun onFolderPicked(path: String?)
 
     @JvmStatic
+    external fun onFilePicked(path: String?)
+
+    @JvmStatic
     external fun onDeepLinkReceived(json: String)
 
     @JvmStatic
@@ -182,6 +185,28 @@ class MainActivity : TauriActivity() {
     onFolderPicked(path)
   }
 
+  private val openDocumentLauncher = registerForActivityResult(
+    ActivityResultContracts.OpenDocument()
+  ) { uri: Uri? ->
+    if (uri != null) {
+      try {
+        val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        contentResolver.takePersistableUriPermission(uri, takeFlags)
+      } catch (e: Throwable) {
+        e.printStackTrace()
+      }
+    }
+    val path = uri?.let { resolveDocumentUriToPath(it) }
+    if (path != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+      val isPublicDownload = path.startsWith("/storage/emulated/0/Download", ignoreCase = true) ||
+                             path.contains("/Android/data/", ignoreCase = true)
+      if (!isPublicDownload && !Environment.isExternalStorageManager()) {
+        requestAllFilesAccess()
+      }
+    }
+    onFilePicked(path)
+  }
+
   private val requestNotificationPermissionLauncher = registerForActivityResult(
     ActivityResultContracts.RequestPermission()
   ) { _ ->
@@ -304,6 +329,22 @@ class MainActivity : TauriActivity() {
   fun launchFolderPicker() {
     runOnUiThread {
       openDocumentTreeLauncher.launch(null)
+    }
+  }
+
+  fun launchFilePicker(kind: String) {
+    runOnUiThread {
+      val types = if (kind.equals("video", ignoreCase = true)) {
+        arrayOf("video/*")
+      } else {
+        arrayOf("image/*")
+      }
+      try {
+        openDocumentLauncher.launch(types)
+      } catch (e: Throwable) {
+        e.printStackTrace()
+        onFilePicked(null)
+      }
     }
   }
 
@@ -631,5 +672,56 @@ class MainActivity : TauriActivity() {
       e.printStackTrace()
     }
     return treeUri.toString()
+  }
+
+  private fun resolveDocumentUriToPath(uri: Uri): String {
+    try {
+      if (DocumentsContract.isDocumentUri(this, uri)) {
+        val docId = DocumentsContract.getDocumentId(uri)
+        if (docId.startsWith("raw:")) {
+          return docId.substring(4)
+        }
+        val parts = docId.split(":")
+        if (parts.isNotEmpty()) {
+          val type = parts[0]
+          val subPath = if (parts.size > 1) parts[1] else ""
+          if ("primary".equals(type, ignoreCase = true)) {
+            val root = Environment.getExternalStorageDirectory().absolutePath
+            return if (subPath.isNotEmpty()) "$root/$subPath" else root
+          } else {
+            val externalFilesDirs = getExternalFilesDirs(null)
+            for (f in externalFilesDirs) {
+              if (f != null) {
+                val absPath = f.absolutePath
+                val index = absPath.indexOf("/Android/data")
+                if (index > 0) {
+                  val root = absPath.substring(0, index)
+                  if (root.contains(type, ignoreCase = true)) {
+                    return if (subPath.isNotEmpty()) "$root/$subPath" else root
+                  }
+                }
+              }
+            }
+            return if (subPath.isNotEmpty()) "/storage/$type/$subPath" else "/storage/$type"
+          }
+        }
+      } else if ("file".equals(uri.scheme, ignoreCase = true)) {
+        return uri.path ?: uri.toString()
+      } else if ("content".equals(uri.scheme, ignoreCase = true)) {
+        val projection = arrayOf(android.provider.MediaStore.MediaColumns.DATA)
+        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+          if (cursor.moveToFirst()) {
+            val idx = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+            if (idx >= 0) {
+              val data = cursor.getString(idx)
+              if (!data.isNullOrBlank()) return data
+            }
+          }
+        }
+      }
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+    return uri.toString()
   }
 }

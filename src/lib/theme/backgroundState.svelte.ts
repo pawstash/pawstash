@@ -26,6 +26,7 @@ export interface BackgroundSettings {
 }
 
 export class BackgroundState {
+  version = $state(0);
   settings = $state<BackgroundSettings>({
     type: defaultBackgroundType(),
     customKind: 'color',
@@ -52,6 +53,7 @@ export class BackgroundState {
       brightness: 0.5,
       saturation: 1.2
     } satisfies BackgroundSettings);
+    this.version++;
     void this.applyWindowEffect(this.settings.type);
     this.save();
   }
@@ -70,6 +72,7 @@ export class BackgroundState {
     this.settings.imageUrl = url;
     this.settings.customKind = 'image';
     this.settings.type = 'custom';
+    this.version++;
     this.applyWindowEffect('none');
     this.save();
   }
@@ -78,6 +81,7 @@ export class BackgroundState {
     this.settings.videoUrl = url;
     this.settings.customKind = 'video';
     this.settings.type = 'custom';
+    this.version++;
     this.applyWindowEffect('none');
     this.save();
   }
