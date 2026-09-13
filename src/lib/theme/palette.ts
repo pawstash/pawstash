@@ -39,6 +39,18 @@ export const PRESET_PRIMARY_MAP: Record<string, string> = {
   indigo: '#6366f1'
 };
 
+export const DEFAULT_ACCENT = '#d69085';
+
+export const ACCENT_PRESETS: { id: string; hex: string }[] = [
+  { id: 'terracotta', hex: DEFAULT_ACCENT },
+  { id: 'rose', hex: PRESET_PRIMARY_MAP.rose },
+  { id: 'violet', hex: PRESET_PRIMARY_MAP.violet },
+  { id: 'indigo', hex: PRESET_PRIMARY_MAP.indigo },
+  { id: 'cyan', hex: PRESET_PRIMARY_MAP.cyan },
+  { id: 'emerald', hex: PRESET_PRIMARY_MAP.emerald },
+  { id: 'amber', hex: PRESET_PRIMARY_MAP.amber }
+];
+
 export function parseColorToRgb(input: string): RgbColor {
   if (!input) return { r: 214, g: 144, b: 133 };
 
@@ -85,6 +97,21 @@ export function rgbToHex(r: number, g: number, b: number): string {
 
 export function getPerceivedLuminance(r: number, g: number, b: number): number {
   return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+export function getRelativeLuminance(color: RgbColor): number {
+  const channel = (value: number) => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+}
+
+export function getContrastInk(background: string): 'light' | 'dark' {
+  const luminance = getRelativeLuminance(parseColorToRgb(background));
+  const againstWhite = 1.05 / (luminance + 0.05);
+  const againstBlack = (luminance + 0.05) / 0.05;
+  return againstWhite >= againstBlack ? 'light' : 'dark';
 }
 
 export function mixRgb(color1: RgbColor, color2: RgbColor, weight: number): RgbColor {

@@ -8,7 +8,7 @@
     label: string;
     size?: number;
     indicatorColor?: string;
-    onclick?: () => void;
+    onclick?: (event: MouseEvent) => void;
     children?: Snippet;
   }
 

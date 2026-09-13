@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A beautiful cross-platform client, downloader, and stash manager for pawchive, onlyhaven & coomer, with server sync and more sources in mind.
+  A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more.
 </p>
 
 <p align="center">

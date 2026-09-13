@@ -100,6 +100,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import PaletteCircle from '$lib/components/ui/PaletteCircle.svelte';
+  import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { PRESET_QUADRANTS, generateAccentPalette } from '$lib/theme/palette';
   import SyncSettings from './SyncSettings.svelte';
   import ProviderSettings from './ProviderSettings.svelte';
@@ -1143,21 +1144,26 @@
 
             <div class="w-[1px] h-5 bg-white/10 mx-0.5"></div>
 
-            <div class="relative w-[26px] h-[26px] flex items-center justify-center">
-              <PaletteCircle
-                quadrants={customQuadrants}
-                active={isCustomActive}
-                label={i18n.t('settings.custom_accent')}
-              />
-              <input
-                type="color"
-                value={isCustomActive ? themeState.tokens.accent : '#8b5cf6'}
-                onclick={(e) => themeState.setAccent(e.currentTarget.value)}
-                oninput={(e) => themeState.setAccent(e.currentTarget.value)}
-                class="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                aria-label={i18n.t('settings.custom_accent')}
-              />
-            </div>
+            <ColorPicker
+              value={isCustomActive ? themeState.tokens.accent : '#8b5cf6'}
+              label={i18n.t('settings.custom_accent')}
+              showPalette={false}
+              onchange={(color) => themeState.setAccent(color)}
+            >
+              {#snippet trigger({ toggle })}
+                <PaletteCircle
+                  quadrants={customQuadrants}
+                  active={isCustomActive}
+                  label={i18n.t('settings.custom_accent')}
+                  onclick={(e) => {
+                    if (!isCustomActive) {
+                      themeState.setAccent(themeState.tokens.accent.startsWith('#') ? themeState.tokens.accent : '#8b5cf6');
+                    }
+                    toggle(e);
+                  }}
+                />
+              {/snippet}
+            </ColorPicker>
           </div>
         </SettingItem>
 
@@ -1373,7 +1379,11 @@
               defaultValue="#000000"
               onReset={() => backgroundState.setSolidColor('#000000')}
             >
-              <input class="background-color-input" type="color" value={backgroundState.settings.solidColor} oninput={(event) => backgroundState.setSolidColor(event.currentTarget.value)} />
+              <ColorPicker
+                value={backgroundState.settings.solidColor}
+                label={i18n.t('settings.background_primary')}
+                onchange={(color) => backgroundState.setSolidColor(color)}
+              />
             </SettingItem>
 
             <SettingItem
@@ -1384,7 +1394,11 @@
               defaultValue="#111827"
               onReset={() => backgroundState.setGradientSecondary('#111827')}
             >
-              <input class="background-color-input" type="color" value={backgroundState.settings.gradientSecondary} oninput={(event) => backgroundState.setGradientSecondary(event.currentTarget.value)} />
+              <ColorPicker
+                value={backgroundState.settings.gradientSecondary}
+                label={i18n.t('settings.background_secondary')}
+                onchange={(color) => backgroundState.setGradientSecondary(color)}
+              />
             </SettingItem>
           {:else if backgroundState.settings.customKind === 'image'}
             <SettingItem title={i18n.t('settings.background_image')} description={i18n.t('settings.background_image_desc')} icon={IconImage}>
@@ -2338,17 +2352,6 @@
 
   .settings-toolbar {
     margin-bottom: 0;
-  }
-
-  .background-color-input {
-    width: 100%;
-    min-width: 0;
-    height: var(--control-height, 40px);
-    padding: 3px;
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-full);
-    background: var(--bg-input);
-    cursor: pointer;
   }
 
   .settings-accent-controls {

@@ -84,17 +84,6 @@
                 <data android:host="www.pawchive.net" />
                 <data android:host="cum.st" />
                 <data android:host="www.cum.st" />
-                <data android:host="patreon.com" />
-                <data android:host="www.patreon.com" />
-                <data android:host="fanbox.cc" />
-                <data android:host="*.fanbox.cc" />
-                <data android:host="fantia.jp" />
-                <data android:host="www.fantia.jp" />
-                <data android:host="boosty.to" />
-                <data android:host="onlyfans.com" />
-                <data android:host="www.onlyfans.com" />
-                <data android:host="fansly.com" />
-                <data android:host="www.fansly.com" />
             </intent-filter>
 
             <!-- Share Target -->
