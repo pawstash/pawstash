@@ -174,7 +174,7 @@
     try {
       await apiShowInFolder(item.final_path);
     } catch (error) {
-      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', error);
+      notify.error(i18n.t('downloads.show_in_folder_failed'), error);
     }
   }
 
@@ -202,7 +202,7 @@
     type="button"
     onclick={handleCardClick}
     oncontextmenu={handleContextMenu}
-    aria-label={[item.filename, postTitle].filter(Boolean).join(' — ')}
+    aria-label={[item.filename, postTitle].filter(Boolean).join(', ')}
   ></button>
 
   {#if isSelectionActive}
@@ -211,14 +211,14 @@
       class="grid-tile-select-checkbox"
       class:checked={selected}
       onclick={handleSelectCheckbox}
-      aria-label="Select download"
+      aria-label={i18n.t('selection.select_download')}
     >
       {#if selected}
         <IconCheckmark class="w-[14px] h-[14px]" />
       {/if}
     </button>
   {:else if item.status === 'completed'}
-    <div class="download-actions-left">
+    <div class="download-actions-left tile-toolbar">
       <PopoverMenu
         bind:open={playMenuOpen}
         align="left"
@@ -337,7 +337,7 @@
 
   <div class="grid-tile-shade"></div>
 
-  <div class="download-actions">
+  <div class="download-actions tile-toolbar">
     {#if ['downloading', 'resolving', 'verifying', 'queued'].includes(item.status)}
       <button class="grid-tile-action download-action" onclick={(event) => action(event, () => downloadState.pause(item.id))} use:tooltip={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
       <button class="grid-tile-action download-action grid-tile-action-danger" onclick={(event) => action(event, () => downloadState.remove(item.id))} use:tooltip={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
@@ -352,13 +352,11 @@
     {/if}
   </div>
 
-  <div class="download-copy">
+  <div class="grid-tile-footer">
     <h2 class="grid-tile-title" title={item.filename}>{item.filename}</h2>
     {#if postTitle}
       <p class="download-post-title" title={postTitle}>{postTitle}</p>
     {/if}
-  </div>
-  <div class="grid-tile-footer">
     {#if item.status !== 'completed'}
       <div class="grid-tile-author download-status-row" data-status={item.status}>
         {#if busy}<IconLoading />{:else if item.status === 'failed' || item.status === 'missing'}<IconError />{:else}<IconDownload />{/if}
@@ -388,25 +386,23 @@
     font-variant-numeric: tabular-nums;
     font-size: calc(10px * var(--grid-scale, 1));
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--on-media-muted);
     letter-spacing: 0.02em;
     text-transform: uppercase;
   }
-  .download-placeholder { gap: calc(8px * var(--grid-scale, 1)); color: rgba(255,255,255,.28); }
+  .download-placeholder { gap: calc(8px * var(--grid-scale, 1)); color: var(--text-muted); }
   .download-placeholder :global(svg) { width: calc(34px * var(--grid-scale, 1)); height: calc(34px * var(--grid-scale, 1)); }
   .download-placeholder span { font-size: calc(9px * var(--grid-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .download-copy { position: absolute; z-index: 5; left: calc(12px * var(--grid-scale, 1)); right: calc(12px * var(--grid-scale, 1)); bottom: calc(52px * var(--grid-scale, 1)); display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: calc(3px * var(--grid-scale, 1)); pointer-events: none; }
-  .download-tile.completed .download-copy { bottom: calc(32px * var(--grid-scale, 1)); }
-  .download-copy .grid-tile-title { position: static; width: 100%; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .download-post-title { width: 100%; margin: 0; color: rgba(255,255,255,.62); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
-  .download-actions-left { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); left: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
+  .download-tile .grid-tile-title { word-break: break-word; }
+  .download-post-title { width: 100%; margin: 0; color: var(--on-media-secondary); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .download-actions-left { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); left: calc(8px * var(--grid-scale, 1)); transform-origin: top left; }
   .download-actions-left .download-action { position: relative; inset: auto; flex: none; }
-  .download-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
+  .download-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); }
   .download-actions .download-action { position: relative; inset: auto; flex: none; }
   .download-status-row { pointer-events: none !important; }
-  .download-status-row > :global(svg) { width: calc(15px * var(--grid-scale, 1)); height: calc(15px * var(--grid-scale, 1)); flex: none; color: rgba(255,255,255,.7); }
+  .download-status-row > :global(svg) { width: calc(15px * var(--grid-scale, 1)); height: calc(15px * var(--grid-scale, 1)); flex: none; color: var(--on-media-secondary); }
   .download-status-row .grid-tile-author-name { cursor: default; pointer-events: none; }
-  .download-progress { position: absolute; z-index: 7; inset: auto 0 0; height: calc(3px * var(--grid-scale, 1)); overflow: hidden; background: rgba(255,255,255,.16); pointer-events: none; }
+  .download-progress { position: absolute; z-index: 7; inset: auto 0 0; height: calc(3px * var(--grid-scale, 1)); overflow: hidden; background: rgba(var(--surface-tint-rgb), .16); pointer-events: none; }
   .download-progress > span { display: block; height: 100%; background: var(--accent-primary); transition: width 220ms var(--ease-expo); }
   .download-progress.indeterminate::after { position: absolute; inset: 0; width: 35%; content: ''; background: var(--accent-primary); animation: indeterminate 1.2s ease-in-out infinite; }
   @keyframes indeterminate { from { transform: translateX(-110%); } to { transform: translateX(330%); } }
@@ -434,10 +430,10 @@
     transition: background var(--duration-fast) var(--ease-expo);
   }
   .download-play-menu-item:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
   }
   .download-play-menu-item:active {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--surface-tint-rgb), 0.1);
   }
   :global(.download-play-menu-icon) {
     width: var(--floating-item-icon-size) !important;

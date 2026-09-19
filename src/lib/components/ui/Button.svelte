@@ -133,14 +133,14 @@
   }
 
   .btn-danger {
-    background: rgba(224, 60, 60, 0.1);
-    border-color: rgba(224, 60, 60, 0.2);
-    color: #f87171;
+    background: color-mix(in srgb, var(--status-error) 12%, transparent);
+    border-color: color-mix(in srgb, var(--status-error) 24%, transparent);
+    color: var(--status-error);
   }
 
   .btn-danger:hover {
-    background: rgba(224, 60, 60, 0.2);
-    border-color: rgba(224, 60, 60, 0.3);
+    background: color-mix(in srgb, var(--status-error) 20%, transparent);
+    border-color: color-mix(in srgb, var(--status-error) 36%, transparent);
   }
 
   .btn-sm {

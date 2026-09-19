@@ -46,7 +46,7 @@
         {#if back}
           <Button variant="ghost" size="md" onclick={handleBack} class="btn-back">
             <IconArrowLeft class="w-5 h-5" />
-            <span>{i18n.t('nav.back') || 'Back'}</span>
+            <span>{i18n.t('nav.back')}</span>
           </Button>
         {/if}
 

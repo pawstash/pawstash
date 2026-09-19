@@ -163,13 +163,13 @@
   >
     <div class="ptr-badge">
       {#if refreshing}
-        <IconLoading class="ptr-icon text-white" />
+        <IconLoading class="ptr-icon text-ink" />
       {:else}
         <span
           class="ptr-icon-wrap"
           style:transform={`rotate(${pullProgress * 300}deg) scale(${0.8 + pullProgress * 0.2})`}
         >
-          <IconArrowClockwise class="ptr-icon text-white" />
+          <IconArrowClockwise class="ptr-icon text-ink" />
         </span>
       {/if}
     </div>
@@ -213,7 +213,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ffffff;
+    color: var(--text-primary);
     transition: box-shadow 180ms ease, transform 180ms ease;
   }
 
@@ -233,6 +233,6 @@
   :global(.ptr-icon) {
     width: 26px !important;
     height: 26px !important;
-    color: #ffffff !important;
+    color: var(--text-primary) !important;
   }
 </style>

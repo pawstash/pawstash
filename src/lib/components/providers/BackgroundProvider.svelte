@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backgroundState, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
+  import { backgroundState, defaultAcrylicOpacity, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { resolveLocalMediaUrl } from '$lib/utils/media';
@@ -35,8 +35,11 @@
 </script>
 
 <div class="fixed inset-0 z-[-2] overflow-hidden pointer-events-none select-none">
-  {#if settings.type === 'oled' || (!isNativeEffect && settings.type !== 'custom')}
-    <div class="absolute inset-0 bg-black"></div>
+  {#if settings.type === 'palette'}
+    <div class="absolute inset-0" style="background: {themeState.palette.surface};"></div>
+
+  {:else if settings.type === 'oled' || (!isNativeEffect && settings.type !== 'custom')}
+    <div class="absolute inset-0" style="background: var(--bg-base);"></div>
 
   {:else if settings.type === 'custom'}
     {#if settings.customKind === 'video' && settings.videoUrl}
@@ -64,7 +67,7 @@
       {@const p = themeState.palette}
       <div
         class="custom-background-media"
-        style="background: radial-gradient(circle at 18% 22%, {p.quadrants[0]}44 0%, transparent 48%), radial-gradient(circle at 82% 16%, {p.quadrants[1]}38 0%, transparent 44%), radial-gradient(circle at 75% 78%, {p.quadrants[3]}34 0%, transparent 52%), radial-gradient(circle at 22% 82%, {p.quadrants[2]}2e 0%, transparent 46%), linear-gradient(135deg, #07090e 0%, #0f121a 100%); {filterStyle}"
+        style="background: radial-gradient(circle at 18% 22%, {p.quadrants[0]}44 0%, transparent 48%), radial-gradient(circle at 82% 16%, {p.quadrants[1]}38 0%, transparent 44%), radial-gradient(circle at 75% 78%, {p.quadrants[3]}34 0%, transparent 52%), radial-gradient(circle at 22% 82%, {p.quadrants[2]}2e 0%, transparent 46%), linear-gradient(135deg, {p.surface} 0%, {p.surfaceBright} 100%); {filterStyle}"
       ></div>
     {:else}
       <div
@@ -72,6 +75,13 @@
         style="background: linear-gradient(135deg, {settings.solidColor}, {settings.gradientSecondary}); {filterStyle}"
       ></div>
     {/if}
+  {/if}
+
+  {#if settings.acrylicTint}
+    <div
+      class="absolute inset-0 pointer-events-none transition-colors duration-150"
+      style="background: rgba(var(--acrylic-tint-rgb), {settings.acrylicOpacity ?? defaultAcrylicOpacity(themeState.isDark)});"
+    ></div>
   {/if}
 </div>
 

@@ -21,12 +21,16 @@ export function scrollable(node: HTMLElement, options: ScrollableOptions = {}) {
       y: options.overflowY ?? 'scroll'
     },
     scrollbars: {
+      theme: 'os-theme-pawstash',
       autoHide: 'leave',
       autoHideDelay: 600,
       clickScroll: true
     }
   });
-  const viewport = instance.elements().viewport;
+  const elements = instance.elements();
+  const viewport = elements.viewport;
+  elements.scrollbarHorizontal?.scrollbar?.setAttribute('data-tauri-drag-region', 'false');
+  elements.scrollbarVertical?.scrollbar?.setAttribute('data-tauri-drag-region', 'false');
   options.onReady?.(viewport);
   const handleScroll = () => options.onScroll?.(viewport.scrollTop);
   viewport.addEventListener('scroll', handleScroll, { passive: true });

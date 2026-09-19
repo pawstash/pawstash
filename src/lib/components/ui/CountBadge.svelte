@@ -73,7 +73,7 @@
     height: calc(19px * var(--ui-scale, 1));
     padding: calc(1px * var(--ui-scale, 1)) calc(6px * var(--ui-scale, 1)) 0 calc(6px * var(--ui-scale, 1));
     border-radius: var(--radius-full, 9999px);
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--surface-tint-rgb), 0.12);
     color: inherit;
     font-size: calc(12px * var(--ui-scale, 1));
     font-weight: 600;
@@ -86,7 +86,7 @@
   :global(.btn.btn-accent) .variant-pill,
   :global(.btn.variant-accent) .variant-tab,
   :global(.btn.variant-accent) .variant-pill {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(var(--surface-tint-rgb), 0.22);
     color: inherit;
   }
 

@@ -319,7 +319,7 @@
             e.stopPropagation();
             notify.info(previewValue);
           }}
-          aria-label="Preview template result"
+          aria-label={i18n.t('settings.template_preview')}
           tabindex="-1"
         >
           <IconEye />
@@ -331,7 +331,7 @@
         class="icon-btn"
         class:is-active={isOpen}
         use:ripple
-        use:tooltip={'Insert variable'}
+        use:tooltip={i18n.t('settings.insert_variable')}
         onclick={(e) => {
           e.stopPropagation();
           if (isOpen) isOpen = false;
@@ -340,7 +340,7 @@
             openDropdown();
           }
         }}
-        aria-label="Insert variable"
+        aria-label={i18n.t('settings.insert_variable')}
         tabindex="-1"
       >
         <IconCode />
@@ -502,7 +502,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--text-primary);
     opacity: 0.45;
     cursor: pointer;
     padding: 0;
@@ -589,7 +589,7 @@
 
   .tag-item:hover,
   .tag-item.is-selected {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
   }
 
   .tag-item.is-selected {
@@ -599,7 +599,7 @@
   .tag-label {
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-primary, #ffffff);
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -610,7 +610,7 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--accent);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     padding: 2px 6px;
     border-radius: 4px;
     flex-shrink: 0;

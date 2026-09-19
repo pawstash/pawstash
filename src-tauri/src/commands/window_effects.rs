@@ -7,7 +7,11 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 #[tauri::command]
-pub async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<(), String> {
+pub async fn set_window_effect(
+    app: AppHandle,
+    effect_type: String,
+    tint: Option<Vec<u8>>,
+) -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     if let Some(window) = app.get_webview_window("main") {
         window
@@ -33,9 +37,13 @@ pub async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<()
             };
 
             let color = match effect_type.as_str() {
-                "acrylic" => Some(Color(19, 19, 19, 163)),
-                "mica" | "mica-dark" => None,
-                _ => Some(Color(19, 19, 19, 163)),
+                "mica" | "mica-dark" | "mica-light" | "tabbed" | "tabbed-dark" | "tabbed-light" => {
+                    None
+                }
+                _ => match tint.as_deref() {
+                    Some([r, g, b, a]) => Some(Color(*r, *g, *b, *a)),
+                    _ => Some(Color(19, 19, 19, 163)),
+                },
             };
 
             let effects_config = WindowEffectsConfig {

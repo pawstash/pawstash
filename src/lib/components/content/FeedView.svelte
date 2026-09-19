@@ -27,6 +27,7 @@
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import type { Post } from '$lib/types/content';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
@@ -55,26 +56,9 @@
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
-  let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  const stashOptions = $derived(libraryState.stashOptions);
 
-  let batchSelectedStashes = $derived.by(() => {
-    if (selectedPosts.length === 0) return [];
-    const stashCounts = new Map<string, number>();
-    for (const post of selectedPosts) {
-      const ids = libraryState.getPostStashes(post);
-      for (const id of ids) {
-        stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
-      }
-    }
-    const result: string[] = [];
-    for (const [id, count] of stashCounts.entries()) {
-      if (count === selectedPosts.length) {
-        result.push(id);
-      }
-    }
-    return result;
-  });
+  const batchSelectedStashes = $derived(libraryState.stashesForPosts(selectedPosts));
 
   async function handleBatchToggleStash(collectionId: string) {
     const items = selectionState.getItems<Post>();
@@ -85,15 +69,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notifyRemovedFromStash(collectionId, items);
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notifyAddedToStash(collectionId);
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -105,9 +89,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -126,12 +110,12 @@
         await libraryState.save(post);
       }
       notify.success(
-        i18n.t('selection.save_to_library') || 'Saved to library',
+        i18n.t('selection.save_to_library'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('library.save_error') || 'Failed to save to library', err);
+      notify.error(i18n.t('library.save_error'), err);
     }
   }
 
@@ -141,12 +125,12 @@
     try {
       const count = await downloadState.downloadPosts(items);
       notify.success(
-        i18n.t('selection.download_all') || 'Queued downloads',
+        i18n.t('selection.download_all'),
         `${count} ${count === 1 ? 'file' : 'files'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -164,7 +148,7 @@
       await accountState.fetchFavorites('post');
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
     }
   }
 
@@ -251,27 +235,27 @@
 
     if (periods.some((p) => p.id === 'day')) {
       options.push(
-        { value: 'day:today', label: i18n.t('feed.today') || 'Today' },
-        { value: 'day:yesterday', label: i18n.t('feed.yesterday') || 'Yesterday' }
+        { value: 'day:today', label: i18n.t('feed.today') },
+        { value: 'day:yesterday', label: i18n.t('feed.yesterday') }
       );
     }
     if (periods.some((p) => p.id === 'week')) {
       options.push(
-        { value: 'week:current', label: i18n.t('feed.this_week') || 'This Week' },
-        { value: 'week:last', label: i18n.t('feed.last_week') || 'Last Week' }
+        { value: 'week:current', label: i18n.t('feed.this_week') },
+        { value: 'week:last', label: i18n.t('feed.last_week') }
       );
     }
     if (periods.some((p) => p.id === 'month')) {
       options.push(
-        { value: 'month:current', label: i18n.t('feed.this_month') || 'This Month' },
-        { value: 'month:last', label: i18n.t('feed.last_month') || 'Last Month' }
+        { value: 'month:current', label: i18n.t('feed.this_month') },
+        { value: 'month:last', label: i18n.t('feed.last_month') }
       );
     }
     if (periods.some((p) => p.id === 'recent')) {
-      options.push({ value: 'recent:all', label: i18n.t('feed.recent') || 'Recent' });
+      options.push({ value: 'recent:all', label: i18n.t('feed.recent') });
     }
     if (periods.some((p) => p.id === 'all')) {
-      options.push({ value: 'all:all', label: i18n.t('feed.all') || 'All Time' });
+      options.push({ value: 'all:all', label: i18n.t('feed.all') });
     }
 
     for (const p of periods) {
@@ -285,16 +269,16 @@
         options.push({
           value: 'custom:day',
           label: feedState.popularPeriod === 'day' && feedState.popularDate
-            ? `${i18n.t('feed.day') || 'Day'}: ${feedState.popularDate}`
-            : `${i18n.t('feed.custom_day') || 'Custom Day...'}`
+            ? `${i18n.t('feed.day')}: ${feedState.popularDate}`
+            : `${i18n.t('feed.custom_day')}`
         });
       }
       if (periods.some((p) => p.id === 'month')) {
         options.push({
           value: 'custom:month',
           label: feedState.popularPeriod === 'month' && feedState.popularDate
-            ? `${i18n.t('feed.month') || 'Month'}: ${feedState.popularDate}`
-            : `${i18n.t('feed.custom_month') || 'Custom Month...'}`
+            ? `${i18n.t('feed.month')}: ${feedState.popularDate}`
+            : `${i18n.t('feed.custom_month')}`
         });
       }
     }
@@ -338,16 +322,16 @@
   let currentPeriodLabel = $derived.by(() => {
     const curVal = getSelectedOptionValue();
     const opt = popularSelectOptions.find((o) => o.value === curVal);
-    return opt?.label ?? (i18n.t('feed.today') || 'Today');
+    return opt?.label ?? (i18n.t('feed.today'));
   });
 
   let feedModeOptions = $derived.by<ChoiceOption<FeedMode>[]>(() => {
     const caps = activePopularCaps;
     const options: ChoiceOption<FeedMode>[] = [
-      { value: 'recent', label: i18n.t('feed.recent') || 'Recent' }
+      { value: 'recent', label: i18n.t('feed.recent') }
     ];
     if (!caps || caps.supported) {
-      options.push({ value: 'popular', label: i18n.t('feed.popular') || 'Popular' });
+      options.push({ value: 'popular', label: i18n.t('feed.popular') });
     }
     return options;
   });
@@ -455,13 +439,13 @@
   }
 
   let formatList = $derived([
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft },
-    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai') || 'AI Generated', icon: IconSparkle, isAi: true }] : [])
+    { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio'), icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft },
+    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai'), icon: IconSparkle, isAi: true }] : [])
   ]);
 
   function toggleProvider(providerId: string) {
@@ -480,7 +464,7 @@
 
 {#snippet filterInnerContent()}
   {#if enabledProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <span class="filter-label">{i18n.t('providers.title')}</span>
     <div class="service-options">
       {#each enabledProviders as provider}
         {@const state = feedState.providerFilters[provider.id] ?? 'neutral'}
@@ -493,9 +477,9 @@
         >
           <span>{cleanName}</span>
           {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
           {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
           {/if}
         </Button>
       {/each}
@@ -525,9 +509,9 @@
         <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -535,7 +519,7 @@
 
   <div class="floating-divider"></div>
 
-  <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
+  <span class="filter-label">{i18n.t('feed.format')}</span>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = (fmt as any).isAi ? feedState.aiFilter : (feedState.formatFilters[fmt.id] ?? 'neutral')}
@@ -549,9 +533,9 @@
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -640,7 +624,8 @@
       class="popular-period-select"
       icon={IconCalendar}
       iconOnly={true}
-      ariaLabel={`${i18n.t('feed.popular_period') || 'Period'}: ${currentPeriodLabel}`}
+      ariaLabel={`${i18n.t('feed.popular_period')}: ${currentPeriodLabel}`}
+      align="right"
     />
   {/if}
 {/snippet}
@@ -649,15 +634,15 @@
   <HeaderActions
     bind:searchOpen
     bind:searchQuery={feedState.searchQuery}
-    searchPlaceholder={i18n.t('feed.search_placeholder') || 'Search posts...'}
+    searchPlaceholder={i18n.t('feed.search_placeholder')}
   >
     {#if !layoutState.isMobile}
       <Button
         variant={isSelectionActive ? 'accent' : 'ghost'}
         class="btn-icon"
         onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-        title={i18n.t('selection.select_mode') || 'Select mode'}
-        aria-label="Select mode"
+        title={i18n.t('selection.select_mode')}
+        aria-label={i18n.t('selection.select_mode')}
       >
         <IconCheckboxChecked class="w-5 h-5" />
       </Button>
@@ -681,8 +666,8 @@
         variant="ghost"
         class="btn-icon"
         onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more') || 'More'}
-        aria-label="More actions"
+        title={i18n.t('common.more')}
+        aria-label={i18n.t('common.more')}
       >
         <IconMoreVertical class="w-5 h-5" />
       </Button>
@@ -720,8 +705,8 @@
   {#if feedState.error && feedState.posts.length === 0}
     <div class="min-h-80 flex flex-col items-center justify-center gap-4 text-center">
       <div class="max-w-md">
-        <p class="text-sm font-semibold text-white/85">{i18n.t('feed.load_error')}</p>
-        <p class="mt-1 text-xs leading-relaxed text-white/45 break-words">{feedState.error}</p>
+        <p class="text-sm font-semibold text-ink/85">{i18n.t('feed.load_error')}</p>
+        <p class="mt-1 text-xs leading-relaxed text-ink/45 break-words">{feedState.error}</p>
       </div>
       <Button variant="accent" size="sm" onclick={() => void feedState.refresh()}>
         <IconArrowClockwise class="h-4 w-4" /> {i18n.t('feed.retry')}
@@ -735,8 +720,8 @@
       onLoadMore={() => feedState.loadMore()}
       stateKey={`${feedState.isSearchActive ? `feed:search:${feedState.searchQuery.trim()}` : (feedState.mode === 'recent' ? 'feed:recent' : `feed:popular:${feedState.popularPeriod}:${feedState.popularDate}`)}:services=${JSON.stringify(feedState.serviceFilters)}:formats=${JSON.stringify(feedState.formatFilters)}:attachments=${feedState.onlyWithAttachments}:favs=${feedState.favoritesOnly}`}
       paginationKey={`${feedState.mode}:${feedState.isSearchActive ? `search:${feedState.searchQuery.trim()}` : feedState.popularPeriod}:${feedState.popularDate}:${feedState.posts.length}`}
-      emptyTitle={feedState.isSearchActive ? (i18n.t('favorites.no_results') || 'Nothing found') : (i18n.t('feed.empty') || 'No posts')}
-      emptyDescription={feedState.isSearchActive ? (i18n.t('favorites.no_results_desc') || 'Try adjusting your search query.') : (i18n.t('feed.empty_desc') || 'The current feed is empty.')}
+      emptyTitle={feedState.isSearchActive ? (i18n.t('favorites.no_results')) : (i18n.t('feed.empty'))}
+      emptyDescription={feedState.isSearchActive ? (i18n.t('favorites.no_results_desc')) : (i18n.t('feed.empty_desc'))}
     />
     {#if feedState.error}
       <p class="mt-5 text-center text-xs text-red-300/80">{feedState.error}</p>
@@ -760,6 +745,7 @@
     closeOnChange={false}
     icon={IconFolder}
     class="selection-stash-select"
+    align="right"
   />
 
   <Button
@@ -812,7 +798,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     open={mobileMoreOpen}
-    title={i18n.t('common.more') || 'More'}
+    title={i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -831,7 +817,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select posts')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -851,7 +837,7 @@
           <IconArrowClockwise class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh feed'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
     </div>
@@ -893,7 +879,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
@@ -913,7 +899,7 @@
   :global(.popular-period-select .select-trigger:hover),
   :global(.popular-period-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.popular-period-select .select-trigger:active),
@@ -925,7 +911,7 @@
   :global(.popular-period-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
   }
 

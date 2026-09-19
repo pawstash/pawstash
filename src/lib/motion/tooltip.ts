@@ -6,6 +6,8 @@ export type TooltipOptions = {
   text?: string;
   placement?: TooltipPlacement;
   delay?: number;
+  open?: boolean;
+  variant?: 'default' | 'accent';
 };
 
 export type TooltipParam = string | undefined | null | TooltipOptions;
@@ -26,16 +28,30 @@ const SIDE_TO_ARROW: Record<string, TooltipPlacement> = {
 
 function parseParam(param: TooltipParam, defaultDelay: number) {
   if (typeof param === 'string') {
-    return { text: param.trim() || undefined, placement: undefined, delay: defaultDelay };
+    return {
+      text: param.trim() || undefined,
+      placement: undefined,
+      delay: defaultDelay,
+      open: undefined as boolean | undefined,
+      variant: 'default' as 'default' | 'accent'
+    };
   }
   if (param && typeof param === 'object') {
     return {
       text: param.text?.trim() || undefined,
       placement: param.placement,
-      delay: param.delay ?? defaultDelay
+      delay: param.delay ?? defaultDelay,
+      open: param.open,
+      variant: param.variant ?? ('default' as const)
     };
   }
-  return { text: undefined, placement: undefined, delay: defaultDelay };
+  return {
+    text: undefined,
+    placement: undefined,
+    delay: defaultDelay,
+    open: undefined as boolean | undefined,
+    variant: 'default' as 'default' | 'accent'
+  };
 }
 
 export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 120) {
@@ -121,6 +137,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
       if (textEl) {
         textEl.textContent = textToShow;
       }
+      activeEl.classList.toggle('is-accent', config.variant === 'accent');
 
       await updatePosition();
       if (!activeEl) return;
@@ -160,12 +177,22 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
     }
   }
 
-  node.addEventListener('mouseenter', show);
-  node.addEventListener('mouseleave', hide);
-  node.addEventListener('focusin', show);
-  node.addEventListener('focusout', hide);
-  node.addEventListener('click', hide);
-  node.addEventListener('pointerdown', hide);
+  function showOnTrigger() {
+    if (config.open === undefined) show();
+  }
+
+  function hideOnTrigger() {
+    if (config.open === undefined) hide();
+  }
+
+  node.addEventListener('mouseenter', showOnTrigger);
+  node.addEventListener('mouseleave', hideOnTrigger);
+  node.addEventListener('focusin', showOnTrigger);
+  node.addEventListener('focusout', hideOnTrigger);
+  node.addEventListener('click', hideOnTrigger);
+  node.addEventListener('pointerdown', hideOnTrigger);
+
+  if (config.open) show();
 
   return {
     update(newParam: TooltipParam) {
@@ -177,8 +204,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
       if (textEl) {
         textEl.textContent = config.text;
       }
+      activeEl?.classList.toggle('is-accent', config.variant === 'accent');
       if (activeEl) {
         void updatePosition();
+      }
+      if (config.open === true) {
+        if (!activeEl || hideTimer) show();
+      } else if (config.open === false) {
+        hide();
       }
     },
     destroy() {
@@ -192,12 +225,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 1
         activeEl = null;
         textEl = null;
       }
-      node.removeEventListener('mouseenter', show);
-      node.removeEventListener('mouseleave', hide);
-      node.removeEventListener('focusin', show);
-      node.removeEventListener('focusout', hide);
-      node.removeEventListener('click', hide);
-      node.removeEventListener('pointerdown', hide);
+      node.removeEventListener('mouseenter', showOnTrigger);
+      node.removeEventListener('mouseleave', hideOnTrigger);
+      node.removeEventListener('focusin', showOnTrigger);
+      node.removeEventListener('focusout', hideOnTrigger);
+      node.removeEventListener('click', hideOnTrigger);
+      node.removeEventListener('pointerdown', hideOnTrigger);
     }
   };
 }

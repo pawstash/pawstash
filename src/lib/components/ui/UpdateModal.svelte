@@ -93,11 +93,11 @@
       </div>
     {/if}
 
-    <div class="update-actions-grid">
+    <div class="dialog-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-3 whitespace-nowrap border border-[var(--border-color)]"
+        class="whitespace-nowrap"
         disabled={updateState.downloading}
         onclick={() => updateState.closeModal()}
       >
@@ -105,9 +105,10 @@
       </Button>
 
       <Button
-        variant="accent"
+        variant="ghost"
+        data-tone="accent"
         size="md"
-        class="w-full justify-center px-3 whitespace-nowrap"
+        class="whitespace-nowrap"
         disabled={updateState.downloading}
         onclick={() => updateState.startInAppUpdate()}
       >
@@ -256,11 +257,4 @@
     transition: width var(--duration-fast, 150ms) ease;
   }
 
-  .update-actions-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 10px;
-    width: 100%;
-    padding-top: 4px;
-  }
 </style>

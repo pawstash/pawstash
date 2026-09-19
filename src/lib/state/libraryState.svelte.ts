@@ -52,11 +52,32 @@ export class LibraryState {
   getStashDisplayName(collection: LibraryCollection): string {
     if (collection.kind === 'inbox') {
       if (!collection.name || collection.name === 'Inbox' || collection.name === 'Main Stash') {
-        return i18n.t('library.inbox') || 'Main Stash';
+        return i18n.t('library.inbox');
       }
       return collection.name;
     }
     return collection.name;
+  }
+
+  get stashOptions() {
+    return this.allStashes.map((collection) => ({
+      value: collection.id,
+      label: this.getStashDisplayName(collection),
+      color: collection.color || undefined
+    }));
+  }
+
+  stashesForPosts(posts: Pick<Post, 'service' | 'user' | 'id'>[]): string[] {
+    if (posts.length === 0) return [];
+    const counts = new Map<string, number>();
+    for (const post of posts) {
+      for (const id of this.getPostStashes(post)) {
+        counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .filter(([, count]) => count === posts.length)
+      .map(([id]) => id);
   }
 
   get selectedCollection() {

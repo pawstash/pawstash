@@ -31,7 +31,7 @@
   import { updateState } from '$lib/state/updateState.svelte';
   import { initFrontendLogging } from '$lib/utils/logger';
   import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
-  import { Toaster } from 'svelte-sonner';
+  import Toaster from '$lib/components/ui/Toaster.svelte';
   import pawstashLogo from '$lib/assets/pawstash.png';
   import { logoFlightState } from '$lib/state/logoFlightState.svelte';
 
@@ -50,14 +50,6 @@
       logoFlightState.flyToSidebar();
     }
     prevRouteName = current;
-  });
-
-  let effectiveToastPosition = $derived.by(() => {
-    const pos = configState.settings.toast_position;
-    if (!pos || pos === 'auto') {
-      return layoutState.isMobile ? 'top-center' : 'bottom-right';
-    }
-    return pos as any;
   });
 
   onMount(() => {
@@ -145,7 +137,7 @@
   data-layout={layoutState.isMobile ? 'mobile' : 'desktop'}
 >
   <BackgroundProvider />
-  <Toaster theme="dark" position={effectiveToastPosition} richColors />
+  <Toaster />
 
   {#if !layoutState.isMobile}
     <SidebarNav />
@@ -191,7 +183,7 @@
         {:else if navigationState.route.name === 'settings'}
           <SettingsModal />
         {:else}
-          <div class="flex-1 flex items-center justify-center text-gray-500 text-xs">
+          <div class="flex-1 flex items-center justify-center text-ink-faint text-xs">
             {i18n.t('nav.coming_soon')}
           </div>
         {/if}

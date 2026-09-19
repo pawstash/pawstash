@@ -48,7 +48,7 @@
         id: 'other',
         label: i18n.t('settings.cache_other'),
         bytes: stats.other_bytes,
-        color: 'rgba(255, 255, 255, 0.38)'
+        color: 'var(--text-muted)'
       }
     ];
 
@@ -65,27 +65,27 @@
 <div class="flex flex-col gap-3 w-full">
   <div class="flex items-baseline justify-between gap-2">
     <div class="flex items-baseline gap-2">
-      <span class="text-base font-semibold text-white tracking-tight">
+      <span class="text-base font-semibold text-ink tracking-tight">
         {formatBytes(fileBytes)}
       </span>
-      <span class="text-xs text-white/40 font-mono">
+      <span class="text-xs text-ink/40 font-mono">
         / {limitMb} MB
       </span>
       {#if stats?.file_count}
-        <span class="text-[11px] text-white/30 font-medium">
+        <span class="text-[11px] text-ink/30 font-medium">
           ({stats.file_count} {i18n.t('settings.cache_files').toLowerCase()})
         </span>
       {/if}
     </div>
 
-    <span class="text-xs font-mono font-medium {usedPercent > 85 ? 'text-amber-400' : 'text-white/50'}">
+    <span class="text-xs font-mono font-medium {usedPercent > 85 ? 'text-amber-400' : 'text-ink/50'}">
       {usedPercent.toFixed(1)}%
     </span>
   </div>
 
   <div class="storage-bar-track" title="{formatBytes(fileBytes)} / {limitMb} MB">
     {#if categories.length === 0}
-      <div class="h-full w-full bg-white/[0.04]"></div>
+      <div class="h-full w-full bg-veil/[0.04]"></div>
     {:else}
       <div class="flex h-full" style="width: {usedPercent}%;">
         {#each categories as cat (cat.id)}
@@ -101,17 +101,17 @@
 
   <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-0.5">
     {#each categories as cat (cat.id)}
-      <div class="flex items-center gap-1.5 text-[11.5px] text-white/70">
+      <div class="flex items-center gap-1.5 text-[11.5px] text-ink/70">
         <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {cat.color};"></span>
-        <span class="text-white/40">{cat.label}:</span>
-        <span class="font-mono text-white/90">{formatBytes(cat.bytes)}</span>
+        <span class="text-ink/40">{cat.label}:</span>
+        <span class="font-mono text-ink/90">{formatBytes(cat.bytes)}</span>
       </div>
     {/each}
     {#if stats?.metadata_bytes && stats.metadata_bytes > 0}
-      <div class="flex items-center gap-1.5 text-[11.5px] text-white/50">
-        <span class="w-2 h-2 rounded-full shrink-0 border border-white/20 bg-white/10"></span>
-        <span class="text-white/40">{i18n.t('settings.cache_metadata')}:</span>
-        <span class="font-mono text-white/70">{formatBytes(stats.metadata_bytes)}</span>
+      <div class="flex items-center gap-1.5 text-[11.5px] text-ink/50">
+        <span class="w-2 h-2 rounded-full shrink-0 border border-veil/20 bg-veil/10"></span>
+        <span class="text-ink/40">{i18n.t('settings.cache_metadata')}:</span>
+        <span class="font-mono text-ink/70">{formatBytes(stats.metadata_bytes)}</span>
       </div>
     {/if}
   </div>
@@ -122,7 +122,7 @@
     width: 100%;
     height: 9px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(var(--surface-tint-rgb), 0.07);
     overflow: hidden;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
     display: flex;

@@ -8,6 +8,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import IconArrowRight from '~icons/fluent/arrow-right-24-regular';
+  import IconDockLeft from '~icons/fluent/dock-left-24-regular';
   import IconMinimize from '~icons/fluent/subtract-24-regular';
   import IconMaximize from '~icons/fluent/square-24-regular';
   import IconRestore from '~icons/fluent/square-multiple-24-regular';
@@ -58,11 +59,24 @@
 
 <div
   data-tauri-drag-region
-  class="h-[34px] w-full flex items-center justify-between pr-0 select-none bg-transparent text-xs text-gray-400 z-50 shrink-0 relative cursor-default"
+  class="h-[34px] w-full flex items-center justify-between pr-0 select-none bg-transparent text-xs text-ink-muted z-50 shrink-0 relative cursor-default"
   class:pl-2={!isMacStyle}
   class:pl-6={isMacStyle}
 >
   <div class="flex items-center space-x-1 z-10" data-tauri-drag-region="false">
+    <button
+      data-tauri-drag-region="false"
+      use:tooltip={{
+        text: `${layoutState.isSidebarCompact ? i18n.t('nav.expand') : i18n.t('nav.collapse')} (Ctrl+B)`,
+        placement: 'bottom'
+      }}
+      onclick={() => layoutState.toggleSidebar()}
+      class="left-button"
+      class:active={!layoutState.isSidebarCompact}
+      aria-label={layoutState.isSidebarCompact ? i18n.t('nav.expand') : i18n.t('nav.collapse')}
+    >
+      <IconDockLeft class="w-[18px] h-[18px]" />
+    </button>
     <button
       data-tauri-drag-region="false"
       use:tooltip={i18n.t('nav.back')}
@@ -137,18 +151,19 @@
     border: 0;
     border-radius: 50%;
     background: transparent;
-    color: rgb(209 213 219);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: color 150ms ease, background-color 150ms ease;
   }
 
   .left-button:hover:not(:disabled) {
-    color: white;
-    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    background: rgba(var(--surface-tint-rgb), 0.1);
   }
 
   .left-button:disabled {
-    color: rgba(156, 163, 175, 0.28);
+    color: var(--text-muted);
+    opacity: 0.38;
     cursor: default;
   }
 
@@ -158,7 +173,7 @@
     gap: 6px;
     min-width: 0;
     margin-left: 8px;
-    color: rgba(156, 163, 175, 0.68);
+    color: var(--text-muted);
     font-family: var(--font-sans);
     font-size: 11px;
     font-weight: 500;
@@ -182,22 +197,24 @@
     border: 0;
     border-radius: 0;
     background: transparent;
-    color: rgb(209 213 219);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: color 150ms ease, background-color 150ms ease;
   }
 
   .control-button:hover:not(:disabled) {
-    color: white;
-    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    background: rgba(var(--surface-tint-rgb), 0.1);
   }
 
   .control-close:hover:not(:disabled) {
-    background: rgb(239 68 68);
+    background: var(--status-error);
+    color: #ffffff;
   }
 
   .control-button:disabled {
-    color: rgba(156, 163, 175, 0.28);
+    color: var(--text-muted);
+    opacity: 0.38;
     cursor: default;
   }
 </style>

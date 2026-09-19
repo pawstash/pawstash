@@ -11,6 +11,7 @@
   import IconFavoritesFilled from '~icons/fluent/heart-24-filled';
   import IconLibrary from '~icons/fluent/library-24-regular';
   import IconLibraryFilled from '~icons/fluent/library-24-filled';
+  import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
   import IconDownloads from '~icons/fluent/arrow-download-24-regular';
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
   import IconSettings from '~icons/fluent/settings-24-regular';
@@ -35,12 +36,16 @@
   ];
 
   let activeRoot = $derived(navigationState.activeRoot);
+
+  function hasProgressRing(id: string): boolean {
+    return id === 'downloads' && downloadState.activeDownloadsCount > 0;
+  }
+
 </script>
 
 <nav
   class="mobile-bottom-dock"
   class:hidden-dock={selectionState.active}
-  aria-label="Mobile Navigation"
   aria-hidden={selectionState.active}
 >
   <div class="mobile-dock-capsule">
@@ -53,14 +58,17 @@
         class:active={isActive}
         aria-label={title}
       >
-        <div class="dock-icon-wrapper">
+        <div class="dock-icon-wrapper" class:has-progress={hasProgressRing(item.id)}>
+          {#if hasProgressRing(item.id)}
+            <ProgressRing value={downloadState.activeProgress} size={34} />
+          {/if}
           {#if isActive}
             <item.iconActive class="dock-icon" />
           {:else}
             <item.icon class="dock-icon" />
           {/if}
 
-          {#if item.badge && item.badge() > 0}
+          {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
             <span class="dock-badge">{item.badge() > 99 ? '99+' : item.badge()}</span>
           {/if}
         </div>
@@ -97,12 +105,12 @@
     justify-content: space-around;
     height: 64px;
     padding: 0 8px;
-    background: rgba(16, 17, 22, 0.88);
-    border: none !important;
+    background: var(--floating-bg);
+    border: var(--floating-border);
     border-radius: 22px;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(24px) saturate(1.6);
-    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    box-shadow: var(--floating-shadow);
+    backdrop-filter: var(--floating-backdrop) saturate(1.6);
+    -webkit-backdrop-filter: var(--floating-backdrop) saturate(1.6);
   }
 
   .mobile-dock-btn {
@@ -113,19 +121,20 @@
     flex: 1;
     height: 100%;
     background: transparent;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--text-muted);
     border: none;
     cursor: pointer;
-    padding: 4px 0;
-    transition: color 0.18s ease;
+    padding: 2px 0;
+    outline: none;
+    transition: color var(--duration-fast, 0.18s) ease;
   }
 
   .mobile-dock-btn:hover {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
   }
 
   .mobile-dock-btn.active {
-    color: #ffffff;
+    color: var(--text-primary);
   }
 
   .dock-icon-wrapper {
@@ -133,40 +142,78 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    width: clamp(48px, 88%, 58px);
+    height: 32px;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--text-muted);
+    transition: background-color var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+                color var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+                transform var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+
+  .mobile-dock-btn:hover:not(.active) .dock-icon-wrapper {
+    background: rgba(var(--surface-tint-rgb), 0.08);
+    color: var(--text-secondary);
+  }
+
+  .mobile-dock-btn:active .dock-icon-wrapper {
+    transform: scale(0.96);
+  }
+
+  .mobile-dock-btn.active .dock-icon-wrapper {
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 
   :global(.dock-icon) {
-    width: 24px !important;
-    height: 24px !important;
+    width: 22px !important;
+    height: 22px !important;
     flex-shrink: 0;
+    color: inherit;
+    transition: transform var(--duration-normal, 0.22s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .dock-label {
     font-size: 11px;
     font-weight: 500;
     line-height: 1;
-    margin-top: 4px;
+    margin-top: 3px;
     white-space: nowrap;
     letter-spacing: -0.01em;
-    color: inherit;
+    color: var(--text-muted);
+    transition: color var(--duration-fast, 0.18s) ease;
   }
 
   .mobile-dock-btn.active .dock-label {
     font-weight: 700;
-    color: #ffffff;
+    color: var(--text-primary);
+  }
+
+  .dock-icon-wrapper.has-progress :global(.dock-icon) {
+    transform: scale(0.74);
   }
 
   .dock-badge {
     position: absolute;
-    top: -5px;
-    right: -8px;
-    background: #ef4444;
-    color: #ffffff;
+    top: -2px;
+    right: 3px;
+    background: var(--status-error);
+    color: var(--text-primary);
     font-size: 9.5px;
     font-weight: 700;
     line-height: 1;
     padding: 2px 4px;
     border-radius: 9999px;
-    border: 1.5px solid rgba(16, 17, 22, 0.95);
+    border: 1.5px solid var(--floating-bg);
+  }
+
+  .mobile-dock-btn.active :global(.dock-icon-wrapper .progress-ring .ring-track) {
+    stroke: var(--accent-on-container);
+    opacity: 0.25;
+  }
+
+  .mobile-dock-btn.active :global(.dock-icon-wrapper .progress-ring .ring-value) {
+    stroke: var(--accent-on-container);
   }
 </style>

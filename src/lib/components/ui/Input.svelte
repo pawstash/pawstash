@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component, Snippet } from 'svelte';
   import { ripple, tooltip } from '$lib/motion';
+  import { i18n } from '$lib/i18n';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconEye from '~icons/fluent/eye-24-regular';
@@ -117,9 +118,9 @@
         type="button"
         class="icon-btn"
         use:ripple
-        use:tooltip={'Clear'}
+        use:tooltip={i18n.t('common.clear_input')}
         onclick={handleClear}
-        aria-label="Clear input"
+        aria-label={i18n.t('common.clear_input')}
       >
         <IconDismiss style="width: 18px; height: 18px;" />
       </button>
@@ -130,12 +131,12 @@
         type="button"
         class="icon-btn"
         use:ripple
-        use:tooltip={isPasswordVisible ? 'Hide password' : 'Show password'}
+        use:tooltip={i18n.t(isPasswordVisible ? 'common.hide_password' : 'common.show_password')}
         onclick={(e) => {
           e.stopPropagation();
           isPasswordVisible = !isPasswordVisible;
         }}
-        aria-label={isPasswordVisible ? 'Hide password' : 'Show password'}
+        aria-label={i18n.t(isPasswordVisible ? 'common.hide_password' : 'common.show_password')}
       >
         {#if isPasswordVisible}
           <IconEyeOff style="width: 18px; height: 18px;" />
@@ -150,12 +151,12 @@
         type="button"
         class="icon-btn"
         use:ripple
-        use:tooltip={'Browse'}
+        use:tooltip={i18n.t('common.browse')}
         onclick={(e) => {
           e.stopPropagation();
           onBrowse();
         }}
-        aria-label="Browse folder"
+        aria-label={i18n.t('common.browse')}
       >
         <IconFolder style="width: 18px; height: 18px;" />
       </button>
@@ -320,7 +321,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--text-primary);
     opacity: 0.45;
     cursor: pointer;
     padding: 0;

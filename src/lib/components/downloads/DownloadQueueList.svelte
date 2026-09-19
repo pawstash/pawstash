@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { resolveLocalMediaUrl } from '$lib/utils/media';
@@ -26,6 +26,8 @@
   import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
+  import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
+  import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from '$lib/components/content/MediaViewer.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
@@ -97,22 +99,22 @@
   let activeFilterCount = $derived((groupByPosts ? 1 : 0) + countActiveFilters([formatFilters]));
   let completedCount = $derived(downloadState.downloads.filter((item) => item.status === 'completed').length);
   let totalCount = $derived(downloadState.downloads.length);
-  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`) || 'Sort');
+  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`) || i18n.t('common.sort'));
 
   let downloadTabOptions = $derived<ChoiceOption<DownloadFilter>[]>([
     {
       value: 'all',
-      label: i18n.t('downloads.all') || 'All',
+      label: i18n.t('downloads.all'),
       count: totalCount
     },
     ...(downloadState.activeDownloadsCount > 0 ? [{
       value: 'active' as DownloadFilter,
-      label: i18n.t('downloads.active') || 'Active',
+      label: i18n.t('downloads.active'),
       count: downloadState.activeDownloadsCount
     }] : []),
     ...(completedCount < totalCount ? [{
       value: 'completed' as DownloadFilter,
-      label: i18n.t('downloads.completed') || 'Completed',
+      label: i18n.t('downloads.completed'),
       count: completedCount
     }] : [])
   ]);
@@ -156,12 +158,12 @@
   }
 
   const formatList = [
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+    { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio'), icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft }
   ];
 
   let visibleDownloads = $derived.by(() => {
@@ -183,6 +185,10 @@
     if (sortBy === 'size_asc') return (a.total_bytes || 0) - (b.total_bytes || 0);
     return (b.created_at || '').localeCompare(a.created_at || '') || b.id.localeCompare(a.id);
   }));
+  const handoff = new GridHandoff();
+  $effect(() => handoff.sync(sortedDownloads.length > 0, downloadState.loading));
+  onDestroy(() => handoff.destroy());
+
 
   let groupedDownloads = $derived.by(() => {
     const groups = new Map<string, DownloadGroup>();
@@ -390,12 +396,12 @@
         await downloadState.pause(item.id);
       }
       notify.success(
-        i18n.t('downloads.pause') || 'Paused',
+        i18n.t('downloads.pause'),
         `${pausable.length} ${pausable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Failed to pause downloads', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -408,12 +414,12 @@
         await downloadState.resume(item.id);
       }
       notify.success(
-        i18n.t('downloads.resume') || 'Resumed',
+        i18n.t('downloads.resume'),
         `${resumable.length} ${resumable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Failed to resume downloads', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -426,12 +432,12 @@
         await downloadState.retry(item.id);
       }
       notify.success(
-        i18n.t('downloads.retry') || 'Retrying',
+        i18n.t('downloads.retry'),
         `${retryable.length} ${retryable.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Failed to retry downloads', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -446,7 +452,7 @@
       }
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', err);
+      notify.error(i18n.t('downloads.show_in_folder_failed'), err);
     }
   }
 
@@ -458,12 +464,12 @@
         await downloadState.remove(item.id);
       }
       notify.success(
-        allActiveSelected ? (i18n.t('downloads.cancel') || 'Cancelled') : (i18n.t('downloads.remove') || 'Removed'),
+        allActiveSelected ? (i18n.t('downloads.cancel')) : (i18n.t('downloads.remove')),
         `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Failed to remove downloads', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -501,7 +507,8 @@
         class="downloads-sort-select"
         icon={IconArrowSort}
         iconOnly={true}
-        ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+        ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
+        align="right"
       />
     {/snippet}
   </ChoiceGroup>
@@ -539,9 +546,9 @@
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -583,8 +590,8 @@
         variant={isSelectionActive ? 'accent' : 'ghost'}
         class="btn-icon"
         onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('downloads'))}
-        title={i18n.t('selection.select_mode') || 'Select mode'}
-        aria-label="Select mode"
+        title={i18n.t('selection.select_mode')}
+        aria-label={i18n.t('selection.select_mode')}
       >
         <IconCheckboxChecked class="w-5 h-5" />
       </Button>
@@ -599,8 +606,8 @@
         variant="ghost"
         class="btn-icon"
         onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more') || 'More'}
-        aria-label="More actions"
+        title={i18n.t('common.more')}
+        aria-label={i18n.t('common.more')}
       >
         <IconMoreVertical class="w-5 h-5" />
       </Button>
@@ -629,35 +636,46 @@
     {/snippet}
   </PageHeader>
 
-  {#if sortedDownloads.length > 0}
+  {#if sortedDownloads.length > 0 || handoff.skeletonMounted}
     {#if scaleVisible}<div class="scale-indicator">{configState.settings.grid_scale}%</div>{/if}
-    <div class="downloads-grid" onwheel={handleGridWheel} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
-      {#if groupByPosts}
-        {#each groupedDownloads as group (group.key)}
-          {@const media = previewItem(group.items)}
-          <DownloadGroupCard
-            items={group.items}
-            previewUrl={previewUrl(media)}
-            thumbnailUrl={localPathUrl(media.post_preview_path) || media.post_preview_url}
-            avatarUrl={localPathUrl(media.creator_avatar_path)}
-            title={media.post_title || i18n.t('downloads.unknown_post')}
-            creatorName={media.creator_name}
-            onopen={group.identity ? () => openPost(group.identity) : undefined}
-            oncreator={group.identity ? () => navigationState.openCreator(group.identity!.service, group.identity!.creatorId) : undefined}
-          />
-        {/each}
-      {:else}
-        {#each sortedDownloads as item (item.id)}
-          <DownloadItemCard
-            {item}
-            previewUrl={previewUrl(item)}
-            thumbnailUrl={itemThumbnailUrl(item)}
-            postTitle={item.post_title}
-            onopen={(openInPost) => handleItemOpen(item, openInPost)}
-            orderedKeys={downloadKeys}
-            itemsMap={downloadsMap}
-          />
-        {/each}
+    <div class="grid-stack">
+      <div class="downloads-grid" onwheel={handleGridWheel} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
+        {#if groupByPosts}
+          {#each groupedDownloads as group (group.key)}
+            {@const media = previewItem(group.items)}
+            <DownloadGroupCard
+              items={group.items}
+              previewUrl={previewUrl(media)}
+              thumbnailUrl={localPathUrl(media.post_preview_path) || media.post_preview_url}
+              avatarUrl={localPathUrl(media.creator_avatar_path)}
+              title={media.post_title || i18n.t('downloads.unknown_post')}
+              creatorName={media.creator_name}
+              onopen={group.identity ? () => openPost(group.identity) : undefined}
+              oncreator={group.identity ? () => navigationState.openCreator(group.identity!.service, group.identity!.creatorId) : undefined}
+            />
+          {/each}
+        {:else}
+          {#each sortedDownloads as item (item.id)}
+            <DownloadItemCard
+              {item}
+              previewUrl={previewUrl(item)}
+              thumbnailUrl={itemThumbnailUrl(item)}
+              postTitle={item.post_title}
+              onopen={(openInPost) => handleItemOpen(item, openInPost)}
+              orderedKeys={downloadKeys}
+              itemsMap={downloadsMap}
+            />
+          {/each}
+        {/if}
+      </div>
+
+      {#if handoff.skeletonMounted}
+        <SkeletonGrid
+          cardWidth={targetCardWidth}
+          {gap}
+          ratio={1}
+          fading={handoff.skeletonFading}
+        />
       {/if}
     </div>
   {:else if !downloadState.loading}
@@ -720,10 +738,10 @@
       size="sm"
       class="selection-btn"
       onclick={batchShowInFolder}
-      title={i18n.t('downloads.show_in_folder') || 'Show in folder'}
+      title={i18n.t('downloads.show_in_folder')}
     >
       <IconFolderOpen class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.show_in_folder') || 'Show in folder'}</span>
+      <span>{i18n.t('downloads.show_in_folder')}</span>
     </Button>
   {/if}
 
@@ -732,14 +750,14 @@
     size="sm"
     class="selection-btn"
     onclick={batchRemove}
-    title={allActiveSelected ? (i18n.t('downloads.cancel') || 'Cancel') : (i18n.t('downloads.remove') || 'Remove')}
+    title={allActiveSelected ? (i18n.t('downloads.cancel')) : (i18n.t('downloads.remove'))}
   >
     {#if allActiveSelected}
       <IconDismiss class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.cancel') || 'Cancel'}</span>
+      <span>{i18n.t('downloads.cancel')}</span>
     {:else}
       <IconDelete class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.remove') || 'Remove'}</span>
+      <span>{i18n.t('downloads.remove')}</span>
     {/if}
   </Button>
 </SelectionActionBar>
@@ -760,7 +778,7 @@
       const d = viewerDownloads[idx];
       if (d) {
         await downloadState.remove(d.id);
-        notify.success(i18n.t('downloads.remove') || 'Removed', d.filename);
+        notify.success(i18n.t('downloads.remove'), { description: d.filename, glyph: 'removed' });
         if (viewerDownloads.length <= 1) {
           viewerIndex = null;
         }
@@ -772,7 +790,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     open={mobileMoreOpen}
-    title={i18n.t('common.more') || 'More'}
+    title={i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -791,7 +809,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select mode')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -806,7 +824,7 @@
       >
         <IconFolderOpen class="text-secondary" />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('downloads.open_folder') || 'Open folder'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('downloads.open_folder')}</span>
         </div>
       </button>
 
@@ -822,7 +840,7 @@
       >
         <IconArrowClockwise class="text-secondary" />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
     </div>
@@ -847,7 +865,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
@@ -867,7 +885,7 @@
   :global(.downloads-sort-select .select-trigger:hover),
   :global(.downloads-sort-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.downloads-sort-select .select-trigger:active),
@@ -879,14 +897,10 @@
   :global(.downloads-sort-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
   }
   .downloads-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width)), 1fr)); align-items: start; gap: var(--grid-gap); width: 100%; }
-  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(10,10,14,.82); color: white; font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
-  .empty-state { min-height: 310px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255, 255, 255, 0.42); text-align: center; }
-  .empty-state :global(svg) { width: 34px; height: 34px; color: rgba(255, 255, 255, 0.42); margin-bottom: 5px; }
-  .empty-state strong { color: rgba(255, 255, 255, 0.76); font-size: 14px; font-weight: 600; }
-  .empty-state span { max-width: 360px; font-size: 12px; color: rgba(255, 255, 255, 0.42); line-height: 1.5; }
+  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(var(--surface-tint-rgb), .14); border-radius: 999px; background: rgba(10,10,14,.82); color: var(--text-primary); font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
   .page-error { margin-top: 16px; color: rgba(255,130,130,.8); font-size: 12px; text-align: center; }
 </style>

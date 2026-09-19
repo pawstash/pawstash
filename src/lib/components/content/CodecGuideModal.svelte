@@ -46,7 +46,7 @@
     try {
       await navigator.clipboard.writeText(text);
       copied = text;
-      notify.success(i18n.t('post.codec_copied') || 'Copied to clipboard');
+      notify.success(i18n.t('post.codec_copied'), { glyph: 'copied' });
       if (copyTimer) clearTimeout(copyTimer);
       copyTimer = setTimeout(() => { copied = null; }, 2000);
     } catch {
@@ -58,7 +58,7 @@
 {#snippet codecBody()}
   <div class="codec-modal-body">
     <p class="codec-intro">
-      {i18n.t('post.codec_why_desc') || 'Для воспроизведения видео в формате H.265 (HEVC) установите кодек в систему.'}
+      {i18n.t('post.codec_why_desc')}
     </p>
 
     <div class="segmented-wrapper">
@@ -80,7 +80,7 @@
             onclick={() => void apiOpenInBrowser('https://apps.microsoft.com/detail/9nmzlz57r3t7')}
           >
             <IconOpen class="w-[15px] h-[15px]" />
-            <span>{i18n.t('post.codec_windows_m2_btn') || 'Открыть расширение в Microsoft Store'}</span>
+            <span>{i18n.t('post.codec_windows_m2_btn')}</span>
           </Button>
         </div>
 
@@ -93,7 +93,7 @@
         <span class="cmd-label">Ubuntu / Debian:</span>
         <div class="cmd-box">
           <code class="cmd-text">{UBUNTU_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(UBUNTU_CMD)} title="Copy">
+          <button type="button" class="copy-btn" onclick={() => void copy(UBUNTU_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
             {#if copied === UBUNTU_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
           </button>
         </div>
@@ -101,7 +101,7 @@
         <span class="cmd-label mt-2">Arch Linux:</span>
         <div class="cmd-box">
           <code class="cmd-text">{ARCH_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(ARCH_CMD)} title="Copy">
+          <button type="button" class="copy-btn" onclick={() => void copy(ARCH_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
             {#if copied === ARCH_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
           </button>
         </div>
@@ -109,7 +109,7 @@
         <span class="cmd-label mt-2">Fedora:</span>
         <div class="cmd-box">
           <code class="cmd-text">{FEDORA_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(FEDORA_CMD)} title="Copy">
+          <button type="button" class="copy-btn" onclick={() => void copy(FEDORA_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
             {#if copied === FEDORA_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
           </button>
         </div>
@@ -121,7 +121,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     isOpen={open}
-    title={i18n.t('post.codec_guide_title') || 'Кодек H.265 / HEVC'}
+    title={i18n.t('post.codec_guide_title')}
     {onclose}
   >
     {@render codecBody()}
@@ -129,7 +129,7 @@
 {:else}
   <Modal
     isOpen={open}
-    title={i18n.t('post.codec_guide_title') || 'Кодек H.265 / HEVC'}
+    title={i18n.t('post.codec_guide_title')}
     size="md"
     {onclose}
   >
@@ -220,7 +220,7 @@
 
   .copy-btn:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .store-row {
@@ -234,7 +234,7 @@
     font-size: var(--floating-item-font-size, 13.5px) !important;
     border-radius: var(--radius-full, 9999px) !important;
     gap: var(--floating-item-gap, 10px) !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: rgba(var(--surface-tint-rgb), 0.06) !important;
   }
 
   .tab-note {

@@ -185,22 +185,20 @@
   class:is-disabled={disabled}
   tabindex="0"
   role="button"
-  aria-label={i18n.t('settings.panic_key_record_label') || 'Record shortcut'}
+  aria-label={i18n.t('settings.panic_key_record_label')}
   onclick={startRecording}
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onblur={handleBlur}
 >
-  <!-- Left Inset Keyboard Icon -->
   <div class="left-icon">
     <IconKeyboard />
   </div>
 
-  <!-- Key Tokens Display -->
   <div class="shortcut-keys">
     {#if isRecording && liveKeys.length === 0}
       <span class="recording-prompt">
-        {i18n.t('settings.panic_key_press_prompt') || 'Нажмите комбинацию клавиш...'}
+        {i18n.t('settings.panic_key_press_prompt')}
       </span>
     {:else if displayTokens.length > 0}
       {#each displayTokens as token, idx (idx + token)}
@@ -215,12 +213,11 @@
       {/if}
     {:else}
       <span class="placeholder-text">
-        {i18n.t('settings.panic_key_none') || 'Не назначено (кликните для записи)'}
+        {i18n.t('settings.panic_key_none')}
       </span>
     {/if}
   </div>
 
-  <!-- Right Inset Action Buttons (Presets Popover + Reset + Clear) -->
   <div class="right-actions">
     {#if presets.length > 0}
       <PopoverMenu align="right" width="220px">
@@ -228,14 +225,14 @@
           <button
             type="button"
             use:ripple
-            use:tooltip={i18n.t('settings.panic_key_presets') || 'Пресеты'}
+            use:tooltip={i18n.t('settings.panic_key_presets')}
             class="icon-btn"
             class:is-open={open}
             onclick={(e) => {
               e.stopPropagation();
               toggle(e);
             }}
-            aria-label="Presets"
+            aria-label={i18n.t('common.presets')}
             tabindex="-1"
           >
             <IconList style="width: 18px; height: 18px;" />
@@ -269,12 +266,12 @@
         type="button"
         class="icon-btn"
         use:ripple
-        use:tooltip={i18n.t('settings.panic_key_reset') || 'Сбросить'}
+        use:tooltip={i18n.t('settings.panic_key_reset')}
         onclick={(e) => {
           e.stopPropagation();
           resetToDefault();
         }}
-        aria-label="Reset shortcut"
+        aria-label={i18n.t('settings.panic_key_reset')}
         tabindex="-1"
       >
         <IconArrowReset style="width: 16px; height: 16px;" />
@@ -286,12 +283,12 @@
         type="button"
         class="icon-btn"
         use:ripple
-        use:tooltip={i18n.t('settings.panic_key_clear') || 'Очистить'}
+        use:tooltip={i18n.t('settings.panic_key_clear')}
         onclick={(e) => {
           e.stopPropagation();
           clearShortcut();
         }}
-        aria-label="Clear shortcut"
+        aria-label={i18n.t('settings.panic_key_clear')}
         tabindex="-1"
       >
         <IconDismiss style="width: 16px; height: 16px;" />
@@ -403,11 +400,11 @@
     height: calc((var(--control-height, 34px) - 12px) * var(--ui-scale, 1));
     min-height: 20px;
     padding: 0 calc(7px * var(--ui-scale, 1));
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
     border: none;
     border-radius: var(--radius-sm, 6px);
     box-shadow: none;
-    color: var(--text-primary, #fff);
+    color: var(--text-primary);
     font-family: var(--font-mono, monospace);
     font-size: calc(var(--control-font-size, 13px) * 0.88 * var(--ui-scale, 1));
     font-weight: 500;
@@ -470,7 +467,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--text-primary);
     opacity: 0.45;
     cursor: pointer;
     padding: 0;
@@ -512,7 +509,7 @@
 
   .preset-item:hover,
   .preset-item.selected {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .preset-item.selected {
@@ -524,7 +521,7 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--accent);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     padding: 2px 6px;
     border-radius: 4px;
     flex-shrink: 0;

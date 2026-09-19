@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { tick, onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
+  import { dialogFocus } from '$lib/actions/dialogFocus';
   import Button from '$lib/components/ui/Button.svelte';
 
   interface Props {
@@ -67,26 +68,6 @@
     return Math.min(dragOffset / panelHeight, 1);
   });
 
-  const focusableSelector = [
-    'button:not([disabled])',
-    '[href]',
-    'input:not([disabled])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])'
-  ].join(',');
-
-  function focusableElements() {
-    return panel
-      ? Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector)).filter(
-          (element) =>
-            element.tabIndex >= 0 &&
-            !element.hasAttribute('hidden') &&
-            element.getAttribute('aria-hidden') !== 'true'
-        )
-      : [];
-  }
-
   function requestClose() {
     if (isClosing) return;
     if (activePointerId !== null && dragZone?.hasPointerCapture(activePointerId)) {
@@ -126,32 +107,6 @@
     isClosing = false;
     dragOffset = 0;
     onclose();
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      requestClose();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-
-    const elements = focusableElements();
-    if (elements.length === 0) {
-      event.preventDefault();
-      panel?.focus();
-      return;
-    }
-
-    const first = elements[0];
-    const last = elements[elements.length - 1];
-    if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !panel?.contains(document.activeElement))) {
-      event.preventDefault();
-      first.focus();
-    }
   }
 
   function handlePointerDown(event: PointerEvent) {
@@ -218,26 +173,9 @@
     if (!isVisible) return;
 
     isEntering = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     dragOffset = 0;
     isClosing = false;
     isDragging = false;
-
-    void tick().then(() => {
-      const firstFocusable = focusableElements()[0];
-      (firstFocusable ?? panel)?.focus();
-    });
-
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      if (previouslyFocused?.isConnected) {
-        requestAnimationFrame(() => previouslyFocused.focus());
-      }
-    };
   });
 </script>
 
@@ -285,7 +223,7 @@
         aria-modal="true"
         aria-label={title}
         tabindex="-1"
-        onkeydown={handleKeydown}
+        use:dialogFocus={{ onEscape: requestClose }}
       >
         <header class="bottom-sheet__header">
           <h2 class="bottom-sheet__title">{title}</h2>

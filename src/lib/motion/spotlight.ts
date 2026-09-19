@@ -5,7 +5,7 @@ export interface SpotlightOptions {
 }
 
 export function spotlight(node: HTMLElement, options: SpotlightOptions = {}) {
-  let { glowColor = 'rgba(255, 255, 255, 0.08)', radius = 120, disabled = false } = options;
+  let { glowColor = 'rgba(var(--surface-tint-rgb), 0.08)', radius = 120, disabled = false } = options;
 
   node.style.position = node.style.position || 'relative';
 
@@ -26,7 +26,7 @@ export function spotlight(node: HTMLElement, options: SpotlightOptions = {}) {
 
   return {
     update(newOptions: SpotlightOptions = {}) {
-      glowColor = newOptions.glowColor ?? 'rgba(255, 255, 255, 0.08)';
+      glowColor = newOptions.glowColor ?? 'rgba(var(--surface-tint-rgb), 0.08)';
       radius = newOptions.radius ?? 120;
       disabled = newOptions.disabled ?? false;
     },

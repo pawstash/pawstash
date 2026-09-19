@@ -64,10 +64,10 @@ export class UpdateState {
             i18n.t('update_available_title'),
             i18n.t('update_available_desc', { version: result.latest_version }),
             {
-              duration: 9000,
+              duration: 30000,
               action: {
                 label: i18n.t('update_view_changelog'),
-                onClick: () => {
+                onclick: () => {
                   this.modalOpen = true;
                 }
               }

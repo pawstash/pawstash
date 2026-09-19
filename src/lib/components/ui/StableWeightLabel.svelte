@@ -18,7 +18,8 @@
 <style>
   .stable-weight-label {
     display: inline-grid;
-    min-width: max-content;
+    min-width: 0;
+    max-width: 100%;
     vertical-align: top;
   }
 
@@ -26,6 +27,9 @@
   .stable-weight-label__measure {
     grid-area: 1 / 1;
     white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .stable-weight-label__measure {

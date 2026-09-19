@@ -95,12 +95,18 @@
   {#each options as option, index}
     {@const isActive = option.value === value}
     {@const canHaveAddon = Boolean(activeAddon) && (hasActiveAddon ? hasActiveAddon(option) : true)}
-    <div class="choice-group__segment">
+    <div
+      class="choice-group__segment"
+      class:is-first={index === 0}
+      class:is-last={index === options.length - 1}
+    >
       <button
         bind:this={buttons[index]}
         type="button"
         use:ripple
         class="choice-group__option"
+        class:is-first={index === 0}
+        class:is-last={index === options.length - 1}
         class:is-active={isActive}
         class:has-active-addon={isActive && canHaveAddon}
         role="radio"
@@ -145,6 +151,11 @@
     --choice-option-font-size: calc(var(--control-font-size, 13px) * var(--ui-scale, 1));
     --choice-option-icon-size: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1));
     --choice-option-padding: calc(var(--control-padding-x, 14px) * var(--ui-scale, 1));
+    --choice-pill-radius: min(
+      calc(var(--radius-full) * var(--ui-scale, 1)),
+      calc(var(--choice-option-height) / 2)
+    );
+    --choice-inner-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1));
 
     display: inline-flex;
     align-items: stretch;
@@ -213,7 +224,7 @@
     gap: calc(6px * var(--ui-scale, 1));
     padding: 0 var(--choice-option-padding);
     border: 0;
-    border-radius: calc(var(--radius-sm) * var(--ui-scale, 1));
+    border-radius: var(--choice-inner-radius);
     background: var(--input-bg, rgba(255, 255, 255, 0.06));
     color: var(--text-secondary);
     font-family: var(--font-sans);
@@ -228,6 +239,18 @@
       color var(--duration-fast) var(--ease-expo),
       border-radius var(--duration-normal, 240ms) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
       transform var(--duration-fast) var(--ease-expo);
+  }
+
+  .choice-group__segment:first-child .choice-group__option,
+  .choice-group__option.is-first {
+    border-top-left-radius: var(--choice-pill-radius);
+    border-bottom-left-radius: var(--choice-pill-radius);
+  }
+
+  .choice-group__segment:last-child .choice-group__option,
+  .choice-group__option.is-last {
+    border-top-right-radius: var(--choice-pill-radius);
+    border-bottom-right-radius: var(--choice-pill-radius);
   }
 
   .choice-group__segment {
@@ -292,25 +315,16 @@
   }
 
   .choice-group__option.is-active {
-    border-radius: min(
-      calc(var(--radius-full) * var(--ui-scale, 1)),
-      calc(var(--choice-option-height) / 2)
-    );
+    border-radius: var(--choice-pill-radius);
     background: var(--choice-active-bg, var(--accent-primary));
-    color: var(--choice-active-text, var(--text-on-accent, #ffffff));
+    color: var(--choice-active-text, var(--text-on-accent, var(--text-primary)));
     font-weight: var(--font-weight-semibold);
   }
 
   .choice-group__option.is-active.has-active-addon {
-    border-radius: min(
-      calc(var(--radius-full) * var(--ui-scale, 1)),
-      calc(var(--choice-option-height) / 2)
-    ) calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) min(
-      calc(var(--radius-full) * var(--ui-scale, 1)),
-      calc(var(--choice-option-height) / 2)
-    ) !important;
-    border-top-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-bottom-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
+    border-radius: var(--choice-pill-radius) var(--choice-inner-radius) var(--choice-inner-radius) var(--choice-pill-radius) !important;
+    border-top-right-radius: var(--choice-inner-radius) !important;
+    border-bottom-right-radius: var(--choice-inner-radius) !important;
   }
 
   .choice-group__option :global(svg) {

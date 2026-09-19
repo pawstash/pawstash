@@ -130,7 +130,7 @@
     width: 100%;
     height: 100%;
     border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--surface-tint-rgb), 0.1);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   }
 

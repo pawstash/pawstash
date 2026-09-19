@@ -18,7 +18,7 @@ export function parseDateTimestamp(dateValue?: string | number | null): number {
 }
 
 export function formatDate(dateValue?: string | number | null): string {
-  if (!dateValue) return '—';
+  if (!dateValue) return '';
   try {
     const num = typeof dateValue === 'number' ? dateValue : Number(dateValue);
     const date = !isNaN(num) && num > 0
@@ -39,7 +39,6 @@ export function cleanPostTitle(title?: string | null): string {
   if (!title) return '';
   let text = String(title);
 
-  // Decode HTML entities
   text = text
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -49,17 +48,14 @@ export function cleanPostTitle(title?: string | null): string {
     .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, ' ');
 
-  // Strip HTML tags
   text = text.replace(/<[^>]*>/g, ' ');
 
-  // Strip markdown formatting while keeping text content
   text = text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/(\*{1,2}|_{1,2})(.*?)\1/g, '$2')
     .replace(/~~(.*?)~~/g, '$1')
     .replace(/`([^`]+)`/g, '$1');
 
-  // Normalize whitespace
   return text.replace(/\s+/g, ' ').trim();
 }
 

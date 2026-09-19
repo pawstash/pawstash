@@ -8,9 +8,11 @@
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { subscriptionState } from '$lib/state/subscriptionState.svelte';
   import { i18n } from '$lib/i18n';
   import { tooltip, ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
   import { isVideoUrl, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
@@ -31,6 +33,7 @@
   import IconSave from '~icons/fluent/bookmark-add-24-regular';
   import IconSaved from '~icons/fluent/bookmark-24-filled';
   import IconBookmarkMultiple from '~icons/fluent/bookmark-multiple-24-regular';
+  import IconPersonSubscribed from '~icons/fluent/person-available-24-filled';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconFolderDismiss from '~icons/fluent/folder-dismiss-24-regular';
@@ -42,9 +45,10 @@
     showCreator?: boolean;
     orderedKeys?: string[];
     itemsMap?: Map<string, Post>;
+    enterDelay?: number | null;
   }
 
-  let { post, showCreator = true, orderedKeys, itemsMap }: Props = $props();
+  let { post, showCreator = true, orderedKeys, itemsMap, enterDelay = null }: Props = $props();
 
   const ratios = {
     square: '1 / 1',
@@ -74,8 +78,47 @@
 
   let isLite = $derived(configState.settings.card_view_mode === 'lite');
   let fileCounts = $derived(getPostFileCounts(effectivePost));
+
+  interface FileBadge {
+    key: string;
+    icon: any;
+    count: number;
+    tooltip: string;
+    cloud?: boolean;
+  }
+
+  let fileBadges = $derived.by<FileBadge[]>(() => {
+    if (fileCounts.attachments > 0) {
+      return [{
+        key: 'attachments',
+        icon: IconAttach,
+        count: fileCounts.attachments,
+        tooltip: i18n.t('feed.attachments_count', { count: fileCounts.attachments })
+      }];
+    }
+
+    const byKind: FileBadge[] = [
+      { key: 'images', icon: IconImage, count: fileCounts.images, tooltip: `${fileCounts.images} ${i18n.t('feed.photos')}` },
+      { key: 'videos', icon: IconVideo, count: fileCounts.videos, tooltip: `${fileCounts.videos} ${i18n.t('feed.videos')}` },
+      { key: 'audios', icon: IconMusic, count: fileCounts.audios, tooltip: `${fileCounts.audios} ${i18n.t('feed.audio')}` },
+      { key: 'archives', icon: IconFolderZip, count: fileCounts.archives, tooltip: `${fileCounts.archives} ${i18n.t('feed.archives')}` },
+      { key: 'documents', icon: IconDocument, count: fileCounts.documents, tooltip: `${fileCounts.documents} ${i18n.t('feed.documents')}` },
+      { key: 'clouds', icon: IconCloud, count: fileCounts.clouds, tooltip: `${fileCounts.clouds} ${i18n.t('feed.cloud_links')}`, cloud: true }
+    ].filter((badge) => badge.count > 0);
+
+    if (byKind.length <= 2) return byKind;
+
+    return [{
+      key: 'mixed',
+      icon: IconAttach,
+      count: byKind.reduce((sum, badge) => sum + badge.count, 0),
+      tooltip: byKind.map((badge) => badge.tooltip).join(' · ')
+    }];
+  });
   let isUnarchived = $derived(isPostUnarchived(effectivePost));
   let isFavorited = $derived(accountState.isPostFavorite(post.service, post.user, post.id));
+  let creatorFavorited = $derived(accountState.isCreatorFavorite(post.service, post.user));
+  let creatorSubscribed = $derived(Boolean(subscriptionState.forCreator(post.service, post.user)));
   let favoritingPending = $state(false);
   let stashMenuOpen = $state(false);
 
@@ -89,13 +132,13 @@
       await apiSetPostFavorite(post.service, post.user, post.id, target);
       if (target) {
         accountState.addPostFavoriteOptimistic(post);
-        notify.success(i18n.t('post.added_to_favorites') || 'Added to favorites');
+        notify.success(i18n.t('post.added_to_favorites'), { glyph: 'favorited' });
       } else {
         accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
-        notify.success(i18n.t('post.removed_from_favorites') || 'Removed from favorites');
+        notify.success(i18n.t('post.removed_from_favorites'), { glyph: 'unfavorited' });
       }
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorite', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
     } finally {
       favoritingPending = false;
     }
@@ -143,13 +186,7 @@
   let saved = $derived(libraryState.isSaved(post));
   let saving = $derived(libraryState.isPending(post));
   let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(
-    stashes.map((s) => ({
-      value: s.id,
-      label: libraryState.getStashDisplayName(s),
-      color: s.color || undefined
-    }))
-  );
+  const stashOptions = $derived(libraryState.stashOptions);
   let postStashes = $derived(libraryState.getPostStashes(post));
   let customStashes = $derived(libraryState.getCustomPostStashes(post));
   let customStashObjects = $derived(
@@ -160,31 +197,31 @@
   let customStashNames = $derived(
     customStashObjects.map((c) => libraryState.getStashDisplayName(c))
   );
-  let singleStash = $derived(customStashObjects.length === 1 ? customStashObjects[0] : null);
-  let singleStashInitial = $derived.by(() => {
-    if (!singleStash) return '';
-    const name = libraryState.getStashDisplayName(singleStash).trim();
-    if (!name) return '';
-    const match = name.match(/^(\d+[a-zA-Z]?|[^\s])/);
-    return match ? match[0].toUpperCase() : name.slice(0, 1).toUpperCase();
-  });
-  let singleStashColor = $derived(singleStash?.color || null);
   let isInsideLibrary = $derived(navigationState.route.name === 'library');
+  let stashCount = $derived(customStashObjects.length);
+  let stashColor = $derived(customStashObjects[0]?.color || null);
+  let stashLabel = $derived.by(() => {
+    if (isInsideLibrary) return '';
+    if (customStashNames.length > 0) return customStashNames[0];
+    if (!saved) return '';
+    const inbox = libraryState.inbox;
+    return inbox ? libraryState.getStashDisplayName(inbox) : i18n.t('library.saved');
+  });
   let isInsideSpecificLibraryCategory = $derived(
     isInsideLibrary && libraryState.selectedCollectionId !== null
   );
 
   let cardActionTooltip = $derived.by(() => {
     if (isInsideLibrary) {
-      return i18n.t('library.manage_stashes') || 'Manage stashes';
+      return i18n.t('library.manage_stashes');
     }
     if (!saved) {
-      return i18n.t('library.add_to_stash') || 'Add to stash';
+      return i18n.t('library.add_to_stash');
     }
     if (customStashNames.length > 0) {
       return `${i18n.t('library.saved')} · ${customStashNames.join(', ')}`;
     }
-    return i18n.t('library.saved') || 'Saved in library';
+    return i18n.t('library.saved');
   });
 
   let creatorName = $derived.by(() => {
@@ -279,13 +316,13 @@
     try {
       if (isCurrentlyIn) {
         await libraryState.removeFromStash(collectionId, post);
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
+        notifyRemovedFromStash(collectionId, [post]);
       } else {
         await libraryState.save(post, collectionId);
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash', post.title || undefined);
+        notifyAddedToStash(collectionId, post.title || undefined);
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -294,9 +331,9 @@
     try {
       const newStash = await libraryState.createStash(name.trim());
       await libraryState.save(post, newStash.id);
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -309,13 +346,13 @@
     try {
       if (libraryState.selectedCollection?.kind === 'stash') {
         await libraryState.removeFromStash(collectionId, post);
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
+        notifyRemovedFromStash(collectionId, [post]);
       } else {
         await libraryState.remove(post);
-        notify.success(i18n.t('library.removed') || 'Removed from library', post.title || undefined);
+        notify.success(i18n.t('library.removed'), { description: post.title || undefined, glyph: 'removed' });
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Action failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -334,7 +371,9 @@
 <article
   class="grid-tile"
   class:selected={selected}
+  class:is-entering={enterDelay !== null}
   style:aspect-ratio={ratio}
+  style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
   data-post-key={postKey}
   onmouseenter={handleCardHover}
 >
@@ -353,79 +392,47 @@
       class:checked={selected}
       onclick={handleSelectCheckbox}
       use:ripple
-      aria-label="Select post"
+      aria-label={i18n.t('selection.select_post')}
     >
       {#if selected}
-        <IconCheckmark class="w-[14px] h-[14px]" />
+        <IconCheckmark />
       {/if}
     </button>
   {:else if isLite && isUnarchived}
     <div class="grid-tile-top-files">
       <span
         class="grid-tile-file-item grid-tile-unarchived-item"
-        use:tooltip={i18n.t('feed.unarchived_badge') || "Haven't archived this post yet"}
+        use:tooltip={i18n.t('feed.unarchived_badge')}
       >
-        <IconWarning class="w-3.5 h-3.5 text-amber-400" />
+        <IconWarning />
       </span>
     </div>
   {:else if !isLite}
-    {#if isUnarchived || fileCounts.attachments > 0 || fileCounts.images > 0 || fileCounts.videos > 0 || fileCounts.audios > 0 || fileCounts.archives > 0 || fileCounts.documents > 0 || fileCounts.clouds > 0}
+    {#if isUnarchived || fileBadges.length > 0}
       <div class="grid-tile-top-files">
         {#if isUnarchived}
           <span
             class="grid-tile-file-item grid-tile-unarchived-item"
-            use:tooltip={i18n.t('feed.unarchived_badge') || "Haven't archived this post yet"}
+            use:tooltip={i18n.t('feed.unarchived_badge')}
           >
-            <IconWarning class="w-3.5 h-3.5 text-amber-400" />
+            <IconWarning />
           </span>
         {/if}
-        {#if fileCounts.attachments > 0}
-          <span class="grid-tile-file-item" use:tooltip={i18n.t('feed.attachments_count', { count: fileCounts.attachments }) || `${fileCounts.attachments} attachments`}>
-            <IconAttach />
-            <span>{fileCounts.attachments}</span>
+        {#each fileBadges as badge (badge.key)}
+          {@const BadgeIcon = badge.icon}
+          <span
+            class="grid-tile-file-item"
+            class:grid-tile-cloud-item={badge.cloud}
+            use:tooltip={badge.tooltip}
+          >
+            <BadgeIcon />
+            {#if badge.count > 1}<span>{badge.count}</span>{/if}
           </span>
-        {:else}
-          {#if fileCounts.images > 0}
-            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.images} ${i18n.t('feed.photos') || 'photos'}`}>
-              <IconImage />
-              {#if fileCounts.images > 1}<span>{fileCounts.images}</span>{/if}
-            </span>
-          {/if}
-          {#if fileCounts.videos > 0}
-            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.videos} ${i18n.t('feed.videos') || 'videos'}`}>
-              <IconVideo />
-              {#if fileCounts.videos > 1}<span>{fileCounts.videos}</span>{/if}
-            </span>
-          {/if}
-          {#if fileCounts.audios > 0}
-            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.audios} ${i18n.t('feed.audio') || 'audio'}`}>
-              <IconMusic />
-              {#if fileCounts.audios > 1}<span>{fileCounts.audios}</span>{/if}
-            </span>
-          {/if}
-          {#if fileCounts.archives > 0}
-            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.archives} ${i18n.t('feed.archives') || 'archives'}`}>
-              <IconFolderZip />
-              {#if fileCounts.archives > 1}<span>{fileCounts.archives}</span>{/if}
-            </span>
-          {/if}
-          {#if fileCounts.documents > 0}
-            <span class="grid-tile-file-item" use:tooltip={`${fileCounts.documents} ${i18n.t('feed.documents') || 'documents'}`}>
-              <IconDocument />
-              {#if fileCounts.documents > 1}<span>{fileCounts.documents}</span>{/if}
-            </span>
-          {/if}
-          {#if fileCounts.clouds > 0}
-            <span class="grid-tile-file-item grid-tile-cloud-item" use:tooltip={`${fileCounts.clouds} ${i18n.t('feed.cloud_links') || 'cloud links'}`}>
-              <IconCloud />
-              {#if fileCounts.clouds > 1}<span>{fileCounts.clouds}</span>{/if}
-            </span>
-          {/if}
-        {/if}
+        {/each}
       </div>
     {/if}
 
-    <div class="grid-tile-top-actions">
+    <div class="grid-tile-top-actions tile-toolbar">
       <div class="grid-tile-action-item" class:is-active={isFavorited}>
         <button
           type="button"
@@ -438,7 +445,7 @@
           aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
         >
           {#if isFavorited}
-            <IconHeart class="text-rose-500" />
+            <IconHeart />
           {:else}
             <IconHeartOutline />
           {/if}
@@ -485,13 +492,12 @@
             {#snippet trigger({ toggle, open })}
               <button
                 type="button"
-                class="grid-tile-action"
-                class:active={open}
-                class:is-open={open}
-                class:saved={!isInsideLibrary && saved}
-                class:in-library={isInsideLibrary}
-                class:has-custom-color={Boolean(singleStashColor)}
-                style={singleStashColor ? `--stash-custom-color: ${singleStashColor};` : undefined}
+                class="grid-tile-action grid-tile-action-stash"
+                class:is-selected={open || (!isInsideLibrary && saved)}
+                class:has-label={Boolean(stashLabel)}
+                class:has-count={stashCount > 1}
+                class:has-custom-color={Boolean(stashColor)}
+                style={stashColor ? `--stash-custom-color: ${stashColor};` : undefined}
                 disabled={saving}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -507,17 +513,18 @@
                   <IconLoading />
                 {:else if isInsideLibrary}
                   <IconBookmarkMultiple />
-                {:else if customStashes.length > 1}
-                  <div class="stash-multi-trigger">
-                    <IconBookmarkMultiple />
-                    <span class="stash-multi-badge">{customStashes.length}</span>
-                  </div>
-                {:else if singleStashInitial}
-                  <span class="grid-tile-monogram">{singleStashInitial}</span>
+                {:else if stashCount > 1}
+                  <IconBookmarkMultiple />
                 {:else if saved}
                   <IconSaved />
                 {:else}
                   <IconSave />
+                {/if}
+                {#if stashLabel}
+                  <span class="tile-action-label">{stashLabel}</span>
+                {/if}
+                {#if stashCount > 1}
+                  <span class="tile-action-count">{stashCount}</span>
                 {/if}
               </button>
             {/snippet}
@@ -562,9 +569,9 @@
   {:else if mediaUrl}
     <img class="grid-tile-media" src={mediaUrl} alt="" loading="lazy" decoding="async" />
   {:else if isLocked}
-    <div class="grid-tile-placeholder grid-tile-placeholder-locked" use:tooltip={i18n.t('feed.locked_content') || 'Locked post'}>
+    <div class="grid-tile-placeholder grid-tile-placeholder-locked" use:tooltip={i18n.t('feed.locked_content')}>
       <IconLock class="w-7 h-7 text-accent opacity-70" />
-      <span class="text-xs text-secondary font-medium">{i18n.t('feed.locked') || 'Locked'}</span>
+      <span class="text-xs text-secondary font-medium">{i18n.t('feed.locked')}</span>
     </div>
   {:else if isTextOnly}
     <div class="grid-tile-placeholder grid-tile-placeholder-text">
@@ -578,9 +585,10 @@
   {/if}
 
   <div class="grid-tile-shade"></div>
-  <h2 class="grid-tile-title">{cleanPostTitle(effectivePost.title) || i18n.t('feed.untitled')}</h2>
 
   <div class="grid-tile-footer">
+    <h2 class="grid-tile-title">{cleanPostTitle(effectivePost.title) || i18n.t('feed.untitled')}</h2>
+
     <div class="grid-tile-author">
       <button
         type="button"
@@ -602,6 +610,27 @@
         >
           {creatorName}
         </span>
+
+        {#if creatorFavorited || creatorSubscribed}
+          <span class="grid-tile-author-marks">
+            {#if creatorFavorited}
+              <span
+                class="grid-tile-author-mark is-favorite"
+                use:tooltip={i18n.t('feed.creator_favorited')}
+              >
+                <IconHeart />
+              </span>
+            {/if}
+            {#if creatorSubscribed}
+              <span
+                class="grid-tile-author-mark is-subscribed"
+                use:tooltip={i18n.t('feed.creator_subscribed')}
+              >
+                <IconPersonSubscribed />
+              </span>
+            {/if}
+          </span>
+        {/if}
       {/if}
     </div>
 
@@ -610,13 +639,13 @@
       {#if !isLite}
         <div class="grid-tile-meta-stats">
           {#if isLocked}
-            <span class="grid-tile-meta-row text-accent" use:tooltip={i18n.t('feed.locked_content') || 'Locked post'}>
-              <IconLock class="w-3.5 h-3.5" /> {lockedCount || 1}
+            <span class="grid-tile-meta-row is-locked" use:tooltip={i18n.t('feed.locked_content')}>
+              <IconLock /> {lockedCount || 1}
             </span>
           {/if}
           {#if post.favorite_count !== undefined && post.favorite_count > 0}
             <span class="grid-tile-meta-row">
-              <IconHeart class={isFavorited ? 'text-rose-500' : ''} /> {post.favorite_count}
+              <IconHeart class={isFavorited ? 'is-favorited' : ''} /> {post.favorite_count}
             </span>
           {/if}
         </div>
@@ -629,6 +658,12 @@
   :global(.card-stash-select) {
     width: auto !important;
     max-width: none !important;
+    min-width: 0 !important;
+    flex-shrink: 1 !important;
+  }
+
+  :global(.card-stash-select .select-custom-trigger) {
+    min-width: 0;
   }
 
   :global(.grid-tile-blur-placeholder) {
@@ -656,7 +691,7 @@
   .grid-tile-text-snippet p {
     font-size: 0.76rem;
     line-height: 1.35;
-    color: rgba(255, 255, 255, 0.65);
+    color: var(--text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 6;
     line-clamp: 6;

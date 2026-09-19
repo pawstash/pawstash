@@ -20,10 +20,9 @@
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
-  import { toast } from 'svelte-sonner';
   import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
   import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
-  import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
+  import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
@@ -95,6 +94,7 @@
   import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
 
   interface PostEmbed {
     url?: string;
@@ -129,7 +129,7 @@
       }));
     }
     return [
-      { value: 'auto', label: i18n.t('post.source_auto') || 'Merged' },
+      { value: 'auto', label: i18n.t('post.source_auto') },
       ...candidateProviders.map((p) => ({
         value: p.id,
         label: formatProviderName(p.name)
@@ -284,10 +284,10 @@
   }
 
   let leftPostTitle = $derived(
-    extractAdjacentTitle(olderPost, i18n.t('post.previous') || 'Previous')
+    extractAdjacentTitle(olderPost, i18n.t('post.previous'))
   );
   let rightPostTitle = $derived(
-    extractAdjacentTitle(newerPost, i18n.t('post.next') || 'Next')
+    extractAdjacentTitle(newerPost, i18n.t('post.next'))
   );
   
   let richContent = $derived(post?.content || post?.substring || '');
@@ -313,7 +313,7 @@
 
   let revisionSelectOptions = $derived.by(() => {
     return [
-      { value: 'latest', label: `${i18n.t('post.revision_current') || 'Latest'} [current]` },
+      { value: 'latest', label: `${i18n.t('post.revision_current')} [current]` },
       ...filteredRevisions.map((rev, idx) => {
         const revPost = (rev as any).post || rev;
         const revDate = revPost.edited || revPost.added || revPost.published;
@@ -519,9 +519,9 @@
         logger.error(`Failed to queue download for "${node.name}"`, err);
       }
     }
-    toast.success(
-      i18n.t('feed.download_started') || 'Download started',
-      { description: `${started} ${started === 1 ? 'file' : 'files'} added to queue` }
+    notify.success(
+      i18n.t('feed.download_started'),
+      { description: `${started} ${started === 1 ? 'file' : 'files'} added to queue`, glyph: 'download' }
     );
   }
 
@@ -1048,7 +1048,7 @@
     if (mediaCounts.cloud > 0) {
       opts.push({
         value: 'cloud',
-        label: i18n.t('post.tab_cloud') || 'Cloud Files',
+        label: i18n.t('post.tab_cloud'),
         icon: IconCloud,
         count: mediaCounts.cloud
       });
@@ -1056,7 +1056,7 @@
     if (mediaCounts.downloaded > 0) {
       opts.push({
         value: 'downloaded',
-        label: i18n.t('post.tab_downloaded') || 'Downloaded',
+        label: i18n.t('post.tab_downloaded'),
         icon: IconArrowDownload,
         count: mediaCounts.downloaded
       });
@@ -1428,7 +1428,7 @@
   let saved = $derived(post ? libraryState.isSaved(post) : false);
   let saving = $derived(post ? libraryState.isPending(post) : false);
   let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  const stashOptions = $derived(libraryState.stashOptions);
   let postStashes = $derived(post ? libraryState.getPostStashes(post) : []);
   let customStashes = $derived(post ? libraryState.getCustomPostStashes(post) : []);
   let customStashNames = $derived(
@@ -1439,15 +1439,15 @@
   );
   let libraryButtonLabel = $derived.by(() => {
     if (!saved && postStashes.length === 0) {
-      return i18n.t('library.save') || 'Save to library';
+      return i18n.t('library.save');
     }
     if (customStashNames.length === 1) {
       return customStashNames[0];
     }
     if (customStashNames.length > 1) {
-      return i18n.t('library.in_stashes_count', { count: customStashes.length }) || `${customStashes.length} stashes`;
+      return i18n.t('library.in_stashes_count', { count: customStashes.length });
     }
-    return i18n.t('library.saved') || 'Saved';
+    return i18n.t('library.saved');
   });
   let authenticated = $derived(accountState.session.authenticated);
 
@@ -1519,7 +1519,7 @@
         !richContent.includes('<img') &&
         !richContent.includes('<video')
       ) {
-        return i18n.t('post.files_exceed_limit_warning', { details: '' }) || 'Some files exceed the archive size limit and were not saved.';
+        return i18n.t('post.files_exceed_limit_warning', { details: '' });
       }
       return '';
     }
@@ -1529,13 +1529,12 @@
     const otherCount = deferredAttachments.length - videoCount - photoCount;
 
     const parts: string[] = [];
-    if (videoCount > 0) parts.push(`${videoCount} ${i18n.t('post.video_count', { count: videoCount }) || (videoCount === 1 ? 'video' : 'videos')}`);
-    if (photoCount > 0) parts.push(`${photoCount} ${i18n.t('post.photo_count', { count: photoCount }) || (photoCount === 1 ? 'image' : 'images')}`);
-    if (otherCount > 0) parts.push(`${otherCount} ${i18n.t('post.file_count', { count: otherCount }) || (otherCount === 1 ? 'file' : 'files')}`);
-    const details = parts.join(', ') || `${deferredAttachments.length} ${i18n.t('post.file_count', { count: deferredAttachments.length }) || 'files'}`;
+    if (videoCount > 0) parts.push(`${videoCount} ${i18n.t('post.video_count', { count: videoCount })}`);
+    if (photoCount > 0) parts.push(`${photoCount} ${i18n.t('post.photo_count', { count: photoCount })}`);
+    if (otherCount > 0) parts.push(`${otherCount} ${i18n.t('post.file_count', { count: otherCount })}`);
+    const details = parts.join(', ') || `${deferredAttachments.length} ${i18n.t('post.file_count', { count: deferredAttachments.length })}`;
 
-    return i18n.t('post.files_exceed_limit_warning', { details }) ||
-      `Some files exceed the archive size limit and weren't saved: ${details}. Please note these limits are in place to keep this site running long term, without costing a fortune. You can favorite the creator though, certain milestones increase the limit.`;
+    return i18n.t('post.files_exceed_limit_warning', { details });
   });
 
   let lastLoadedPostKey = '';
@@ -1661,33 +1660,12 @@
     return '';
   });
 
-  function getAverageColor(url: string): Promise<string> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      let effectiveUrl = url;
-      const port = serverPortState.port || 0;
-      if (port > 0 && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
-        effectiveUrl = serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(url)}`);
-      }
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 1;
-          canvas.height = 1;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return resolve('');
-          ctx.drawImage(img, 0, 0, 1, 1);
-          const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-          resolve(`rgb(${r}, ${g}, ${b})`);
-        } catch (e) {
-          logger.warn('Canvas color extraction failed', e);
-          resolve('');
-        }
-      };
-      img.onerror = () => resolve('');
-      img.src = effectiveUrl;
-    });
+  function proxiedForSeed(url: string): string {
+    const port = serverPortState.port || 0;
+    if (port > 0 && (url.startsWith('http://') || url.startsWith('https://')) && !url.includes('127.0.0.1')) {
+      return serverPortState.mediaUrl(`/cloud_stream/proxy?url=${encodeURIComponent(url)}`);
+    }
+    return url;
   }
 
   $effect(() => {
@@ -1696,14 +1674,14 @@
     let cancelled = false;
     const cachedAccent = contentState.getPostAccent(service, creatorId, postId);
     const postThumbhash = (post as any)?.preview_thumbhash || (post.extra as any)?.preview_thumbhash || (post.file as any)?.extra?.thumbhash;
-    const thumbColor = cachedAccent || thumbHashToAverageColor(postThumbhash);
+    const thumbColor = cachedAccent || seedFromThumbHash(postThumbhash);
 
     if (thumbColor) {
       themeState.setOverrideAccent(thumbColor);
     }
 
-    if (!cachedAccent && !thumbColor && heroImageUrl) {
-      void getAverageColor(heroImageUrl).then((color) => {
+    if (!cachedAccent && heroImageUrl) {
+      void seedFromImageUrl(proxiedForSeed(heroImageUrl)).then((color) => {
         if (!color || cancelled) return;
         contentState.setPostAccent(service, creatorId, postId, color);
         themeState.setOverrideAccent(color);
@@ -1733,9 +1711,13 @@
       await apiSetPostFavorite(service, creatorId, postId, targetState);
       isFavorited = targetState;
       if (!authenticated) {
-        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
+        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'), {
+          glyph: targetState ? 'favorited' : 'unfavorited'
+        });
       } else {
-        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'));
+        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), {
+          glyph: targetState ? 'favorited' : 'unfavorited'
+        });
       }
       if (targetState) {
         accountState.addPostFavoriteOptimistic(post);
@@ -1876,7 +1858,7 @@
     const filename = item.filename;
     try {
       await downloadState.remove(item.id);
-      notify.success(i18n.t('post.download_deleted'), filename);
+      notify.success(i18n.t('post.download_deleted'), { description: filename, glyph: 'deleted' });
     } catch (error) {
       notify.error(i18n.t('post.download_delete_failed'), error);
     } finally {
@@ -1920,7 +1902,7 @@
       const targetName = file.name || `${postId}_${index + 1}`;
       const targetUrl = resolveAttachmentDownloadUrl(file);
       await downloadState.start(post, file.path, targetUrl, targetName);
-      notify.success(i18n.t('feed.download_started'), targetName);
+      notify.success(i18n.t('feed.download_started'), { description: targetName, glyph: 'download' });
     } catch (error) {
       notify.error(i18n.t('feed.download_failed'), error);
     }
@@ -1930,7 +1912,7 @@
     try {
       await apiShowInFolder(item.final_path);
     } catch (error) {
-      notify.error(i18n.t('downloads.show_in_folder_failed') || 'Failed to reveal file', error);
+      notify.error(i18n.t('downloads.show_in_folder_failed'), error);
     }
   }
 
@@ -1943,7 +1925,7 @@
       try {
         await apiShowInFolder(folder);
       } catch (error) {
-        notify.error(i18n.t('downloads.open_folder_failed') || 'Failed to open folder', error);
+        notify.error(i18n.t('downloads.open_folder_failed'), error);
       }
     }
   }
@@ -2001,7 +1983,7 @@
       if (collection?.kind === 'inbox') {
         if (isCurrentlyIn) {
           await libraryState.remove(post);
-          notify.success(i18n.t('library.removed'), post.title || undefined);
+          notify.success(i18n.t('library.removed'), { description: post.title || undefined, glyph: 'removed' });
         } else {
           await libraryState.save(post, collectionId);
           notify.success(i18n.t('library.saved'), post.title || undefined);
@@ -2009,14 +1991,14 @@
       } else {
         if (isCurrentlyIn) {
           await libraryState.removeFromStash(collectionId, post);
-          notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash', post.title || undefined);
+          notifyRemovedFromStash(collectionId, [post]);
         } else {
           await libraryState.save(post, collectionId);
-          notify.success(i18n.t('library.added_to_stash') || 'Added to stash', post.title || undefined);
+          notifyAddedToStash(collectionId, post.title || undefined);
         }
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -2025,9 +2007,9 @@
     try {
       const newStash = await libraryState.createStash(name.trim());
       await libraryState.save(post, newStash.id);
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -2182,7 +2164,7 @@
         title={i18n.t('downloads.resume')}
       >
         {#if hasProgress}<span class="attachment-progress-fill opacity-50" style:width={`${progress}%`}></span>{/if}
-        <span class="attachment-button-state downloading-state text-[var(--warning,#fbbf24)]">
+        <span class="attachment-button-state downloading-state text-[var(--status-warning)]">
           <IconPause />
           <span>{i18n.t('downloads.status_paused')}{hasProgress ? ` · ${progress}%` : ''}</span>
         </span>
@@ -2212,7 +2194,7 @@
         onclick={() => void downloadState.retry(job.id)}
         title={i18n.t('downloads.retry')}
       >
-        <span class="attachment-button-state text-[var(--danger,#ff626d)]">
+        <span class="attachment-button-state text-[var(--status-error)]">
           <IconArrowClockwise />
           <span>{i18n.t('downloads.retry')}{declaredSize ? ` · ${declaredSize}` : ''}</span>
         </span>
@@ -2279,8 +2261,8 @@
             variant="ghost"
             onclick={() => navigationState.openCreator(service, creatorId)}
             class="sticky-creator-btn action-btn"
-            title={`${i18n.t('feed.open_creator') || 'Creator'}: ${creatorName}`}
-            aria-label="Creator"
+            title={`${i18n.t('feed.open_creator')}: ${creatorName}`}
+            aria-label={`${i18n.t('feed.open_creator')}: ${creatorName}`}
           >
             {#if creatorAvatar && !creatorAvatarFailed}
               <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
@@ -2319,6 +2301,7 @@
                 closeOnChange={false}
                 icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
                 disabled={saving}
+                align="right"
               />
             </div>
           {:else}
@@ -2352,6 +2335,7 @@
                 icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
                 disabled={saving}
                 ariaLabel={libraryButtonLabel}
+                align="right"
               />
             </div>
 
@@ -2359,8 +2343,8 @@
               variant="ghost"
               class="btn-icon action-btn"
               onclick={() => (mobileMoreOpen = true)}
-              title={i18n.t('common.more') || 'More'}
-              aria-label="More actions"
+              title={i18n.t('common.more')}
+              aria-label={i18n.t('common.more')}
             >
               <IconMoreVertical class="w-5 h-5" />
             </Button>
@@ -2431,6 +2415,7 @@
                 icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
                 disabled={saving}
                 class="stash-select"
+                align="right"
               />
             </div>
           {/if}
@@ -2452,8 +2437,8 @@
               variant="ghost"
               onclick={() => navigationState.openCreator(service, creatorId)}
               class="action-btn creator-btn"
-              title={`${i18n.t('feed.open_creator') || 'Creator'}: ${creatorName}`}
-              aria-label="Creator"
+              title={`${i18n.t('feed.open_creator')}: ${creatorName}`}
+              aria-label={`${i18n.t('feed.open_creator')}: ${creatorName}`}
             >
               {#if creatorAvatar && !creatorAvatarFailed}
                 <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
@@ -2498,6 +2483,7 @@
                 disabled={saving}
                 class="stash-select"
                 ariaLabel={libraryButtonLabel}
+                align="right"
               />
             </div>
 
@@ -2505,8 +2491,8 @@
               variant="ghost"
               class="action-btn btn-icon"
               onclick={() => (mobileMoreOpen = true)}
-              title={i18n.t('common.more') || 'More'}
-              aria-label="More options"
+              title={i18n.t('common.more')}
+              aria-label={i18n.t('common.more')}
             >
               <IconMoreVertical class="w-5 h-5" />
             </Button>
@@ -2533,7 +2519,7 @@
               {#if showEdited}
                 <span class="text-[var(--fg-subtle)]">·</span>
                 <div class="flex items-center gap-1.5 shrink-0">
-                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at') || 'Edited'}:</span>
+                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at')}:</span>
                   <strong class="font-medium text-[var(--fg-default)]">{editedDateStr}</strong>
                 </div>
               {/if}
@@ -2552,7 +2538,7 @@
             <Button
               variant="ghost"
               onclick={openOriginalPost}
-              tooltip={`${i18n.t('post.open_original_post') || 'Open original post'}: ${service}`}
+              tooltip={`${i18n.t('post.open_original_post')}: ${service}`}
               aria-label={`Open on ${service}`}
             >
               <ServiceIcon {service} class="w-4 h-4" />
@@ -2566,7 +2552,7 @@
                   <Button
                     variant="ghost"
                     onclick={() => openInProvider(prov.id)}
-                    tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
+                    tooltip={`${i18n.t('post.open_in_provider')}: ${formatProviderName(prov.name || prov.id)}`}
                     aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
                   >
                     <IconOpen class="w-4 h-4" />
@@ -2578,7 +2564,7 @@
                 <Button
                   variant="ghost"
                   onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
-                  tooltip={`${i18n.t('post.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+                  tooltip={`${i18n.t('post.open_in_provider')}: ${currentProviderName}`}
                   aria-label={`Open in ${currentProviderName}`}
                 >
                   <IconOpen class="w-4 h-4" />
@@ -2591,7 +2577,7 @@
             <Button
               variant="ghost"
               onclick={copyPostId}
-              tooltip={i18n.t('post.copy_id') || 'Copy ID'}
+              tooltip={i18n.t('post.copy_id')}
             >
               <span class="font-mono text-[var(--fg-subtle)]">#{postId}</span>
               {#if copiedPostId}
@@ -2671,7 +2657,7 @@
                   bind:searchOpen={mediaSearchOpen}
                   bind:searchQuery={mediaSearchQuery}
                   showSearchButton={media.length >= 20 || Boolean(mediaSearchQuery)}
-                  searchPlaceholder={i18n.t('post.search_media') || 'Search media...'}
+                  searchPlaceholder={i18n.t('post.search_media')}
                   onsearchtoggle={(open) => {
                     if (!open) closeMediaSearch();
                   }}
@@ -2680,18 +2666,19 @@
                     <div class="media-sort-selector">
                       <Select
                         options={[
-                          { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
-                          { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') || 'Name (A-Z)' },
-                          { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') || 'Name (Z-A)' },
-                          { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') || 'Size (Largest)' },
-                          { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') || 'Size (Smallest)' }
+                          { value: 'default', label: i18n.t('post.media_sort_default') },
+                          { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') },
+                          { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') },
+                          { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') },
+                          { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') }
                         ]}
                         value={mediaSort}
                         onchange={(val) => mediaSort = val as any}
                         variant="ghost"
                         icon={IconArrowSort}
                         iconOnly={layoutState.isMobile}
-                        ariaLabel={i18n.t('favorites.sort_by') || 'Sort'}
+                        ariaLabel={i18n.t('favorites.sort_by')}
+                        align="right"
                       />
                     </div>
                   {/if}
@@ -2725,7 +2712,7 @@
                         aria-label={postEmbed.subject || (linkedPostId ? `Post #${linkedPostId}` : 'Linked Post')}
                       >
                         <IconDocument class="placeholder-icon text-[var(--accent)]" />
-                        <p class="placeholder-text font-medium">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Open Post #${linkedPostId}` : i18n.t('post.linked_post') || 'Linked Post')}</p>
+                        <p class="placeholder-text font-medium">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Open Post #${linkedPostId}` : i18n.t('post.linked_post'))}</p>
                       </button>
 
                       <div class="media-download-group">
@@ -2739,11 +2726,11 @@
                             }
                           }}
                           class="media-download-btn is-embed-btn"
-                          title={i18n.t('post.open_linked_post') || 'Open Post'}
+                          title={i18n.t('post.open_linked_post')}
                         >
                           <span class="attachment-button-state">
                             <IconDocument class="w-[16px] h-[16px]" />
-                            <span>{i18n.t('post.open_linked_post') || (linkedPostId ? `Post #${linkedPostId}` : 'Open Post')}</span>
+                            <span>{i18n.t('post.open_linked_post')}</span>
                           </span>
                         </Button>
                       </div>
@@ -2846,19 +2833,19 @@
                           variant="ghost"
                           class="media-download-btn"
                           onclick={() => openCloudFolderModal(fRes, fNodeId)}
-                          title={i18n.t('post.browse_folder') || 'Browse Folder'}
+                          title={i18n.t('post.browse_folder')}
                         >
                           <span class="attachment-button-state">
                             <IconFolder class="w-[16px] h-[16px]" />
-                            <span>{i18n.t('post.browse_folder') || 'Browse Folder'}</span>
+                            <span>{i18n.t('post.browse_folder')}</span>
                           </span>
                         </Button>
                         <Button
                           variant="ghost"
                           class="media-action-icon-btn"
                           onclick={() => downloadCloudSubfolder(fRes, fNodeId)}
-                          tooltip={i18n.t('post.download') || 'Download'}
-                          aria-label={i18n.t('post.download') || 'Download'}
+                          tooltip={i18n.t('post.download')}
+                          aria-label={i18n.t('post.download')}
                         >
                           <IconDownload class="w-[18px] h-[18px]" />
                         </Button>
@@ -2914,7 +2901,7 @@
                               <p class="placeholder-subtext">{i18n.t('post.unsupported_format_hint')}</p>
                             {/if}
                           {:else if failure?.preset === 'forbidden' || failure?.httpStatus === 403}
-                            <p class="placeholder-text text-[var(--warning,#fbbf24)]">{i18n.t('post.error_forbidden') || 'HTTP 403 Forbidden'}</p>
+                            <p class="placeholder-text text-[var(--status-warning)]">{i18n.t('post.error_forbidden')}</p>
                             <p class="placeholder-subtext">{i18n.t('post.error_forbidden_hint')}</p>
                             <Button
                               variant="ghost"
@@ -2925,13 +2912,13 @@
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                              <span>{i18n.t('downloads.retry')}</span>
                             </Button>
                           {:else if failure?.preset === 'not_found' || failure?.httpStatus === 404}
-                            <p class="placeholder-text text-red-400">{i18n.t('post.error_not_found') || 'HTTP 404 Not Found'}</p>
+                            <p class="placeholder-text text-[var(--status-error)]">{i18n.t('post.error_not_found')}</p>
                             <p class="placeholder-subtext">{i18n.t('post.error_not_found_hint')}</p>
                           {:else if failure?.preset === 'rate_limited' || failure?.httpStatus === 429}
-                            <p class="placeholder-text text-[var(--warning,#fbbf24)]">{i18n.t('post.error_rate_limited') || 'HTTP 429 Rate Limited'}</p>
+                            <p class="placeholder-text text-[var(--status-warning)]">{i18n.t('post.error_rate_limited')}</p>
                             <p class="placeholder-subtext">{i18n.t('post.error_rate_limited_hint')}</p>
                             <Button
                               variant="ghost"
@@ -2942,7 +2929,7 @@
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                              <span>{i18n.t('downloads.retry')}</span>
                             </Button>
                           {:else if failure?.preset === 'server_error' || (failure?.httpStatus && failure.httpStatus >= 500)}
                             <p class="placeholder-text text-red-400">{failure.message || i18n.t('post.error_server')}</p>
@@ -2956,7 +2943,7 @@
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                              <span>{i18n.t('downloads.retry')}</span>
                             </Button>
                           {:else if failure?.preset === 'network'}
                             <p class="placeholder-text">{i18n.t('post.network_stream_error')}</p>
@@ -2969,7 +2956,7 @@
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                              <span>{i18n.t('downloads.retry') || 'Retry'}</span>
+                              <span>{i18n.t('downloads.retry')}</span>
                             </Button>
                           {:else if failure?.preset === 'decode'}
                             <p class="placeholder-text">{i18n.t('post.decode_error')}</p>
@@ -2991,7 +2978,7 @@
                           {:else if failure?.preset === 'unavailable'}
                             <p class="placeholder-text">{i18n.t('post.cloud_file_unavailable')}</p>
                           {:else}
-                            <p class="placeholder-text">{failure?.message || i18n.t('post.video_load_failed') || 'Failed to play video'}</p>
+                            <p class="placeholder-text">{failure?.message || i18n.t('post.video_load_failed')}</p>
                           {/if}
                         </div>
                       {:else}
@@ -3020,7 +3007,7 @@
                               onclick={() => {
                                 activeVideoIndexes = new Set(activeVideoIndexes).add(index);
                               }}
-                              aria-label="Play video"
+                              aria-label={i18n.t('post.play_video')}
                             >
                               <img
                                 src={thumbUrl}
@@ -3030,7 +3017,7 @@
                               />
                               <div class="video-play-overlay">
                                 <div class="play-btn-circle">
-                                  <IconPlayFilled class="w-6 h-6 ml-0.5 text-white" />
+                                  <IconPlayFilled class="w-6 h-6 ml-0.5 text-ink" />
                                 </div>
                               </div>
                             </button>
@@ -3041,10 +3028,10 @@
                               onclick={() => {
                                 activeVideoIndexes = new Set(activeVideoIndexes).add(index);
                               }}
-                              aria-label="Play video"
+                              aria-label={i18n.t('post.play_video')}
                             >
                               <div class="play-btn-circle">
-                                <IconPlayFilled class="w-6 h-6 ml-0.5 text-white" />
+                                <IconPlayFilled class="w-6 h-6 ml-0.5 text-ink" />
                               </div>
                               <p class="placeholder-text">{getFileExtension(file?.name).toUpperCase() || 'VIDEO'}</p>
                             </button>
@@ -3113,10 +3100,10 @@
                           onclick={() => {
                             activeAudioIndexes = new Set(activeAudioIndexes).add(index);
                           }}
-                          aria-label="Play audio"
+                          aria-label={i18n.t('post.play_audio')}
                         >
                           <div class="play-btn-circle">
-                            <IconMusicFilled class="w-6 h-6 text-white" />
+                            <IconMusicFilled class="w-6 h-6 text-ink" />
                           </div>
                           <p class="placeholder-text">{ext}</p>
                         </button>
@@ -3188,8 +3175,8 @@
           {:else if mediaSearchQuery.trim()}
             <div class="media-search-empty">
               <IconSearch class="media-search-empty-icon" />
-              <p class="media-search-empty-title">{i18n.t('post.no_media_found') || 'No media found'}</p>
-              <p class="media-search-empty-desc">{i18n.t('post.no_media_found_desc') || 'No attachments match your search query.'}</p>
+              <p class="media-search-empty-title">{i18n.t('post.no_media_found')}</p>
+              <p class="media-search-empty-desc">{i18n.t('post.no_media_found_desc')}</p>
             </div>
           {/if}
         </div>
@@ -3297,7 +3284,7 @@
               disabled={!effectiveOlderId}
               onclick={() => effectiveOlderId && navigationState.openPost(service, creatorId, effectiveOlderId)}
               class="footer-nav-btn"
-              title={i18n.t('post.previous') || 'Previous'}
+              title={i18n.t('post.previous')}
             >
               <IconChevronLeft class="w-[18px] h-[18px]" />
               <span>{leftPostTitle}</span>
@@ -3310,7 +3297,7 @@
               disabled={!effectiveNewerId}
               onclick={() => effectiveNewerId && navigationState.openPost(service, creatorId, effectiveNewerId)}
               class="footer-nav-btn"
-              title={i18n.t('post.next') || 'Next'}
+              title={i18n.t('post.next')}
             >
               <span>{rightPostTitle}</span>
               <IconChevronRight class="w-[18px] h-[18px]" />
@@ -3327,12 +3314,12 @@
                 {comment.commenter_name || comment.commenter}
               </span>
               {#if comment.commenter === creatorId}
-                <span class="creator-badge">{i18n.t('post.creator_badge') || 'Creator'}</span>
+                <span class="creator-badge">{i18n.t('post.creator_badge')}</span>
               {/if}
               <span class="comment-date">{formatDate(comment.published)}</span>
               {#if comment.revisions && comment.revisions.length > 0}
                 <span class="comment-edited" title={comment.revisions.map(r => `${formatDate(r.added)}: ${r.content}`).join('\n')}>
-                  ({i18n.t('post.edited') || 'edited'})
+                  ({i18n.t('post.edited')})
                 </span>
               {/if}
             </div>
@@ -3363,12 +3350,13 @@
             <div class="comments-sort-selector">
               <Select
                 options={[
-                  { value: 'newest', label: i18n.t('post.sort_newest') || 'Newest' },
-                  { value: 'oldest', label: i18n.t('post.sort_oldest') || 'Oldest' }
+                  { value: 'newest', label: i18n.t('post.sort_newest') },
+                  { value: 'oldest', label: i18n.t('post.sort_oldest') }
                 ]}
                 value={commentsSort}
                 onchange={(val) => commentsSort = val as 'newest' | 'oldest'}
                 variant="ghost"
+                align="right"
               />
             </div>
           {/if}
@@ -3404,7 +3392,7 @@
                   }}
                 >
                   <IconChevronDown class="w-[16px] h-[16px]" />
-                  <span>{i18n.t('post.expand_comments') || 'Show All Comments'}</span>
+                  <span>{i18n.t('post.expand_comments')}</span>
                 </Button>
               </div>
             {:else if isCommentsOverflowing && commentsExpanded}
@@ -3415,7 +3403,7 @@
                   class="comments-collapse-btn"
                 >
                   <IconChevronUp class="w-[16px] h-[16px]" />
-                  <span>{i18n.t('post.collapse_comments') || 'Collapse Comments'}</span>
+                  <span>{i18n.t('post.collapse_comments')}</span>
                 </Button>
               </div>
             {/if}
@@ -3425,16 +3413,16 @@
       {:else if entry.loading || !entry.loaded}
         <div class="detail-loading py-16 flex flex-col items-center justify-center gap-3">
           <IconLoading class="w-8 h-8 text-accent" />
-          <span class="text-sm text-[var(--fg-muted)]">{i18n.t('feed.loading') || 'Loading post...'}</span>
+          <span class="text-sm text-[var(--fg-muted)]">{i18n.t('feed.loading')}</span>
         </div>
       {:else}
         <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
           <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
           <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-            {i18n.t('post.not_found_on_provider', { provider: currentProviderName }) || `Post not found on ${currentProviderName}`}
+            {i18n.t('post.not_found_on_provider', { provider: currentProviderName })}
           </h2>
           <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
-            {i18n.t('post.not_found_on_provider_desc', { provider: currentProviderName }) || `This post does not exist on ${currentProviderName}. You can switch to Merged view or select another provider.`}
+            {i18n.t('post.not_found_on_provider_desc', { provider: currentProviderName })}
           </p>
           {#if candidateProviders.length > 1}
             <Button
@@ -3442,7 +3430,7 @@
               onclick={() => onProviderChange('auto')}
             >
               <IconSparkle class="w-4 h-4 mr-1.5" />
-              <span>{i18n.t('post.switch_to_merged') || 'Switch to Merged'}</span>
+              <span>{i18n.t('post.switch_to_merged')}</span>
             </Button>
           {/if}
         </div>
@@ -3481,7 +3469,7 @@
 {#if layoutState.isMobile && post}
   <BottomSheet
     open={mobileMoreOpen}
-    title={cleanPostTitle(post.title) || i18n.t('common.more') || 'More'}
+    title={cleanPostTitle(post.title) || i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -3496,7 +3484,7 @@
       >
         <ServiceIcon {service} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.open_original_post') || 'Open original post'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('post.open_original_post')}</span>
           <span class="text-xs text-muted capitalize">{service}</span>
         </div>
       </button>
@@ -3514,7 +3502,7 @@
           >
             <IconOpen class="text-secondary" />
             <div class="flex flex-col min-w-0">
-              <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
+              <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider')}</span>
               <span class="text-xs text-muted">{formatProviderName(prov.name || prov.id)}</span>
             </div>
           </button>
@@ -3531,7 +3519,7 @@
         >
           <IconOpen class="text-secondary" />
           <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider') || 'Open in provider'}</span>
+            <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider')}</span>
             <span class="text-xs text-muted">{currentProviderName}</span>
           </div>
         </button>
@@ -3543,7 +3531,7 @@
         use:ripple
         onclick={() => {
           copyPostLink();
-          toast.success(i18n.t('post.link_copied') || 'Link copied to clipboard');
+          notify.success(i18n.t('post.link_copied'), { glyph: 'copied' });
           mobileMoreOpen = false;
         }}
       >
@@ -3559,13 +3547,13 @@
         use:ripple
         onclick={() => {
           copyPostId();
-          toast.success(i18n.t('common.copied') || 'Copied to clipboard');
+          notify.success(i18n.t('common.copied'), { glyph: 'copied' });
           mobileMoreOpen = false;
         }}
       >
         <IconDocument class="text-secondary" />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.copy_id') || 'Copy post ID'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('post.copy_id')}</span>
           <span class="text-xs font-mono text-muted">{postId}</span>
         </div>
       </button>
@@ -3758,7 +3746,7 @@
     flex: none;
     overflow: hidden;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--surface-tint-rgb), 0.1);
   }
 
   .post-creator-avatar img {
@@ -3827,7 +3815,7 @@
 
   h1 {
     margin: 0;
-    color: white;
+    color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: clamp(28px, 4.5vw, 42px);
     font-weight: var(--font-weight-normal);
@@ -3858,11 +3846,11 @@
 
   .post-date {
     margin-top: 6px;
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-muted);
     font-size: 12px;
   }
 
-  .detail-loading { min-height: 300px; display: grid; place-items: center; color: rgba(255,255,255,.5); font-size: 13px; }
+  .detail-loading { min-height: 300px; display: grid; place-items: center; color: var(--text-secondary); font-size: 13px; }
 
   .media-controls-row {
     display: flex;
@@ -4102,7 +4090,7 @@
     background: rgba(22, 22, 28, 0.82);
     backdrop-filter: blur(16px) saturate(180%);
     -webkit-backdrop-filter: blur(16px) saturate(180%);
-    color: rgba(255, 255, 255, 0.88);
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4116,7 +4104,7 @@
 
   .media-viewer-open-btn:hover {
     background: rgba(38, 38, 46, 0.94);
-    color: #ffffff;
+    color: var(--text-primary);
     transform: scale(1.08);
     box-shadow: 0 6px 20px -2px rgba(0, 0, 0, 0.65);
   }
@@ -4175,7 +4163,7 @@
     font-weight: 600;
     padding: 2px 7px;
     border-radius: var(--radius-full, 9999px);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
     color: var(--fg-default);
     letter-spacing: 0.04em;
     flex-shrink: 0;
@@ -4228,12 +4216,12 @@
   }
 
   .file-placeholder :global(.placeholder-icon.video-play-accent) {
-    color: var(--accent-primary, #6366f1);
+    color: var(--accent-primary);
     opacity: 0.85;
   }
 
   .file-placeholder:hover :global(.placeholder-icon.video-play-accent) {
-    color: var(--accent-primary, #6366f1);
+    color: var(--accent-primary);
     opacity: 1;
     transform: scale(1.12);
   }
@@ -4275,7 +4263,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ffffff;
+    color: var(--text-primary);
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   }
 
@@ -4376,7 +4364,7 @@
   }
 
   :global(.media-action-icon-btn.is-danger:hover) {
-    color: var(--danger, #ff626d) !important;
+    color: var(--status-error) !important;
   }
 
   .attachment-button-state {
@@ -4546,7 +4534,7 @@
 
 
   .html-content {
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--text-primary);
     font-size: 14.5px;
     line-height: 1.7;
     font-family: var(--font-sans);
@@ -4562,7 +4550,7 @@
   }
 
   .html-content :global(a) {
-    color: var(--accent-primary, #ffffff);
+    color: var(--accent-primary, var(--text-primary));
     text-decoration: underline;
     text-underline-offset: 3px;
   }
@@ -4623,7 +4611,7 @@
   .comments-section {
     margin-top: 48px;
     padding-top: 32px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .comments-header-row {
@@ -4711,7 +4699,7 @@
   }
 
   .comment-author.is-creator {
-    color: var(--accent-primary, #f97316);
+    color: var(--accent-primary);
   }
 
   .creator-badge {
@@ -4721,7 +4709,7 @@
     letter-spacing: 0.05em;
     padding: 2px 6px;
     border-radius: 4px;
-    background: var(--accent-primary, rgba(249, 115, 22, 0.2));
+    background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
     color: var(--text-on-accent, white);
   }
 
@@ -4757,7 +4745,7 @@
   }
 
   .comment-body :global(a) {
-    color: var(--accent-primary, #38bdf8);
+    color: var(--accent-primary);
     text-decoration: none;
     cursor: pointer;
   }
@@ -4790,7 +4778,7 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     border-radius: 1px;
   }
 

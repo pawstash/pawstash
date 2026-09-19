@@ -1,7 +1,7 @@
 {
   "name": "pawstash",
   "private": true,
-  "version": "26.9.1-14",
+  "version": "26.9.1-15",
   "description": "A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -30,6 +30,7 @@
   "dependencies": {
     "@floating-ui/dom": "^1.6.13",
     "@iconify-json/svg-spinners": "^1.2.4",
+    "@material/material-color-utilities": "^0.4.0",
     "@panzoom/panzoom": "^4.5.9",
     "@tauri-apps/api": "^2.3.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.2.0",

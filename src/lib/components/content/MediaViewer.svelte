@@ -255,9 +255,7 @@
           invoke('store_video_thumbnail', { key, dataUrl }).catch(() => {});
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   function handleMainVideoLoaded(event: Event) {
@@ -585,7 +583,6 @@
     pointers.set(event.pointerId, { ...previous, x: event.clientX, y: event.clientY });
     const after = [...pointers.values()];
 
-    // Multi-touch pinch-to-zoom
     if (after.length >= 2 && current?.kind === 'image') {
       const [oldA, oldB] = before;
       const [newA, newB] = after;
@@ -622,7 +619,6 @@
       }
 
       if (dismissOffsetY === 0 && items.length > 1) {
-        // Allow horizontal swipe drag
         if (Math.abs(totalDeltaX) > 4 || Math.abs(swipeOffset) > 0) {
           isSwiping = true;
           slidePhase = 'idle';
@@ -678,7 +674,6 @@
       if (isSwipe) {
         transitionSlide(deltaX < 0 ? 1 : -1);
       } else {
-        // Snap back to center
         isSwiping = false;
         swipeOffset = 0;
         swipeOpacity = 1;
@@ -944,11 +939,11 @@
             class="viewer-file-state"
             style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
-            <IconVideoOff class="w-12 h-12 text-white/50 mb-2" />
-            <strong class="text-white text-base font-semibold">{current.name}</strong>
+            <IconVideoOff class="w-12 h-12 text-ink/50 mb-2" />
+            <strong class="text-ink text-base font-semibold">{current.name}</strong>
             {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
             {#if failure.preset === 'unsupported_format'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">
                 {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(current.name) })}
               </p>
               {#if currentDownloaded && current?.downloadedPath}
@@ -957,10 +952,10 @@
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
               {:else}
-                <p class="text-white/50 text-xs mt-1">{i18n.t('post.unsupported_format_hint')}</p>
+                <p class="text-ink/50 text-xs mt-1">{i18n.t('post.unsupported_format_hint')}</p>
               {/if}
             {:else if failure.preset === 'unsupported_codec'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
               {#if currentDownloaded && current?.downloadedPath}
                 <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
@@ -968,11 +963,11 @@
                 </Button>
               {/if}
             {:else if failure.preset === 'network'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.network_stream_error')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.network_stream_error')}</p>
             {:else if failure.preset === 'decode'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.decode_error')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.decode_error')}</p>
               {#if failure.message}
-                <p class="text-white/50 font-mono text-xs mt-1">{failure.message}</p>
+                <p class="text-ink/50 font-mono text-xs mt-1">{failure.message}</p>
               {/if}
               {#if currentDownloaded && current?.downloadedPath}
                 <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
@@ -981,23 +976,23 @@
                 </Button>
               {/if}
             {:else if failure.preset === 'forbidden' || failure.httpStatus === 403}
-              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden') || 'HTTP 403 Forbidden'}</p>
-              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
+              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden')}</p>
+              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
             {:else if failure.preset === 'not_found' || failure.httpStatus === 404}
-              <p class="text-red-400 font-medium text-base text-center mt-2">{i18n.t('post.error_not_found') || 'HTTP 404 Not Found'}</p>
-              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
+              <p class="text-red-400 font-medium text-base text-center mt-2">{i18n.t('post.error_not_found')}</p>
+              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
             {:else if failure.preset === 'rate_limited' || failure.httpStatus === 429}
-              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited') || 'HTTP 429 Rate Limited'}</p>
-              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
+              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited')}</p>
+              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
             {:else if failure.preset === 'server_error' || (failure.httpStatus && failure.httpStatus >= 500)}
               <p class="text-red-400 font-medium text-base text-center mt-2">{failure.message || i18n.t('post.error_server')}</p>
-              <p class="text-white/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
+              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
             {:else if failure.preset === 'unarchived'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
             {:else if failure.preset === 'unavailable'}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
             {:else}
-              <p class="text-white/80 text-sm max-w-md text-center mt-2">{failure.message || i18n.t('post.video_load_failed')}</p>
+              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{failure.message || i18n.t('post.video_load_failed')}</p>
             {/if}
           </div>
         {:else if current.kind === 'video'}
@@ -1204,7 +1199,7 @@
     z-index: var(--z-viewer, 2147483000);
     overflow: hidden;
     background: rgba(0, 0, 0, 0.96);
-    color: var(--text-primary, #fff);
+    color: var(--text-primary);
     outline: none;
     animation: viewer-enter 180ms var(--ease-expo, ease-out);
     overscroll-behavior: none;
@@ -1263,7 +1258,7 @@
 
   .media-viewer-identity strong {
     overflow: hidden;
-    color: #fff;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: 650;
     line-height: 1.25;
@@ -1274,7 +1269,7 @@
   }
 
   .media-viewer-identity span {
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-secondary);
     font-size: 12px;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
     white-space: nowrap;
@@ -1302,7 +1297,7 @@
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     box-shadow: none !important;
-    color: rgba(255, 255, 255, 0.85) !important;
+    color: var(--text-primary) !important;
     transition: color 150ms ease, background 150ms ease, transform 150ms ease !important;
   }
 
@@ -1318,18 +1313,18 @@
 
   :global(.media-viewer .viewer-icon-btn:hover),
   :global(.media-viewer .viewer-reset-btn:hover) {
-    background: rgba(255, 255, 255, 0.12) !important;
-    color: #fff !important;
+    background: rgba(var(--surface-tint-rgb), 0.12) !important;
+    color: var(--text-primary) !important;
   }
 
   :global(.media-viewer .viewer-delete-btn:hover) {
-    color: var(--color-danger, #ef4444) !important;
-    background: rgba(239, 68, 68, 0.15) !important;
+    color: var(--status-error) !important;
+    background: color-mix(in srgb, var(--status-error) 15%, transparent) !important;
   }
 
   :global(.media-viewer .viewer-icon-btn:active),
   :global(.media-viewer .viewer-reset-btn:active) {
-    background: rgba(255, 255, 255, 0.2) !important;
+    background: rgba(var(--surface-tint-rgb), 0.2) !important;
     transform: scale(0.94) !important;
   }
 
@@ -1347,7 +1342,7 @@
     border: 0;
     border-radius: var(--radius-full);
     background: transparent;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 13px;
     font-weight: 600;
@@ -1357,8 +1352,8 @@
   }
 
   .zoom-value:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
+    background: rgba(var(--surface-tint-rgb), 0.12);
+    color: var(--text-primary);
   }
 
   .media-viewer-stage {
@@ -1455,19 +1450,19 @@
     box-shadow: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    color: rgba(255, 255, 255, 0.75) !important;
+    color: var(--text-secondary) !important;
     transform: translateY(-50%);
     transition: opacity 180ms ease, transform 180ms ease, background 150ms ease, color 150ms ease !important;
   }
 
   :global(.viewer-nav:hover) {
-    background: rgba(255, 255, 255, 0.12) !important;
-    color: #fff !important;
+    background: rgba(var(--surface-tint-rgb), 0.12) !important;
+    color: var(--text-primary) !important;
     transform: translateY(-50%) scale(1.08) !important;
   }
 
   :global(.viewer-nav:active) {
-    background: rgba(255, 255, 255, 0.2) !important;
+    background: rgba(var(--surface-tint-rgb), 0.2) !important;
     transform: translateY(-50%) scale(0.96) !important;
   }
 
@@ -1550,7 +1545,7 @@
     border: 0;
     border-radius: 6px;
     background: rgba(20, 20, 24, 0.7);
-    color: rgba(255, 255, 255, 0.65);
+    color: var(--text-secondary);
     opacity: 0.55;
     transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
     contain: layout paint;
@@ -1558,7 +1553,7 @@
 
   .filmstrip-item:hover .filmstrip-thumb {
     opacity: 0.88;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--surface-tint-rgb), 0.1);
     transform: translateY(-2px);
   }
 
@@ -1582,7 +1577,7 @@
     place-items: center;
     width: 100%;
     height: 100%;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-secondary);
     pointer-events: none;
   }
 
@@ -1603,7 +1598,7 @@
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.82);
     backdrop-filter: blur(4px);
-    color: #fff;
+    color: var(--text-primary);
     font-size: 11px;
     font-weight: 550;
     line-height: 1;
@@ -1664,7 +1659,7 @@
   .viewer-file-state > :global(svg) {
     width: 72px;
     height: 72px;
-    color: rgba(255, 255, 255, 0.28);
+    color: var(--text-muted);
   }
 
   .viewer-file-state strong {
@@ -1674,7 +1669,7 @@
     user-select: text;
   }
 
-  .viewer-file-state span { color: rgba(255, 255, 255, 0.55); font-size: 13px; }
+  .viewer-file-state span { color: var(--text-secondary); font-size: 13px; }
   .viewer-file-state audio { width: min(420px, 80vw); }
 
   :global(.media-viewer .viewer-download-icon.is-downloaded) {
@@ -1701,15 +1696,15 @@
     height: 44px !important;
     border-radius: var(--radius-full) !important;
     background: transparent !important;
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    color: #fff !important;
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.2) !important;
+    color: var(--text-primary) !important;
     box-shadow: none !important;
     transition: background 150ms ease, border-color 150ms ease !important;
   }
 
   :global(.media-viewer .viewer-download-pill:hover) {
-    background: rgba(255, 255, 255, 0.12) !important;
-    border-color: rgba(255, 255, 255, 0.35) !important;
+    background: rgba(var(--surface-tint-rgb), 0.12) !important;
+    border-color: rgba(var(--surface-tint-rgb), 0.35) !important;
   }
 
   :global(.media-viewer .viewer-download-pill.is-downloaded) {
@@ -1718,15 +1713,15 @@
   }
 
   :global(.media-viewer .viewer-ghost-action) {
-    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.25) !important;
     background: transparent !important;
-    color: #fff !important;
+    color: var(--text-primary) !important;
     box-shadow: none !important;
   }
 
   :global(.media-viewer .viewer-ghost-action:hover) {
-    background: rgba(255, 255, 255, 0.12) !important;
-    border-color: rgba(255, 255, 255, 0.4) !important;
+    background: rgba(var(--surface-tint-rgb), 0.12) !important;
+    border-color: rgba(var(--surface-tint-rgb), 0.4) !important;
   }
 
   .controls-hidden .media-viewer-topbar {

@@ -33,6 +33,27 @@ export class DownloadState {
     ).length
   );
 
+  activeProgress = $derived.by<number | null>(() => {
+    const running = this.downloads.filter((item) =>
+      ['queued', 'resolving', 'downloading', 'paused', 'verifying'].includes(item.status)
+    );
+    if (!running.length) return null;
+    let done = 0;
+    let total = 0;
+    for (const item of running) {
+      if (item.total_bytes > 0) {
+        done += Math.min(item.downloaded_bytes, item.total_bytes);
+        total += item.total_bytes;
+      }
+    }
+    if (total <= 0) return null;
+    return Math.min(1, Math.max(0, done / total));
+  });
+
+  activeIsIndeterminate = $derived(
+    this.activeDownloadsCount > 0 && this.activeProgress === null
+  );
+
   filteredDownloads = $derived.by(() => {
     if (this.filter === 'completed') {
       return this.downloads.filter((item) => item.status === 'completed');

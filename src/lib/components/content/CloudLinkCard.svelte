@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { i18n } from '$lib/i18n';
   import type { CloudFolderResult } from '$lib/types/cloud';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { formatBytes } from '$lib/utils/formatters';
@@ -118,8 +119,9 @@
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      class="flex items-center justify-center w-8 h-8 rounded-full text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-white/10 transition-colors"
-      title="Open in browser"
+      class="flex items-center justify-center w-8 h-8 rounded-full text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-veil/10 transition-colors"
+      title={i18n.t('post.open_in_browser')}
+      aria-label={i18n.t('post.open_in_browser')}
     >
       <IconOpen class="w-4 h-4" />
     </a>

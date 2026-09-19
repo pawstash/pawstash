@@ -6,6 +6,7 @@
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import IconWarning from '~icons/fluent/warning-24-filled';
 
   interface Props {
     isOpen?: boolean;
@@ -15,6 +16,7 @@
     confirmVariant?: 'accent' | 'danger' | 'primary';
     confirmIcon?: Component;
     cancelLabel?: string;
+    heroIcon?: Component;
     loading?: boolean;
     disabled?: boolean;
     onconfirm?: () => void;
@@ -32,6 +34,7 @@
     confirmVariant = 'accent',
     confirmIcon,
     cancelLabel,
+    heroIcon,
     loading = false,
     disabled = false,
     onconfirm,
@@ -40,6 +43,9 @@
     children,
     actions
   }: Props = $props();
+
+  const heroTone = $derived(confirmVariant === 'danger' ? 'danger' : 'accent');
+  const desktopHero = $derived(heroIcon ?? (confirmVariant === 'danger' ? IconWarning : undefined));
 
   function handleClose() {
     if (loading) return;
@@ -65,11 +71,11 @@
   {#if actions}
     {@render actions()}
   {:else}
-    <div class="confirm-actions">
+    <div class="dialog-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        class="justify-center"
         disabled={loading || disabled}
         onclick={handleClose}
       >
@@ -77,9 +83,10 @@
       </Button>
 
       <Button
-        variant={confirmVariant}
+        variant="ghost"
+        data-tone={confirmVariant}
         size="md"
-        class="w-full justify-center px-3"
+        class="justify-center"
         disabled={loading || disabled}
         onclick={handleConfirm}
       >
@@ -114,12 +121,18 @@
     {isOpen}
     {title}
     size="sm"
+    icon={desktopHero}
+    tone={heroTone}
+    dismissible={false}
+    borderlessFooter
     onclose={handleClose}
   >
-    <div class="modal-confirm-layout">
+    {#snippet children()}
       {@render bodyContent()}
+    {/snippet}
+    {#snippet footer()}
       {@render actionsContent()}
-    </div>
+    {/snippet}
   </Modal>
 {/if}
 
@@ -129,24 +142,11 @@
     font-size: calc(var(--text-sm, 13px) * var(--ui-scale, 1));
     line-height: var(--leading-relaxed, 1.5);
     color: var(--text-secondary);
-    padding: 0 0 calc(14px * var(--ui-scale, 1)) 0;
     box-sizing: border-box;
   }
 
   :global(.bottom-sheet) .confirm-desc {
-    padding: 0 0 calc(6px * var(--ui-scale, 1)) 0;
     font-size: calc(var(--text-sm, 14px) * var(--ui-scale, 1));
   }
 
-  .confirm-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: calc(var(--floating-gap, 6px) * var(--ui-scale, 1));
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  :global(.bottom-sheet) .confirm-actions {
-    gap: calc(10px * var(--ui-scale, 1));
-  }
 </style>

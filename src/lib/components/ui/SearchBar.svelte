@@ -30,7 +30,7 @@
   let inputEl: HTMLInputElement | undefined = $state();
 
   const effectivePlaceholder = $derived(
-    placeholder || i18n.t('feed.search_placeholder') || 'Search...'
+    placeholder || i18n.t('feed.search_placeholder')
   );
 
   export async function openSearch() {
@@ -93,7 +93,7 @@
         class="search-action-btn"
         onclick={handleClearOrClose}
         aria-label={value ? 'Clear search' : 'Close search'}
-        use:tooltip={value ? (i18n.t('feed.clear') || 'Clear') : (i18n.t('nav.close') || 'Close')}
+        use:tooltip={value ? (i18n.t('feed.clear')) : (i18n.t('nav.close'))}
       >
         <IconDismiss class="w-5 h-5" />
       </button>
@@ -128,7 +128,7 @@
         type="button"
         class="search-action-btn"
         onclick={handleClearOrClose}
-        aria-label="Clear search"
+        aria-label={i18n.t('common.clear_search')}
       >
         <IconDismiss class="w-5 h-5" />
       </button>
@@ -249,7 +249,7 @@
   }
 
   .search-action-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--surface-tint-rgb), 0.12);
     color: var(--text-primary);
   }
 </style>

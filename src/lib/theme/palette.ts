@@ -1,16 +1,47 @@
+import {
+  Hct,
+  MaterialDynamicColors,
+  SchemeContent,
+  SchemeExpressive,
+  SchemeFidelity,
+  SchemeFruitSalad,
+  SchemeMonochrome,
+  SchemeNeutral,
+  SchemeRainbow,
+  SchemeTonalSpot,
+  SchemeVibrant,
+  argbFromHex,
+  argbFromRgb,
+  hexFromArgb,
+  type DynamicScheme
+} from '@material/material-color-utilities';
+
 export interface AccentPalette {
   primary: string;
   primaryHover: string;
   onPrimary: string;
   container: string;
   onContainer: string;
+  onSurface: string;
   subtle: string;
   glow: string;
   quadrants: [string, string, string, string];
   choiceActiveBg: string;
   choiceActiveText: string;
-  choiceInactiveBg: string;
-  choiceInactiveText: string;
+  outline: string;
+  outlineVariant: string;
+  surfaceTintRgb: string;
+  surfaceLowRgb: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  surface: string;
+  surfaceDim: string;
+  surfaceBright: string;
+  surfaceContainerLow: string;
+  surfaceContainer: string;
+  surfaceContainerHigh: string;
+  surfaceContainerHighest: string;
 }
 
 export interface RgbColor {
@@ -18,6 +49,66 @@ export interface RgbColor {
   g: number;
   b: number;
 }
+
+export type SchemeVariant =
+  | 'tonal-spot'
+  | 'vibrant'
+  | 'expressive'
+  | 'fidelity'
+  | 'content'
+  | 'neutral'
+  | 'monochrome'
+  | 'rainbow'
+  | 'fruit-salad';
+
+export type ContrastLevel = -1 | 0 | 0.5 | 1;
+
+export type ColorMode = 'dark' | 'light' | 'system';
+
+export const COLOR_MODES: ColorMode[] = ['system', 'light', 'dark'];
+export const DEFAULT_COLOR_MODE: ColorMode = 'dark';
+
+export const SCHEME_VARIANTS: SchemeVariant[] = [
+  'tonal-spot',
+  'vibrant',
+  'expressive',
+  'fidelity',
+  'content',
+  'neutral',
+  'monochrome',
+  'rainbow',
+  'fruit-salad'
+];
+
+export const CONTRAST_LEVELS: ContrastLevel[] = [-1, 0, 0.5, 1];
+
+export const DEFAULT_SCHEME_VARIANT: SchemeVariant = 'tonal-spot';
+export const DEFAULT_CONTRAST_LEVEL: ContrastLevel = 0;
+
+const SCHEME_CONSTRUCTORS: Record<SchemeVariant, any> = {
+  'tonal-spot': SchemeTonalSpot,
+  vibrant: SchemeVibrant,
+  expressive: SchemeExpressive,
+  fidelity: SchemeFidelity,
+  content: SchemeContent,
+  neutral: SchemeNeutral,
+  monochrome: SchemeMonochrome,
+  rainbow: SchemeRainbow,
+  'fruit-salad': SchemeFruitSalad
+};
+
+const ACHROMATIC_CHROMA = 10;
+const NEUTRAL_CHROMA_TEXT = 2;
+const NEUTRAL_CHROMA_SURFACE = 4;
+
+function neutralize(hex: string, maxChroma: number, tone?: number): string {
+  const hct = Hct.fromInt(argbFromHex(hex));
+  return hexFromArgb(
+    Hct.from(hct.hue, Math.min(hct.chroma, maxChroma), tone ?? hct.tone).toInt()
+  );
+}
+
+const ACCENT_SURFACE_DARK: RgbColor = { r: 24, g: 24, b: 27 };
 
 export const PRESET_QUADRANTS: Record<string, [string, string, string, string]> = {
   '#d69085': ['#d69085', '#e8c2bc', '#60413c', '#a16c64'],
@@ -91,7 +182,8 @@ export function parseColorToRgb(input: string): RgbColor {
 }
 
 export function rgbToHex(r: number, g: number, b: number): string {
-  const toHex = (n: number) => Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, '0');
+  const toHex = (n: number) =>
+    Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
@@ -123,72 +215,136 @@ export function mixRgb(color1: RgbColor, color2: RgbColor, weight: number): RgbC
   };
 }
 
+function contrastRatio(a: RgbColor, b: RgbColor): number {
+  const la = getRelativeLuminance(a);
+  const lb = getRelativeLuminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function rgba(hex: string, alpha: number): string {
+  const { r, g, b } = parseColorToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function rgbTriple(hex: string): string {
+  const { r, g, b } = parseColorToRgb(hex);
+  return `${r}, ${g}, ${b}`;
+}
+
+function stateLayer(base: string, over: string, opacity: number): string {
+  const mixed = mixRgb(parseColorToRgb(base), parseColorToRgb(over), opacity);
+  return rgbToHex(mixed.r, mixed.g, mixed.b);
+}
+
+export function sourceHct(input: string): Hct {
+  const { r, g, b } = parseColorToRgb(input);
+  return Hct.fromInt(argbFromRgb(r, g, b));
+}
+
+export function isAchromatic(input: string): boolean {
+  return sourceHct(input).chroma < ACHROMATIC_CHROMA;
+}
+
+export function buildScheme(
+  input: string,
+  variant: SchemeVariant = DEFAULT_SCHEME_VARIANT,
+  contrastLevel: ContrastLevel = DEFAULT_CONTRAST_LEVEL,
+  isDark = true
+): DynamicScheme {
+  const hct = sourceHct(input);
+  const effective = hct.chroma < ACHROMATIC_CHROMA ? 'monochrome' : variant;
+  const Scheme = SCHEME_CONSTRUCTORS[effective] ?? SchemeTonalSpot;
+  return new Scheme(hct, isDark, contrastLevel, '2025', 'phone');
+}
+
+function role(scheme: DynamicScheme, name: string): string {
+  const color = (MaterialDynamicColors as any)[name];
+  return color?.getArgb ? hexFromArgb(color.getArgb(scheme)) : '#ffffff';
+}
+
+function accentOnSurface(scheme: DynamicScheme, primary: string, isDark: boolean): string {
+  const surface = isDark
+    ? ACCENT_SURFACE_DARK
+    : parseColorToRgb(role(scheme, 'surfaceContainer'));
+  if (contrastRatio(parseColorToRgb(primary), surface) >= 4.5) return primary;
+
+  const tones = isDark ? [60, 65, 70, 75, 80, 85, 90, 95, 100] : [50, 45, 40, 35, 30, 25, 20, 10, 0];
+  for (const tone of tones) {
+    const candidate = hexFromArgb(scheme.primaryPalette.tone(tone));
+    if (contrastRatio(parseColorToRgb(candidate), surface) >= 4.5) return candidate;
+  }
+  return isDark ? '#ffffff' : '#000000';
+}
+
 export function generateAccentPalette(
   input: string,
-  customQuadrants?: [string, string, string, string]
+  customQuadrants?: [string, string, string, string],
+  variant: SchemeVariant = DEFAULT_SCHEME_VARIANT,
+  contrastLevel: ContrastLevel = DEFAULT_CONTRAST_LEVEL,
+  isDark = true
 ): AccentPalette {
-  const rgb = parseColorToRgb(input);
-  const primaryHex = rgbToHex(rgb.r, rgb.g, rgb.b);
-  const luminance = getPerceivedLuminance(rgb.r, rgb.g, rgb.b);
+  const scheme = buildScheme(input, variant, contrastLevel, isDark);
 
-  const onPrimary = luminance >= 135 ? '#111215' : '#ffffff';
+  const primary = role(scheme, 'primary');
+  const onPrimary = role(scheme, 'onPrimary');
+  const secondaryContainer = role(scheme, 'secondaryContainer');
+  const onSecondaryContainer = role(scheme, 'onSecondaryContainer');
+  const surfaceContainerLow = role(scheme, 'surfaceContainerLow');
 
-  const hoverRgb = luminance < 40
-    ? mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.18)
-    : mixRgb(rgb, { r: 0, g: 0, b: 0 }, 0.12);
-  const primaryHover = rgbToHex(hoverRgb.r, hoverRgb.g, hoverRgb.b);
-
-  const container = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.16)`;
-
-  let onContainer = primaryHex;
-  if (luminance < 95) {
-    const lifted = mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.45);
-    onContainer = rgbToHex(lifted.r, lifted.g, lifted.b);
-  }
-
-  const subtle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.22)`;
-  const glow = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)`;
-
-  let quadrants: [string, string, string, string];
-  const trimmed = input.trim().toLowerCase();
-  if (customQuadrants) {
-    quadrants = customQuadrants;
-  } else if (PRESET_QUADRANTS[trimmed]) {
-    quadrants = PRESET_QUADRANTS[trimmed];
-  } else {
-    const q1 = primaryHex;
-    const q2Rgb = mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.45);
-    const q3Rgb = mixRgb(rgb, { r: 0, g: 0, b: 0 }, 0.55);
-    const q4Rgb = mixRgb(rgb, { r: 0, g: 0, b: 0 }, 0.25);
-    const q2 = rgbToHex(q2Rgb.r, q2Rgb.g, q2Rgb.b);
-    const q3 = rgbToHex(q3Rgb.r, q3Rgb.g, q3Rgb.b);
-    const q4 = rgbToHex(q4Rgb.r, q4Rgb.g, q4Rgb.b);
-    quadrants = [q1, q2, q3, q4];
-  }
-
-  const choiceActiveBg = quadrants[1];
-
-  const inactiveRgb = mixRgb(rgb, { r: 0, g: 0, b: 0 }, 0.82);
-  const choiceInactiveBg = rgbToHex(inactiveRgb.r, inactiveRgb.g, inactiveRgb.b);
-
-  const activeTextRgb = mixRgb(rgb, { r: 0, g: 0, b: 0 }, 0.90);
-  const choiceActiveText = rgbToHex(activeTextRgb.r, activeTextRgb.g, activeTextRgb.b);
-
-  const inactiveLum = getPerceivedLuminance(inactiveRgb.r, inactiveRgb.g, inactiveRgb.b);
-  const choiceInactiveText = inactiveLum < 128 ? '#ffffff' : '#111215';
+  const quadrants: [string, string, string, string] =
+    customQuadrants ??
+    PRESET_QUADRANTS[input.trim().toLowerCase()] ??
+    [
+      primary,
+      hexFromArgb(scheme.primaryPalette.tone(90)),
+      hexFromArgb(scheme.primaryPalette.tone(30)),
+      hexFromArgb(scheme.secondaryPalette.tone(60))
+    ];
 
   return {
-    primary: primaryHex,
-    primaryHover,
+    primary,
+    primaryHover: stateLayer(primary, onPrimary, 0.08),
     onPrimary,
-    container,
-    onContainer,
-    subtle,
-    glow,
+    container: secondaryContainer,
+    onContainer: onSecondaryContainer,
+    onSurface: accentOnSurface(scheme, primary, isDark),
+    subtle: rgba(primary, 0.22),
+    glow: rgba(primary, 0.35),
     quadrants,
-    choiceActiveBg,
-    choiceActiveText,
-    choiceInactiveBg,
-    choiceInactiveText
+    choiceActiveBg: secondaryContainer,
+    choiceActiveText: onSecondaryContainer,
+    outline: role(scheme, 'outline'),
+    outlineVariant: role(scheme, 'outlineVariant'),
+    textPrimary: neutralize(role(scheme, 'onSurface'), NEUTRAL_CHROMA_TEXT, isDark ? 96 : 8),
+    textSecondary: neutralize(role(scheme, 'onSurfaceVariant'), NEUTRAL_CHROMA_TEXT),
+    textMuted: neutralize(role(scheme, 'outline'), NEUTRAL_CHROMA_TEXT),
+    surfaceTintRgb: rgbTriple(
+      neutralize(
+        hexFromArgb(scheme.neutralPalette.tone(isDark ? 95 : 10)),
+        NEUTRAL_CHROMA_TEXT,
+        isDark ? 97 : 8
+      )
+    ),
+    surfaceLowRgb: rgbTriple(neutralize(surfaceContainerLow, NEUTRAL_CHROMA_SURFACE)),
+    surface: neutralize(role(scheme, 'surface'), NEUTRAL_CHROMA_SURFACE),
+    surfaceDim: neutralize(role(scheme, 'surfaceDim'), NEUTRAL_CHROMA_SURFACE),
+    surfaceBright: neutralize(role(scheme, 'surfaceBright'), NEUTRAL_CHROMA_SURFACE),
+    surfaceContainerLow: neutralize(surfaceContainerLow, NEUTRAL_CHROMA_SURFACE),
+    surfaceContainer: neutralize(role(scheme, 'surfaceContainer'), NEUTRAL_CHROMA_SURFACE),
+    surfaceContainerHigh: neutralize(role(scheme, 'surfaceContainerHigh'), NEUTRAL_CHROMA_SURFACE),
+    surfaceContainerHighest: neutralize(
+      role(scheme, 'surfaceContainerHighest'),
+      NEUTRAL_CHROMA_SURFACE
+    )
   };
+}
+
+export function computeAcrylicTintRgb(accent: string, isDark: boolean): RgbColor {
+  const accentRgb = parseColorToRgb(accent);
+  if (isAchromatic(accent)) {
+    return isDark ? { r: 18, g: 19, b: 24 } : { r: 248, g: 248, b: 250 };
+  }
+  const base = isDark ? { r: 14, g: 16, b: 22 } : { r: 252, g: 252, b: 254 };
+  return mixRgb(base, accentRgb, isDark ? 0.38 : 0.26);
 }

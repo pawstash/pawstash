@@ -38,7 +38,7 @@
 
   const M3_TONES = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95];
 
-  const resolvedLabel = $derived(label ?? i18n.t('color_picker.label') ?? 'Color');
+  const resolvedLabel = $derived(label ?? i18n.t('color_picker.label'));
 
   const accentPresets = $derived(
     ACCENT_PRESETS.map((preset) => ({
@@ -48,10 +48,10 @@
   );
 
   const activeMaterialRoles = $derived([
-    { name: i18n.t('color_picker.role_primary') || 'Primary accent', hex: themeState.palette.primary },
-    { name: i18n.t('color_picker.role_container') || 'Container accent', hex: themeState.palette.quadrants[1] },
-    { name: i18n.t('color_picker.role_deep') || 'Deep accent', hex: themeState.palette.quadrants[2] },
-    { name: i18n.t('color_picker.role_subtle') || 'Subtle accent', hex: themeState.palette.quadrants[3] }
+    { name: i18n.t('color_picker.role_primary'), hex: themeState.palette.primary },
+    { name: i18n.t('color_picker.role_container'), hex: themeState.palette.quadrants[1] },
+    { name: i18n.t('color_picker.role_deep'), hex: themeState.palette.quadrants[2] },
+    { name: i18n.t('color_picker.role_subtle'), hex: themeState.palette.quadrants[3] }
   ]);
 
   let hsl = $state({ h: 0, s: 0, l: 0 });
@@ -170,7 +170,7 @@
       copyTimeout = setTimeout(() => {
         isCopied = false;
       }, 1600);
-      notify.success(i18n.t('color_picker.copied_hex', { hex: hexDisplay }) || `Copied ${hexDisplay}`);
+      notify.success(i18n.t('color_picker.copied_hex', { hex: hexDisplay }));
     } catch {
     }
   }
@@ -232,7 +232,7 @@
             maxlength={7}
             spellcheck="false"
             autocomplete="off"
-            aria-label={i18n.t('color_picker.hex_code') || 'Hex color code'}
+            aria-label={i18n.t('color_picker.hex_code')}
           />
 
           <div class="preview-actions">
@@ -241,7 +241,7 @@
               size="sm"
               class="action-icon-btn"
               onclick={copyHex}
-              aria-label={i18n.t('color_picker.copy_hex') || 'Copy HEX'}
+              aria-label={i18n.t('color_picker.copy_hex')}
             >
               {#if isCopied}
                 <span class="text-emerald-400">
@@ -268,7 +268,7 @@
                 oninput={(e) => applyColor(e.currentTarget.value)}
                 onchange={(e) => applyColor(e.currentTarget.value)}
                 class="action-picker-native-input"
-                aria-label={i18n.t('color_picker.system_picker') || 'System Color Picker'}
+                aria-label={i18n.t('color_picker.system_picker')}
               />
             </div>
           </div>
@@ -277,7 +277,7 @@
 
       <div class="color-picker-body">
         <div class="dialog-section">
-          <span class="section-title">{i18n.t('color_picker.tonal') || 'Tonal'}</span>
+          <span class="section-title">{i18n.t('color_picker.tonal')}</span>
           <div class="tonal-strip">
             {#each M3_TONES as tone}
               {@const toneHex = hslToHex(hsl.h, hsl.s, tone)}
@@ -289,7 +289,7 @@
                 class:is-active={active}
                 style="background-color: {toneHex};"
                 onclick={() => setTone(tone)}
-                aria-label={i18n.t('color_picker.tone_value', { tone }) || `Tone ${tone}`}
+                aria-label={i18n.t('color_picker.tone_value', { tone })}
               >
                 {#if active}
                   <span class="swatch-check ink-{getContrastInk(toneHex)}">
@@ -303,7 +303,7 @@
 
         {#if showPalette}
           <div class="dialog-section">
-            <span class="section-title">{i18n.t('color_picker.palette') || 'Palette'}</span>
+            <span class="section-title">{i18n.t('color_picker.palette')}</span>
 
             <div class="material-roles-grid">
               {#each activeMaterialRoles as role}
@@ -351,7 +351,7 @@
 
         <div class="sliders-section">
           <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.hue') || 'Hue'}</span>
+            <span class="slider-label">{i18n.t('color_picker.hue')}</span>
             <input
               type="range"
               min="0"
@@ -360,13 +360,13 @@
               value={hsl.h}
               oninput={(e) => updateHsl(Number(e.currentTarget.value), hsl.s, hsl.l)}
               class="m3-slider-input hue-gradient-track"
-              aria-label={i18n.t('color_picker.hue') || 'Hue'}
+              aria-label={i18n.t('color_picker.hue')}
             />
             <span class="slider-value">{hsl.h}°</span>
           </div>
 
           <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.tone') || 'Tone'}</span>
+            <span class="slider-label">{i18n.t('color_picker.tone')}</span>
             <input
               type="range"
               min="0"
@@ -376,13 +376,13 @@
               oninput={(e) => updateHsl(hsl.h, hsl.s, Number(e.currentTarget.value))}
               class="m3-slider-input"
               style="background: linear-gradient(to right, #000000 0%, {hslToHex(hsl.h, hsl.s, 50)} 50%, #ffffff 100%);"
-              aria-label={i18n.t('color_picker.tone') || 'Tone'}
+              aria-label={i18n.t('color_picker.tone')}
             />
             <span class="slider-value">{hsl.l}%</span>
           </div>
 
           <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.chroma') || 'Chroma'}</span>
+            <span class="slider-label">{i18n.t('color_picker.chroma')}</span>
             <input
               type="range"
               min="0"
@@ -392,7 +392,7 @@
               oninput={(e) => updateHsl(hsl.h, Number(e.currentTarget.value), hsl.l)}
               class="m3-slider-input"
               style="background: linear-gradient(to right, {hslToHex(hsl.h, 0, hsl.l)} 0%, {hslToHex(hsl.h, 100, hsl.l)} 100%);"
-              aria-label={i18n.t('color_picker.chroma') || 'Chroma'}
+              aria-label={i18n.t('color_picker.chroma')}
             />
             <span class="slider-value">{hsl.s}%</span>
           </div>
@@ -554,7 +554,7 @@
     padding: 0;
     box-sizing: border-box;
     width: 100%;
-    --swatch-ink-light: #ffffff;
+    --swatch-ink-light: rgb(var(--surface-tint-rgb));
     --swatch-ink-dark: #000000;
   }
 
@@ -660,7 +660,7 @@
     background: rgba(0, 0, 0, 0.28) !important;
     border: none !important;
     backdrop-filter: blur(12px) !important;
-    color: #ffffff !important;
+    color: var(--text-primary) !important;
     border-radius: calc(var(--radius-sm) * var(--ui-scale, 1)) !important;
   }
 
@@ -888,7 +888,7 @@
     width: calc(15px * var(--ui-scale, 1));
     height: calc(15px * var(--ui-scale, 1));
     border-radius: var(--radius-full);
-    background: #ffffff;
+    background: rgb(var(--surface-tint-rgb));
     border: none;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
     cursor: pointer;

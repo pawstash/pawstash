@@ -692,7 +692,16 @@ impl AppSettings {
         if !matches!(self.titlebar_style.as_str(), "auto" | "windows" | "macos") {
             self.titlebar_style = "auto".to_string();
         }
-        if !matches!(self.toast_position.as_str(), "auto" | "top" | "bottom") {
+        if !matches!(
+            self.toast_position.as_str(),
+            "auto"
+                | "top-left"
+                | "top-center"
+                | "top-right"
+                | "bottom-left"
+                | "bottom-center"
+                | "bottom-right"
+        ) {
             self.toast_position = "auto".to_string();
         }
         if !matches!(self.card_view_mode.as_str(), "detailed" | "compact") {
@@ -896,6 +905,33 @@ mod tests {
         settings.cache_max_mb = u64::MAX;
         settings.normalize();
         assert_eq!(settings.cache_max_mb, 2048);
+    }
+
+    #[test]
+    fn toast_position_keeps_every_choice_the_ui_offers() {
+        for offered in [
+            "auto",
+            "top-left",
+            "top-center",
+            "top-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+        ] {
+            let mut settings = AppSettings {
+                toast_position: offered.to_string(),
+                ..AppSettings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.toast_position, offered);
+        }
+
+        let mut settings = AppSettings {
+            toast_position: "sideways".to_string(),
+            ..AppSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.toast_position, "auto");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ripple } from '$lib/motion';
+  import { i18n } from '$lib/i18n';
   import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
 
   export interface NavCategory {
@@ -102,9 +103,7 @@
     if (isDragging) {
       try {
         containerEl?.releasePointerCapture?.(e.pointerId);
-      } catch {
-        // ignore
-      }
+      } catch {}
       isDragging = false;
       suppressClick = true;
       if (suppressTimeout) clearTimeout(suppressTimeout);
@@ -184,7 +183,7 @@
   class:is-dragging={isDragging}
   role="tablist"
   tabindex="-1"
-  aria-label="Settings categories"
+  aria-label={i18n.t('settings.categories')}
   onpointerdown={handlePointerDown}
   onpointermove={handlePointerMove}
   onpointerup={handlePointerUp}
@@ -313,7 +312,7 @@
       calc(var(--control-height, 46px) / 2)
     );
     background: var(--choice-active-bg, var(--accent-primary));
-    color: var(--choice-active-text, var(--text-on-accent, #ffffff));
+    color: var(--choice-active-text, var(--text-on-accent, var(--text-primary)));
     font-weight: var(--font-weight-semibold, 600);
   }
 

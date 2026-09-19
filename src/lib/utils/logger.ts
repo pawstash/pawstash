@@ -28,14 +28,14 @@ class Logger {
   error(message: string, error?: unknown, context?: unknown) {
     let errorDetails = '';
     if (error instanceof Error) {
-      errorDetails = ` — ${error.message}\n${error.stack ?? ''}`;
+      errorDetails = `: ${error.message}\n${error.stack ?? ''}`;
     } else if (typeof error === 'string') {
-      errorDetails = ` — ${error}`;
+      errorDetails = `: ${error}`;
     } else if (error) {
       try {
-        errorDetails = ` — ${JSON.stringify(error)}`;
+        errorDetails = `: ${JSON.stringify(error)}`;
       } catch {
-        errorDetails = ` — ${String(error)}`;
+        errorDetails = `: ${String(error)}`;
       }
     }
 

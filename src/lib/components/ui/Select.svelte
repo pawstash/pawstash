@@ -81,7 +81,6 @@
   let triggerEl = $state<HTMLButtonElement | HTMLDivElement | null>(null);
   let dropdownEl = $state<HTMLDivElement | null>(null);
 
-  // In-place Creation state
   let isCreating = $state(false);
   let newOptionName = $state('');
   let createInputEl = $state<HTMLInputElement | null>(null);
@@ -109,7 +108,7 @@
         const found = options.find((opt) => opt.value === selectedValues[0]);
         if (found) return found.label;
       }
-      return i18n.t('library.in_stashes_count', { count: selectedValues.length }) || `${selectedValues.length} stashes`;
+      return i18n.t('library.in_stashes_count', { count: selectedValues.length });
     }
     return options.find((opt) => opt.value === value)?.label || placeholder || String(value);
   });
@@ -247,6 +246,7 @@
   function initScrollbars(node: HTMLElement) {
     osInstance = OverlayScrollbars(node, {
       scrollbars: {
+        theme: 'os-theme-pawstash',
         autoHide: 'leave',
         autoHideDelay: 400,
         clickScroll: true
@@ -340,7 +340,7 @@
       >
         <div class="select-options-list" role="listbox">
           {#if options.length === 0}
-            <div class="select-empty-msg">{placeholder || i18n.t('library.no_stashes') || 'No stashes yet'}</div>
+            <div class="select-empty-msg">{placeholder || i18n.t('library.no_stashes')}</div>
           {/if}
 
           {#each options as opt (opt.value)}
@@ -380,7 +380,7 @@
               <input
                 bind:this={createInputEl}
                 bind:value={newOptionName}
-                placeholder={i18n.t('library.stash_name') || 'Stash name...'}
+                placeholder={i18n.t('library.stash_name')}
                 disabled={creatingPending}
                 class="create-inline-input"
                 onkeydown={(e) => {
@@ -397,8 +397,8 @@
                   class="create-action-btn confirm"
                   use:ripple
                   disabled={!newOptionName.trim() || creatingPending}
-                  title={i18n.t('common.confirm') || 'Create'}
-                  aria-label="Create stash"
+                  title={i18n.t('common.confirm')}
+                  aria-label={createLabel || i18n.t('common.confirm')}
                 >
                   <IconCheckmark class="w-[15px] h-[15px]" />
                 </button>
@@ -408,8 +408,8 @@
                   use:ripple
                   onclick={cancelCreating}
                   disabled={creatingPending}
-                  title={i18n.t('common.cancel') || 'Cancel'}
-                  aria-label="Cancel"
+                  title={i18n.t('common.cancel')}
+                  aria-label={i18n.t('common.cancel')}
                 >
                   <IconDismiss class="w-[15px] h-[15px]" />
                 </button>
@@ -423,7 +423,7 @@
               use:ripple
             >
               <IconAdd class="w-[16px] h-[16px] create-inline-icon" />
-              <span class="create-trigger-text">{createLabel || i18n.t('library.new_stash') || 'New stash'}</span>
+              <span class="create-trigger-text">{createLabel || i18n.t('library.new_stash')}</span>
             </button>
           {/if}
         </div>
@@ -672,7 +672,7 @@
   }
 
   .select-option:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     color: var(--text-primary);
   }
 
@@ -709,7 +709,6 @@
     flex-shrink: 0;
   }
 
-  /* Footer Creation */
   .select-footer {
     border-top: 1px solid var(--floating-divider-color, rgba(255, 255, 255, 0.035));
     padding: var(--floating-padding, 6px);
@@ -744,12 +743,12 @@
   }
 
   .select-create-trigger:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     color: var(--text-primary);
   }
 
   .select-create-inline {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     color: var(--text-primary);
   }
 
@@ -816,7 +815,7 @@
   .create-action-btn:hover {
     opacity: 1;
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .create-action-btn.confirm:hover {

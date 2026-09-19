@@ -5,6 +5,7 @@
     checked?: boolean;
     disabled?: boolean;
     onchange?: (checked: boolean) => void;
+    ariaLabel?: string;
     class?: string;
   }
 
@@ -12,13 +13,14 @@
     checked = $bindable(false),
     disabled = false,
     onchange,
+    ariaLabel,
     class: extraClass = ''
   }: Props = $props();
 
   function toggle() {
     if (disabled) return;
     checked = !checked;
-    if (onchange) onchange(checked);
+    onchange?.(checked);
   }
 </script>
 
@@ -26,6 +28,7 @@
   type="button"
   role="checkbox"
   aria-checked={checked}
+  aria-label={ariaLabel}
   {disabled}
   onclick={toggle}
   class="checkbox-root {extraClass}"
@@ -41,62 +44,88 @@
 
 <style>
   .checkbox-root {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    outline: none;
-    user-select: none;
     flex-shrink: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
   }
 
   .checkbox-box {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    border: none;
-    background: rgba(255, 255, 255, 0.03);
-    color: #ffffff;
-    transition: background 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-                transform 0.1s ease;
+    width: calc(var(--checkbox-size) * var(--ui-scale, 1));
+    height: calc(var(--checkbox-size) * var(--ui-scale, 1));
+    border: calc(var(--checkbox-outline-width) * var(--ui-scale, 1)) solid
+      var(--accent-outline);
+    border-radius: calc(var(--checkbox-radius) * var(--ui-scale, 1));
+    background: transparent;
+    color: var(--accent-on-primary);
+    box-sizing: border-box;
+    transition:
+      background var(--duration-fast) var(--ease-expo),
+      border-color var(--duration-fast) var(--ease-expo),
+      transform var(--duration-fast) var(--ease-expo);
   }
 
   .checkbox-root:hover:not(.disabled) .checkbox-box {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--bg-card-hover);
   }
 
   .checkbox-root:active:not(.disabled) .checkbox-box {
-    transform: scale(0.95);
+    transform: scale(0.94);
   }
 
   .checkbox-root.checked .checkbox-box {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ffffff;
+    border-color: var(--accent-primary);
+    background: var(--accent-primary);
   }
 
   .checkbox-root.checked:hover:not(.disabled) .checkbox-box {
-    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--accent-primary-hover);
+    background: var(--accent-primary-hover);
   }
 
-  :global(.checkbox-icon) {
-    width: 17px !important;
-    height: 17px !important;
-    color: #ffffff !important;
-    animation: checkIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  .checkbox-root:focus-visible {
+    outline: none !important;
+  }
+
+  .checkbox-root:focus-visible .checkbox-box {
+    outline: calc(2px * var(--ui-scale, 1)) solid var(--accent-primary) !important;
+    outline-offset: calc(2px * var(--ui-scale, 1)) !important;
   }
 
   .checkbox-root.disabled {
-    opacity: 0.5;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
   }
 
-  @keyframes checkIn {
+  :global(.checkbox-icon) {
+    width: calc(var(--checkbox-icon-size) * var(--ui-scale, 1)) !important;
+    height: calc(var(--checkbox-icon-size) * var(--ui-scale, 1)) !important;
+    color: currentColor !important;
+    animation: check-in var(--duration-fast) var(--ease-expo) forwards;
+  }
+
+  @media (pointer: coarse) {
+    .checkbox-root::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: var(--tap-target-min);
+      height: var(--tap-target-min);
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  @keyframes check-in {
     from {
       opacity: 0;
       transform: scale(0.6);
@@ -104,6 +133,14 @@
     to {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .checkbox-box,
+    :global(.checkbox-icon) {
+      transition: none;
+      animation: none;
     }
   }
 </style>

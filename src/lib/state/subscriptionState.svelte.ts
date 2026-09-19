@@ -27,8 +27,12 @@ class SubscriptionState {
     finally { this.loading = false; }
   }
 
+  private byCreator = $derived(
+    new Map(this.items.map((item) => [`${item.service}:${item.creator_id}`, item]))
+  );
+
   forCreator(service: string, creatorId: string) {
-    return this.items.find((item) => item.service === service && item.creator_id === creatorId);
+    return this.byCreator.get(`${service}:${creatorId}`);
   }
 
   async save(input: SubscriptionInput) {

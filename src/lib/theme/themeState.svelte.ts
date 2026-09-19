@@ -1,6 +1,17 @@
 import type { ThemeTokens, FontSizeScale, RadiusScale, SurfaceStyle, AccentColor, MotionSpeed } from './tokens';
 import { FONT_SCALE_MAP, RADIUS_SCALE_MAP, ACCENT_COLOR_MAP, MOTION_SPEED_MAP } from './tokens';
-import { generateAccentPalette, type AccentPalette, parseColorToRgb, getPerceivedLuminance } from './palette';
+import {
+  DEFAULT_COLOR_MODE,
+  DEFAULT_CONTRAST_LEVEL,
+  DEFAULT_SCHEME_VARIANT,
+  computeAcrylicTintRgb,
+  generateAccentPalette,
+  isAchromatic,
+  type AccentPalette,
+  type ColorMode,
+  type ContrastLevel,
+  type SchemeVariant
+} from './palette';
 import { apiGetSystemAccentColor } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 
@@ -16,24 +27,58 @@ export class ThemeState {
     radiusScale: 'smooth',
     surfaceStyle: 'glass',
     accent: '#D69085',
+    colorMode: DEFAULT_COLOR_MODE,
+    schemeVariant: DEFAULT_SCHEME_VARIANT,
+    contrastLevel: DEFAULT_CONTRAST_LEVEL,
     motionSpeed: 'smooth',
     backdropBlurPx: 24,
     borderWidthPx: 1,
-    titlebarHeightPx: 30,
-    sidebarWidthPx: 208
+    titlebarHeightPx: 30
   });
 
   systemPalette = $state<SystemMonetPalette | null>(null);
   overrideAccent = $state<string | null>(null);
+  systemPrefersDark = $state(true);
+
+  get isDark(): boolean {
+    if (this.tokens.colorMode === 'system') return this.systemPrefersDark;
+    return this.tokens.colorMode === 'dark';
+  }
 
   get palette(): AccentPalette {
+    const { schemeVariant, contrastLevel } = this.tokens;
+    const dark = this.isDark;
     if (this.overrideAccent) {
-      return generateAccentPalette(this.overrideAccent);
+      return generateAccentPalette(
+        this.overrideAccent,
+        undefined,
+        schemeVariant,
+        contrastLevel,
+        dark
+      );
     }
     if (this.tokens.accent === 'system' && this.systemPalette) {
-      return generateAccentPalette(this.systemPalette.primary, this.systemPalette.quadrants);
+      return generateAccentPalette(
+        this.systemPalette.primary,
+        this.systemPalette.quadrants,
+        schemeVariant,
+        contrastLevel,
+        dark
+      );
     }
-    return generateAccentPalette(this.tokens.accent);
+    return generateAccentPalette(
+      this.tokens.accent,
+      undefined,
+      schemeVariant,
+      contrastLevel,
+      dark
+    );
+  }
+
+  get schemeIsForcedNeutral(): boolean {
+    const source = this.overrideAccent ?? this.tokens.accent;
+    if (source === 'system') return false;
+    return this.tokens.schemeVariant !== 'monochrome' && isAchromatic(source);
   }
 
   reset() {
@@ -43,11 +88,13 @@ export class ThemeState {
       radiusScale: 'smooth',
       surfaceStyle: 'glass',
       accent: this.systemPalette ? 'system' : '#D69085',
+      colorMode: DEFAULT_COLOR_MODE,
+      schemeVariant: DEFAULT_SCHEME_VARIANT,
+      contrastLevel: DEFAULT_CONTRAST_LEVEL,
       motionSpeed: 'smooth',
       backdropBlurPx: 24,
       borderWidthPx: 1,
-      titlebarHeightPx: 30,
-      sidebarWidthPx: 208
+      titlebarHeightPx: 30
     } satisfies ThemeTokens);
     this.overrideAccent = null;
     this.applyCssTokens();
@@ -85,6 +132,11 @@ export class ThemeState {
         try {
           const parsed = JSON.parse(saved);
           savedAccent = parsed.accent;
+          if ('sidebarWidthPx' in parsed) {
+            delete parsed.sidebarWidthPx;
+            localStorage.setItem('pawstash_theme_settings', JSON.stringify(parsed));
+          }
+          delete (this.tokens as any).sidebarWidthPx;
           Object.assign(this.tokens, parsed);
         } catch (e) {
           logger.warn('[ThemeState] Failed to parse saved theme settings:', e);
@@ -92,6 +144,7 @@ export class ThemeState {
       }
     }
 
+    this.watchSystemColorScheme();
     await this.fetchSystemPalette();
 
     // If first launch (no accent previously saved in localStorage) and systemPalette is available,
@@ -109,12 +162,14 @@ export class ThemeState {
     if (!color) return;
     this.overrideAccent = color;
     this.applyCssTokens();
+    this.refreshWindowEffect();
   }
 
   clearOverrideAccent() {
     if (this.overrideAccent !== null) {
       this.overrideAccent = null;
       this.applyCssTokens();
+      this.refreshWindowEffect();
     }
   }
 
@@ -136,6 +191,41 @@ export class ThemeState {
   setAccent(accent: AccentColor) {
     this.tokens.accent = accent;
     this.applyCssTokens();
+    this.refreshWindowEffect();
+  }
+
+  setColorMode(colorMode: ColorMode) {
+    this.tokens.colorMode = colorMode;
+    this.applyCssTokens();
+    this.refreshWindowEffect();
+  }
+
+  private refreshWindowEffect() {
+    void import('./backgroundState.svelte').then((m) => m.backgroundState.refreshWindowEffect());
+  }
+
+  watchSystemColorScheme() {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    this.systemPrefersDark = query.matches;
+    query.addEventListener('change', (event) => {
+      this.systemPrefersDark = event.matches;
+      if (this.tokens.colorMode !== 'system') return;
+      this.applyCssTokens();
+      this.refreshWindowEffect();
+    });
+  }
+
+  setSchemeVariant(schemeVariant: SchemeVariant) {
+    this.tokens.schemeVariant = schemeVariant;
+    this.applyCssTokens();
+    this.refreshWindowEffect();
+  }
+
+  setContrastLevel(contrastLevel: ContrastLevel) {
+    this.tokens.contrastLevel = contrastLevel;
+    this.applyCssTokens();
+    this.refreshWindowEffect();
   }
 
   setSurfaceStyle(surfaceStyle: SurfaceStyle) {
@@ -163,9 +253,8 @@ export class ThemeState {
     this.applyCssTokens();
   }
 
-  setSidebarWidth(widthPx: number) {
-    this.tokens.sidebarWidthPx = widthPx;
-    this.applyCssTokens();
+  setSidebarWidth(_widthPx: number) {
+    // Deprecated: sidebar width is driven by CSS var --sidebar-width-expanded in app.css
   }
 
   applyCssTokens() {
@@ -178,7 +267,7 @@ export class ThemeState {
     const motion = MOTION_SPEED_MAP[this.tokens.motionSpeed];
 
     root.style.setProperty('--titlebar-height', `${this.tokens.titlebarHeightPx}px`);
-    root.style.setProperty('--sidebar-width-expanded', `${this.tokens.sidebarWidthPx}px`);
+    root.style.removeProperty('--sidebar-width-expanded');
 
     root.style.setProperty('--text-xs', font.xs);
     root.style.setProperty('--text-sm', font.sm);
@@ -191,21 +280,53 @@ export class ThemeState {
     root.style.setProperty('--radius-lg', radius.lg);
     root.style.setProperty('--radius-xl', radius.xl);
 
-    // Apply complete Material-inspired tonal palette
     const pal = this.palette;
     root.style.setProperty('--accent-primary', pal.primary);
     root.style.setProperty('--accent-primary-hover', pal.primaryHover);
     root.style.setProperty('--accent-on-primary', pal.onPrimary);
     root.style.setProperty('--accent-container', pal.container);
     root.style.setProperty('--accent-on-container', pal.onContainer);
+    root.style.setProperty('--accent-on-surface', pal.onSurface);
     root.style.setProperty('--accent-subtle', pal.subtle);
     root.style.setProperty('--accent-glow', pal.glow);
+    root.style.setProperty('--accent-outline', pal.outline);
     root.style.setProperty('--text-on-accent', pal.onPrimary);
 
     root.style.setProperty('--choice-active-bg', pal.choiceActiveBg);
     root.style.setProperty('--choice-active-text', pal.choiceActiveText);
-    root.style.setProperty('--choice-inactive-bg', pal.choiceInactiveBg);
-    root.style.setProperty('--choice-inactive-text', pal.choiceInactiveText);
+
+    root.style.setProperty('--text-primary', pal.textPrimary);
+    root.style.setProperty('--text-secondary', pal.textSecondary);
+    root.style.setProperty('--text-muted', pal.textMuted);
+
+    root.style.setProperty('--shadow-alpha', this.isDark ? '0.6' : '0.16');
+    root.style.setProperty('--shadow-alpha-strong', this.isDark ? '0.78' : '0.22');
+
+    root.classList.toggle('dark', this.isDark);
+    root.classList.toggle('light', !this.isDark);
+    root.style.setProperty('color-scheme', this.isDark ? 'dark' : 'light');
+
+    root.style.setProperty('--surface-tint-rgb', pal.surfaceTintRgb);
+    root.style.setProperty('--surface-container-low', pal.surfaceContainerLow);
+    root.style.setProperty('--surface-container', pal.surfaceContainer);
+    root.style.setProperty('--surface-container-high', pal.surfaceContainerHigh);
+    root.style.setProperty('--surface-container-highest', pal.surfaceContainerHighest);
+    root.style.setProperty('--bg-dropdown', pal.surfaceContainer);
+
+    const acrylicRgb = computeAcrylicTintRgb(pal.primary, this.isDark);
+    root.style.setProperty('--acrylic-tint-rgb', `${acrylicRgb.r}, ${acrylicRgb.g}, ${acrylicRgb.b}`);
+
+    const hairline = { '-1': [0.06, 0.14], '0': [0.08, 0.18], '0.5': [0.16, 0.3], '1': [0.28, 0.45] }[
+      String(this.tokens.contrastLevel)
+    ] ?? [0.08, 0.18];
+    root.style.setProperty('--border-alpha', String(hairline[0]));
+    root.style.setProperty('--border-alpha-hover', String(hairline[1]));
+
+    root.style.setProperty('--slider-active', pal.primary);
+    root.style.setProperty('--slider-handle', pal.primary);
+    root.style.setProperty('--slider-inactive', pal.container);
+    root.style.setProperty('--slider-stop-on-active', pal.onPrimary);
+    root.style.setProperty('--slider-stop-on-inactive', pal.onContainer);
 
     if (this.tokens.accent === 'rgb' && !this.overrideAccent) {
       root.classList.add('accent-rgb');
@@ -220,12 +341,13 @@ export class ThemeState {
     root.style.setProperty('--border-width', `${this.tokens.borderWidthPx}px`);
     root.style.setProperty('--backdrop-blur', `${this.tokens.backdropBlurPx}px`);
 
-    if (this.tokens.surfaceStyle === 'oled') {
+    root.style.setProperty('--bg-surface-hover', pal.surfaceContainerHigh);
+    if (this.tokens.surfaceStyle === 'oled' && this.isDark) {
       root.style.setProperty('--bg-base', '#000000');
-      root.style.setProperty('--bg-surface', 'rgba(14, 16, 20, 0.95)');
+      root.style.setProperty('--bg-surface', `rgba(${pal.surfaceLowRgb}, 0.95)`);
     } else {
-      root.style.setProperty('--bg-base', '#0c0e14');
-      root.style.setProperty('--bg-surface', 'rgba(22, 26, 38, 0.7)');
+      root.style.setProperty('--bg-base', this.isDark ? '#0c0e14' : pal.surface);
+      root.style.setProperty('--bg-surface', `rgba(${pal.surfaceLowRgb}, 0.7)`);
     }
 
     const userFont = this.tokens.fontFamily?.trim();

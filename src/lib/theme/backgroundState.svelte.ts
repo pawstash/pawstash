@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { type as osType, version as osVersion } from '@tauri-apps/plugin-os';
+import { parseColorToRgb, mixRgb, computeAcrylicTintRgb } from './palette';
 import { logger } from '$lib/utils/logger';
 
 export type BackgroundType =
   | 'oled'
+  | 'palette'
   | 'acrylic'
   | 'vibrancy'
   | 'mica-dark'
@@ -23,6 +25,8 @@ export interface BackgroundSettings {
   opacity: number;
   brightness: number;
   saturation: number;
+  acrylicTint: boolean;
+  acrylicOpacity: number;
 }
 
 export class BackgroundState {
@@ -37,7 +41,9 @@ export class BackgroundState {
     blurPx: 24,
     opacity: 0.85,
     brightness: 0.5,
-    saturation: 1.2
+    saturation: 1.2,
+    acrylicTint: false,
+    acrylicOpacity: 0.5
   });
 
   reset() {
@@ -51,7 +57,9 @@ export class BackgroundState {
       blurPx: 24,
       opacity: 0.85,
       brightness: 0.5,
-      saturation: 1.2
+      saturation: 1.2,
+      acrylicTint: false,
+      acrylicOpacity: defaultAcrylicOpacity()
     } satisfies BackgroundSettings);
     this.version++;
     void this.applyWindowEffect(this.settings.type);
@@ -60,7 +68,7 @@ export class BackgroundState {
 
   setType(type: BackgroundType) {
     this.settings.type = type;
-    if (type === 'custom' || type === 'oled') {
+    if (type === 'custom' || type === 'oled' || type === 'palette') {
       this.applyWindowEffect('none');
     } else {
       this.applyWindowEffect(type);
@@ -94,6 +102,24 @@ export class BackgroundState {
   setOpacity(opacity: number) {
     this.settings.opacity = opacity;
     this.save();
+  }
+
+  setAcrylicTint(acrylicTint: boolean) {
+    this.settings.acrylicTint = acrylicTint;
+    this.save();
+    windowTint(this.settings.acrylicOpacity);
+    if (this.settings.type === 'acrylic') {
+      void this.applyWindowEffect('acrylic');
+    }
+  }
+
+  setAcrylicOpacity(acrylicOpacity: number) {
+    this.settings.acrylicOpacity = acrylicOpacity;
+    this.save();
+    windowTint(acrylicOpacity);
+    if (this.settings.type === 'acrylic') {
+      void this.applyWindowEffect('acrylic');
+    }
   }
 
   setSolidColor(color: string) {
@@ -134,10 +160,19 @@ export class BackgroundState {
 
   private async applyWindowEffect(effectType: string) {
     try {
-      await invoke('set_window_effect', { effectType });
+      await invoke('set_window_effect', {
+        effectType: forColorMode(effectType),
+        tint: windowTint(this.settings.acrylicOpacity)
+      });
     } catch (e) {
       logger.warn('Native window effect not supported on this platform', e);
     }
+  }
+
+  refreshWindowEffect() {
+    const { type } = this.settings;
+    if (type === 'custom' || type === 'oled' || type === 'palette') return;
+    void this.applyWindowEffect(type);
   }
 
   private save() {
@@ -157,6 +192,12 @@ export class BackgroundState {
         }
       }
     }
+    if (typeof this.settings.acrylicTint !== 'boolean') {
+      this.settings.acrylicTint = false;
+    }
+    if (typeof this.settings.acrylicOpacity !== 'number') {
+      this.settings.acrylicOpacity = defaultAcrylicOpacity();
+    }
     if (!supportedBackgroundTypes().includes(this.settings.type)) {
       this.settings.type = defaultBackgroundType();
       this.save();
@@ -166,6 +207,41 @@ export class BackgroundState {
 }
 
 export const backgroundState = new BackgroundState();
+
+const LIGHT_EFFECT_TWINS: Record<string, string> = {
+  'mica-dark': 'mica-light',
+  tabbed: 'tabbed-light'
+};
+
+function windowTint(acrylicOpacity: number = defaultAcrylicOpacity()): [number, number, number, number] | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const styles = getComputedStyle(document.documentElement);
+  const isDark = document.documentElement.classList.contains('dark');
+  const accent = styles.getPropertyValue('--accent-primary').trim() || '#d69085';
+  const mixed = computeAcrylicTintRgb(accent, isDark);
+
+  const opacity = typeof acrylicOpacity === 'number' ? acrylicOpacity : defaultAcrylicOpacity(isDark);
+  const alpha = Math.min(255, Math.max(0, Math.round(opacity * 255)));
+
+  document.documentElement.style.setProperty(
+    '--acrylic-tint',
+    `rgba(${mixed.r}, ${mixed.g}, ${mixed.b}, ${opacity.toFixed(2)})`
+  );
+  document.documentElement.style.setProperty('--acrylic-tint-rgb', `${mixed.r}, ${mixed.g}, ${mixed.b}`);
+  document.documentElement.style.setProperty('--acrylic-opacity', opacity.toFixed(2));
+
+  if (!backgroundState.settings.acrylicTint) {
+    return undefined;
+  }
+
+  return [mixed.r, mixed.g, mixed.b, alpha];
+}
+
+function forColorMode(effectType: string): string {
+  if (typeof document === 'undefined') return effectType;
+  const isDark = document.documentElement.classList.contains('dark');
+  return isDark ? effectType : (LIGHT_EFFECT_TWINS[effectType] ?? effectType);
+}
 
 export function isWindowsPlatform(): boolean {
   try {
@@ -185,15 +261,23 @@ export function supportedBackgroundTypes(): BackgroundType[] {
       const parts = osVersion().split('.').map((part) => Number.parseInt(part, 10) || 0);
       const supportsWindows11Effects = parts[0] >= 11 || (parts[0] === 10 && (parts[2] ?? 0) >= 22000);
       return supportsWindows11Effects
-        ? ['acrylic', 'mica-dark', 'tabbed', 'oled', 'custom']
-        : ['acrylic', 'oled', 'custom'];
+        ? ['acrylic', 'mica-dark', 'tabbed', 'palette', 'oled', 'custom']
+        : ['acrylic', 'palette', 'oled', 'custom'];
     }
-    if (platform === 'macos') return ['oled', 'vibrancy', 'custom'];
+    if (platform === 'macos') return ['palette', 'oled', 'vibrancy', 'custom'];
   } catch {
   }
-  return ['oled', 'custom'];
+  return ['palette', 'oled', 'custom'];
 }
 
 export function defaultBackgroundType(): BackgroundType {
   return isWindowsPlatform() ? 'acrylic' : 'oled';
+}
+
+export function defaultAcrylicOpacity(isDark?: boolean): number {
+  if (typeof isDark === 'boolean') return isDark ? 0.5 : 0.7;
+  if (typeof document !== 'undefined') {
+    return document.documentElement.classList.contains('light') ? 0.7 : 0.5;
+  }
+  return 0.5;
 }

@@ -27,6 +27,36 @@ pub struct SyncStatus {
     pub last_synced_at: Option<String>,
     pub last_error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncProgress {
+    pub phase: String,
+    pub current: Option<usize>,
+    pub total: Option<usize>,
+    pub progress: Option<f32>,
+    pub message: Option<String>,
+}
+
+fn emit_sync_progress(
+    app: &tauri::AppHandle,
+    phase: &str,
+    current: Option<usize>,
+    total: Option<usize>,
+    progress: Option<f32>,
+    message: Option<&str>,
+) {
+    let _ = app.emit(
+        "sync-progress",
+        &SyncProgress {
+            phase: phase.to_string(),
+            current,
+            total,
+            progress,
+            message: message.map(|s| s.to_string()),
+        },
+    );
+}
+
 #[derive(Serialize, Deserialize)]
 struct RecoveryKit {
     format: String,
@@ -450,25 +480,30 @@ impl SyncManager {
         client.list_devices(&session.token).await
     }
     pub async fn sync(self: &Arc<Self>, app: tauri::AppHandle) -> Result<SyncStatus, String> {
-        struct SyncingGuard<'a>(&'a Mutex<bool>);
+        struct SyncingGuard<'a>(&'a Mutex<bool>, tauri::AppHandle);
         impl<'a> Drop for SyncingGuard<'a> {
             fn drop(&mut self) {
                 if let Ok(mut lock) = self.0.lock() {
                     *lock = false;
                 }
+                emit_sync_progress(&self.1, "idle", None, None, None, None);
             }
         }
 
-        let _guard = {
-            let mut syncing = self.syncing.lock().map_err(|e| e.to_string())?;
-            if *syncing {
-                return Err("Sync is already running".to_string());
-            }
-            *syncing = true;
-            SyncingGuard(&self.syncing)
+        let result = {
+            let _guard = {
+                let mut syncing = self.syncing.lock().map_err(|e| e.to_string())?;
+                if *syncing {
+                    return Err("Sync is already running".to_string());
+                }
+                *syncing = true;
+                emit_sync_progress(&app, "connecting", None, None, None, Some("Connecting..."));
+                SyncingGuard(&self.syncing, app.clone())
+            };
+
+            self.sync_inner(&app).await
         };
 
-        let result = self.sync_inner().await;
         if let Err(error) = &result {
             let _ = self.repository.set_error(Some(error));
         }
@@ -476,7 +511,7 @@ impl SyncManager {
         let _ = app.emit("sync-status-updated", &status);
         result.map(|_| status)
     }
-    async fn sync_inner(&self) -> Result<(), String> {
+    async fn sync_inner(&self, app: &tauri::AppHandle) -> Result<(), String> {
         let state = self
             .repository
             .state()?
@@ -485,6 +520,15 @@ impl SyncManager {
             .ok_or_else(|| "Sync vault is locked".to_string())?;
         let key = secrets.vault_key_bytes()?;
         let client = SyncHttpClient::new(&state.server_url, &self.config.load()?)?;
+
+        emit_sync_progress(
+            app,
+            "connecting",
+            None,
+            None,
+            None,
+            Some("Checking session..."),
+        );
         let session = client
             .session(
                 &state.account_id,
@@ -496,9 +540,28 @@ impl SyncManager {
         // 1. Pull Phase: fetch and apply remote changes in a loop until all records are caught up
         let mut current_cursor = state.cursor;
         loop {
+            emit_sync_progress(
+                app,
+                "pulling",
+                None,
+                None,
+                None,
+                Some("Fetching changes..."),
+            );
             let pull = client.pull(&session.token, current_cursor).await?;
             let change_count = pull.changes.len();
-            for change in &pull.changes {
+            for (idx, change) in pull.changes.iter().enumerate() {
+                if change_count > 0 {
+                    let prog = (idx + 1) as f32 / change_count as f32;
+                    emit_sync_progress(
+                        app,
+                        "pulling",
+                        Some(idx + 1),
+                        Some(change_count),
+                        Some(prog),
+                        Some("Applying changes..."),
+                    );
+                }
                 let plain = if change.tombstone {
                     None
                 } else {
@@ -532,9 +595,24 @@ impl SyncManager {
             if dirty_records.is_empty() {
                 break;
             }
+            let total_dirty = dirty_records.len();
+            let mut pushed_count = 0;
 
             let mut had_conflict = false;
             for chunk in dirty_records.chunks(100) {
+                emit_sync_progress(
+                    app,
+                    "pushing",
+                    Some(pushed_count),
+                    Some(total_dirty),
+                    Some(if total_dirty > 0 {
+                        pushed_count as f32 / total_dirty as f32
+                    } else {
+                        0.0
+                    }),
+                    Some("Uploading records..."),
+                );
+
                 let mut encrypted_records = Vec::with_capacity(chunk.len());
                 for rec in chunk {
                     let (ciphertext, nonce) = if let Some(payload) = &rec.payload {
@@ -571,8 +649,25 @@ impl SyncManager {
                         if push_response.cursor > 0 {
                             self.repository.update_cursor(push_response.cursor)?;
                         }
+                        pushed_count += chunk.len();
+                        emit_sync_progress(
+                            app,
+                            "pushing",
+                            Some(pushed_count),
+                            Some(total_dirty),
+                            Some((pushed_count as f32 / total_dirty as f32).min(1.0)),
+                            Some("Uploading records..."),
+                        );
                     }
                     Err(e) if e.contains("409") || e.contains("conflict") => {
+                        emit_sync_progress(
+                            app,
+                            "pulling",
+                            None,
+                            None,
+                            None,
+                            Some("Resolving conflict..."),
+                        );
                         let pull = client.pull(&session.token, current_cursor).await?;
                         for change in &pull.changes {
                             let plain = if change.tombstone {
@@ -609,6 +704,7 @@ impl SyncManager {
             }
         }
 
+        emit_sync_progress(app, "idle", None, None, None, None);
         Ok(())
     }
     pub async fn resolve_remote(

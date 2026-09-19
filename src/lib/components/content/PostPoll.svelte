@@ -108,14 +108,14 @@
       {#if parsed.startDate || parsed.endDate}
         <span>
           {parsed.startDate || ''}
-          {#if parsed.startDate && parsed.endDate} — {/if}
+          {#if parsed.startDate && parsed.endDate} - {/if}
           {parsed.endDate || ''}
         </span>
         {#if parsed.totalVotes > 0}
           <span class="meta-dot">|</span>
         {/if}
       {/if}
-      <span>{parsed.totalVotes.toLocaleString()} {i18n.t('post.poll_votes') || 'votes'}</span>
+      <span>{parsed.totalVotes.toLocaleString()} {i18n.t('post.poll_votes')}</span>
     </div>
   </div>
 {/if}
@@ -156,8 +156,8 @@
     overflow: hidden;
     height: 36px;
     border-radius: var(--radius-sm, 6px);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.04);
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.06);
   }
 
   .poll-bar {
@@ -165,7 +165,7 @@
     top: 0;
     bottom: 0;
     left: 0;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--surface-tint-rgb), 0.12);
     pointer-events: none;
     transition: width 0.35s ease-out;
   }

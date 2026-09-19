@@ -107,7 +107,6 @@ class ProviderState {
     const [moved] = list.splice(idx, 1);
     list.splice(targetIdx, 0, moved);
 
-    // Reassign priorities
     list.forEach((p, i) => {
       p.priority = i + 1;
     });

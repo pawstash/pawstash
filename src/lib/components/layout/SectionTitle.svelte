@@ -19,7 +19,7 @@
     resetTitle
   }: Props = $props();
 
-  let defaultResetTitle = $derived(resetTitle || i18n.t('settings.reset_section') || 'Default');
+  let defaultResetTitle = $derived(resetTitle || i18n.t('settings.reset_section'));
 </script>
 
 <div class="section-title {extraClass}">
@@ -38,7 +38,7 @@
       size="sm"
       class="section-title__reset"
       onclick={onreset}
-      title={i18n.t('settings.reset_section_tooltip') || 'Reset section to default settings'}
+      title={i18n.t('settings.reset_section_tooltip')}
     >
       <IconArrowReset class="w-4 h-4" />
       <span>{defaultResetTitle}</span>

@@ -31,8 +31,8 @@
     class: extraClass = ''
   }: Props = $props();
 
-  let finalDecrementLabel = $derived(decrementLabel ?? (i18n.t('common.decrease') || 'Decrease'));
-  let finalIncrementLabel = $derived(incrementLabel ?? (i18n.t('common.increase') || 'Increase'));
+  let finalDecrementLabel = $derived(decrementLabel ?? (i18n.t('common.decrease')));
+  let finalIncrementLabel = $derived(incrementLabel ?? (i18n.t('common.increase')));
 
   let isEditing = $state(false);
   let draftValue = $state(String(untrack(() => value)));

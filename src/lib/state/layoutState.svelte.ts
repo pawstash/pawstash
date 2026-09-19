@@ -28,6 +28,26 @@ export class LayoutState {
     return this.isMobileDevice && this.screenWidth <= 768;
   });
 
+  SIDEBAR_STORAGE_KEY = 'pawstash_sidebar_compact';
+
+  isSidebarCompact = $state(
+    typeof localStorage !== 'undefined' ? localStorage.getItem('pawstash_sidebar_compact') === 'true' : false
+  );
+
+  toggleSidebar() {
+    this.isSidebarCompact = !this.isSidebarCompact;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(this.SIDEBAR_STORAGE_KEY, String(this.isSidebarCompact));
+    }
+  }
+
+  setSidebarCompact(compact: boolean) {
+    this.isSidebarCompact = compact;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(this.SIDEBAR_STORAGE_KEY, String(this.isSidebarCompact));
+    }
+  }
+
   effectiveTitlebarStyle = $derived.by((): 'windows' | 'macos' => {
     const mode = configState.settings.titlebar_style || 'auto';
     if (mode === 'macos') return 'macos';

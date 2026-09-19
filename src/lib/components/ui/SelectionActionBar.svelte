@@ -42,14 +42,12 @@
 
 {#if selectionState.active}
   {#if layoutState.isMobile}
-    <!-- Mobile Adaptive Dock (1:1 identical to MobileBottomNav) -->
     <aside
       use:portal
       class="mobile-bottom-dock selection-mobile-dock"
-      aria-label={i18n.t('selection.select_mode') || 'Selection actions'}
+      aria-label={i18n.t('selection.select_mode')}
     >
       <div class="mobile-dock-capsule selection-dock-capsule" role="toolbar">
-        <!-- 1. Select All / Deselect Toggle with Selected Count Badge -->
         {#if onSelectAll && totalCount > 0}
           <button
             type="button"
@@ -65,39 +63,35 @@
               {/if}
             </div>
             <span class="dock-label">
-              {i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all') ||
-                (allSelected ? 'Deselect' : 'Select all')}
+              {i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all')}
             </span>
           </button>
         {/if}
 
-        <!-- 2. Action Buttons (children) -->
         {#if children}
           {@render children()}
         {/if}
 
-        <!-- 3. Close / Cancel Button -->
         <button
           type="button"
           class="mobile-dock-btn"
           onclick={handleClose}
-          aria-label={i18n.t('selection.cancel') || 'Cancel'}
+          aria-label={i18n.t('selection.cancel')}
         >
           <div class="dock-icon-wrapper">
             <IconDismiss class="dock-icon" />
           </div>
           <span class="dock-label">
-            {i18n.t('selection.cancel') || 'Cancel'}
+            {i18n.t('selection.cancel')}
           </span>
         </button>
       </div>
     </aside>
   {:else}
-    <!-- Desktop Floating Glass Dock -->
     <aside
       use:portal
       class="selection-portal is-desktop"
-      aria-label={i18n.t('selection.select_mode') || 'Selection actions'}
+      aria-label={i18n.t('selection.select_mode')}
     >
       <div class="selection-desktop-dock" role="toolbar">
         <div class="selection-desktop-counter">
@@ -106,8 +100,8 @@
           </span>
           <span class="selection-count-text">
             {selectedCount === 0
-              ? (i18n.t('selection.none_selected') || 'No items')
-              : (i18n.t('selection.items_count') || 'selected')}
+              ? (i18n.t('selection.none_selected'))
+              : (i18n.t('selection.items_count'))}
           </span>
         </div>
 
@@ -122,8 +116,7 @@
           >
             <IconSelectAll class="w-[17px] h-[17px]" />
             <span>
-              {i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all') ||
-                (allSelected ? 'Deselect all' : 'Select all')}
+              {i18n.t(allSelected ? 'selection.deselect_all' : 'selection.select_all')}
             </span>
           </button>
 
@@ -142,8 +135,8 @@
           type="button"
           class="selection-desktop-close"
           onclick={handleClose}
-          use:tooltip={`${i18n.t('selection.cancel') || 'Cancel'} (Esc)`}
-          aria-label={i18n.t('selection.cancel') || 'Close selection'}
+          use:tooltip={`${i18n.t('selection.cancel')} (Esc)`}
+          aria-label={i18n.t('selection.cancel')}
         >
           <IconDismiss class="w-[18px] h-[18px]" />
         </button>
@@ -153,7 +146,6 @@
 {/if}
 
 <style>
-  /* ---------------- Common Portal & Badges ---------------- */
   .selection-portal {
     position: fixed;
     left: 50%;
@@ -164,7 +156,6 @@
     justify-content: center;
   }
 
-  /* ---------------- Mobile Adaptive Dock (1:1 identical to MobileBottomNav) ---------------- */
   .selection-mobile-dock {
     position: fixed;
     bottom: max(14px, env(safe-area-inset-bottom, 14px));
@@ -181,12 +172,12 @@
     justify-content: space-around;
     height: 64px;
     padding: 0 8px;
-    background: rgba(16, 17, 22, 0.88);
-    border: none !important;
+    background: var(--floating-bg);
+    border: var(--floating-border);
     border-radius: 22px;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(24px) saturate(1.6);
-    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    box-shadow: var(--floating-shadow);
+    backdrop-filter: var(--floating-backdrop) saturate(1.6);
+    -webkit-backdrop-filter: var(--floating-backdrop) saturate(1.6);
     animation: mobileDockIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
@@ -209,7 +200,7 @@
     flex: 1;
     height: 100%;
     background: transparent;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--text-muted);
     border: none;
     cursor: pointer;
     padding: 4px 0;
@@ -218,11 +209,11 @@
   }
 
   .mobile-dock-btn:hover {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
   }
 
   .mobile-dock-btn.active {
-    color: #ffffff;
+    color: var(--text-primary);
   }
 
   .dock-icon-wrapper {
@@ -253,21 +244,21 @@
 
   .mobile-dock-btn.active .dock-label {
     font-weight: 700;
-    color: #ffffff;
+    color: var(--text-primary);
   }
 
   .dock-badge {
     position: absolute;
     top: -5px;
     right: -8px;
-    background: var(--accent-primary, #ef4444);
-    color: #ffffff;
+    background: var(--accent-primary);
+    color: var(--accent-on-primary, var(--text-primary));
     font-size: 9.5px;
     font-weight: 700;
     line-height: 1;
     padding: 2px 4.5px;
     border-radius: 9999px;
-    border: 1.5px solid rgba(16, 17, 22, 0.95);
+    border: 1.5px solid var(--floating-bg);
     font-variant-numeric: tabular-nums;
   }
 
@@ -280,7 +271,7 @@
     flex: 1 !important;
     height: 100% !important;
     background: transparent !important;
-    color: rgba(255, 255, 255, 0.45) !important;
+    color: var(--text-muted) !important;
     border: none !important;
     box-shadow: none !important;
     border-radius: 0 !important;
@@ -312,27 +303,26 @@
   }
 
   :global(.selection-dock-capsule .selection-btn:hover) {
-    color: rgba(255, 255, 255, 0.8) !important;
+    color: var(--text-secondary) !important;
   }
 
   :global(.selection-dock-capsule .selection-btn:active) {
-    color: #ffffff !important;
+    color: var(--text-primary) !important;
     transform: scale(0.96) !important;
   }
 
   :global(.selection-dock-capsule .selection-btn.btn-danger),
   :global(.selection-dock-capsule .btn-danger.selection-btn) {
-    color: #fca5a5 !important;
+    color: var(--status-error) !important;
   }
 
   :global(.selection-dock-capsule .selection-btn.btn-danger:hover),
   :global(.selection-dock-capsule .btn-danger.selection-btn:hover),
   :global(.selection-dock-capsule .selection-btn.btn-danger:active),
   :global(.selection-dock-capsule .btn-danger.selection-btn:active) {
-    color: #ef4444 !important;
+    color: var(--status-error) !important;
   }
 
-  /* Stash select mapping in mobile dock */
   :global(.selection-dock-capsule .selection-stash-select) {
     display: flex !important;
     flex: 1 !important;
@@ -349,7 +339,7 @@
     width: 100% !important;
     height: 100% !important;
     background: transparent !important;
-    color: rgba(255, 255, 255, 0.45) !important;
+    color: var(--text-muted) !important;
     border: none !important;
     box-shadow: none !important;
     border-radius: 0 !important;
@@ -384,12 +374,12 @@
   }
 
   :global(.selection-dock-capsule .selection-stash-select .select-trigger:hover) {
-    color: rgba(255, 255, 255, 0.8) !important;
+    color: var(--text-secondary) !important;
   }
 
   :global(.selection-dock-capsule .selection-stash-select .select-trigger:active),
   :global(.selection-dock-capsule .selection-stash-select .select-trigger.is-open) {
-    color: #ffffff !important;
+    color: var(--text-primary) !important;
     transform: scale(0.96) !important;
   }
 
@@ -397,7 +387,6 @@
     color: var(--accent-primary) !important;
   }
 
-  /* ---------------- Desktop Floating Glass Dock ---------------- */
   .selection-portal.is-desktop {
     bottom: 28px;
     max-width: calc(100vw - 32px);
@@ -411,11 +400,11 @@
     height: 52px;
     padding: 0 8px 0 12px;
     border-radius: var(--radius-full, 9999px);
-    background: rgba(16, 17, 22, 0.88);
-    border: none !important;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(24px) saturate(1.6);
-    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    background: var(--floating-bg);
+    border: var(--floating-border);
+    box-shadow: var(--floating-shadow);
+    backdrop-filter: var(--floating-backdrop) saturate(1.6);
+    -webkit-backdrop-filter: var(--floating-backdrop) saturate(1.6);
     animation: desktopDockIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
     white-space: nowrap;
     overflow-x: auto;
@@ -446,7 +435,7 @@
     height: 36px;
     padding: 0 10px 0 6px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--surface-tint-rgb), 0.04);
     flex-shrink: 0;
   }
 
@@ -455,8 +444,8 @@
     height: 22px;
     padding: 0 6px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.7);
+    background: rgba(var(--surface-tint-rgb), 0.12);
+    color: var(--text-secondary);
     font-size: 11.5px;
     font-weight: 700;
     font-family: var(--font-display, var(--font-sans));
@@ -470,21 +459,21 @@
 
   .selection-count-badge.active {
     background: var(--accent-primary);
-    color: var(--accent-text, #ffffff);
-    box-shadow: 0 2px 10px var(--accent-glow, rgba(214, 144, 133, 0.35));
+    color: var(--accent-on-primary, var(--text-primary));
+    box-shadow: 0 2px 10px var(--accent-glow, rgba(var(--surface-tint-rgb), 0.35));
   }
 
   .selection-desktop-counter .selection-count-text {
     font-size: 13px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
     letter-spacing: -0.01em;
   }
 
   .selection-dock-divider {
     width: 1px;
     height: 20px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
     margin: 0 2px;
     flex-shrink: 0;
   }
@@ -495,7 +484,7 @@
     border-radius: 9999px;
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--text-secondary);
     font-size: 13px;
     font-weight: 500;
     line-height: normal;
@@ -508,8 +497,8 @@
   }
 
   .selection-dock-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ffffff;
+    background: rgba(var(--surface-tint-rgb), 0.08);
+    color: var(--text-primary);
   }
 
   .selection-dock-btn:active {
@@ -531,17 +520,17 @@
     gap: 7px !important;
     border-radius: 9999px !important;
     white-space: nowrap !important;
-    background: rgba(255, 255, 255, 0.05) !important;
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
-    color: rgba(255, 255, 255, 0.8) !important;
+    background: rgba(var(--surface-tint-rgb), 0.05) !important;
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.05) !important;
+    color: var(--text-secondary) !important;
     transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
     flex-shrink: 0 !important;
   }
 
   :global(.selection-desktop-dock .selection-btn:hover) {
-    background: rgba(255, 255, 255, 0.11) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-    color: #ffffff !important;
+    background: rgba(var(--surface-tint-rgb), 0.11) !important;
+    border-color: rgba(var(--surface-tint-rgb), 0.1) !important;
+    color: var(--text-primary) !important;
   }
 
   :global(.selection-desktop-dock .selection-btn:active) {
@@ -550,16 +539,16 @@
 
   :global(.selection-desktop-dock .selection-btn.btn-danger),
   :global(.selection-desktop-dock .btn-danger.selection-btn) {
-    background: rgba(239, 68, 68, 0.12) !important;
-    border-color: rgba(239, 68, 68, 0.15) !important;
-    color: #fca5a5 !important;
+    background: color-mix(in srgb, var(--status-error) 12%, transparent) !important;
+    border-color: color-mix(in srgb, var(--status-error) 20%, transparent) !important;
+    color: var(--status-error) !important;
   }
 
   :global(.selection-desktop-dock .selection-btn.btn-danger:hover),
   :global(.selection-desktop-dock .btn-danger.selection-btn:hover) {
-    background: rgba(239, 68, 68, 0.22) !important;
-    border-color: rgba(239, 68, 68, 0.3) !important;
-    color: #ffffff !important;
+    background: color-mix(in srgb, var(--status-error) 22%, transparent) !important;
+    border-color: color-mix(in srgb, var(--status-error) 36%, transparent) !important;
+    color: var(--text-primary) !important;
   }
 
   :global(.selection-desktop-dock .selection-stash-select) {
@@ -575,27 +564,27 @@
     font-weight: 500 !important;
     gap: 8px !important;
     border-radius: 9999px !important;
-    background: rgba(255, 255, 255, 0.05) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    color: rgba(255, 255, 255, 0.85) !important;
+    background: rgba(var(--surface-tint-rgb), 0.05) !important;
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.06) !important;
+    color: var(--text-primary) !important;
     box-shadow: none !important;
     transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
 
   :global(.selection-desktop-dock .selection-stash-select .select-trigger:hover),
   :global(.selection-desktop-dock .selection-stash-select .select-trigger.is-open) {
-    background: rgba(255, 255, 255, 0.11) !important;
-    border-color: rgba(255, 255, 255, 0.12) !important;
-    color: #ffffff !important;
+    background: rgba(var(--surface-tint-rgb), 0.11) !important;
+    border-color: rgba(var(--surface-tint-rgb), 0.12) !important;
+    color: var(--text-primary) !important;
   }
 
   .selection-desktop-close {
     width: 36px;
     height: 36px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--surface-tint-rgb), 0.04);
     border: 1px solid transparent;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -605,9 +594,9 @@
   }
 
   .selection-desktop-close:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.08);
-    color: #ffffff;
+    background: rgba(var(--surface-tint-rgb), 0.1);
+    border-color: rgba(var(--surface-tint-rgb), 0.08);
+    color: var(--text-primary);
   }
 
   .selection-desktop-close:active {

@@ -5,13 +5,11 @@
   import { i18n } from '$lib/i18n';
   import Select from '$lib/components/ui/Select.svelte';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
-  import ChoiceGroup from '$lib/components/ui/ChoiceGroup.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { apiGetDefaultSettings } from '$lib/utils/ipc';
   import { logger } from '$lib/utils/logger';
   import type { AppSettings } from '$lib/types/config';
-  import IconCheck from '~icons/fluent/checkmark-24-regular';
-  import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconPersonKey from '~icons/fluent/person-key-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import IconCloudArrowUp from '~icons/fluent/cloud-arrow-up-24-regular';
@@ -80,12 +78,9 @@
     defaultValue={defaultSettings.sync_enabled}
     onReset={() => void updateSetting('sync_enabled', defaultSettings.sync_enabled)}
   >
-    <ChoiceGroup
-      options={[
-        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-      ]}
-      value={configState.settings.sync_enabled}
+    <Toggle
+      checked={configState.settings.sync_enabled}
+      ariaLabel={i18n.t('sync.enable_sync')}
       onchange={(val) => void updateSetting('sync_enabled', Boolean(val))}
     />
   </SettingItem>
@@ -99,12 +94,9 @@
     defaultValue={defaultSettings.sync_auto}
     onReset={() => void updateSetting('sync_auto', defaultSettings.sync_auto)}
   >
-    <ChoiceGroup
-      options={[
-        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-      ]}
-      value={configState.settings.sync_auto}
+    <Toggle
+      checked={configState.settings.sync_auto}
+      ariaLabel={i18n.t('sync.auto_sync')}
       onchange={(val) => void updateSetting('sync_auto', Boolean(val))}
     />
   </SettingItem>
@@ -118,12 +110,9 @@
     defaultValue={defaultSettings.sync_on_change}
     onReset={() => void updateSetting('sync_on_change', defaultSettings.sync_on_change)}
   >
-    <ChoiceGroup
-      options={[
-        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-      ]}
-      value={configState.settings.sync_on_change}
+    <Toggle
+      checked={configState.settings.sync_on_change}
+      ariaLabel={i18n.t('sync.sync_on_change')}
       onchange={(val) => void updateSetting('sync_on_change', Boolean(val))}
     />
   </SettingItem>
@@ -137,12 +126,9 @@
     defaultValue={defaultSettings.sync_pawchive_session}
     onReset={() => void updateSetting('sync_pawchive_session', defaultSettings.sync_pawchive_session)}
   >
-    <ChoiceGroup
-      options={[
-        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-      ]}
-      value={configState.settings.sync_pawchive_session}
+    <Toggle
+      checked={configState.settings.sync_pawchive_session}
+      ariaLabel={i18n.t('sync.sync_pawchive_session')}
       onchange={(val) => void updateSetting('sync_pawchive_session', Boolean(val))}
     />
   </SettingItem>
@@ -156,12 +142,9 @@
     defaultValue={defaultSettings.persist_in_app_favorites_locally ?? true}
     onReset={() => void updateSetting('persist_in_app_favorites_locally', defaultSettings.persist_in_app_favorites_locally ?? true)}
   >
-    <ChoiceGroup
-      options={[
-        { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-        { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-      ]}
-      value={configState.settings.persist_in_app_favorites_locally ?? true}
+    <Toggle
+      checked={configState.settings.persist_in_app_favorites_locally ?? true}
+      ariaLabel={i18n.t('sync.persist_in_app_favorites_locally')}
       onchange={(val) => void updateSetting('persist_in_app_favorites_locally', Boolean(val))}
     />
   </SettingItem>

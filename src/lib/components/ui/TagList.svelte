@@ -40,9 +40,9 @@
 
   let expanded = $state(false);
 
-  let effectiveAllLabel = $derived(allLabel ?? (i18n.t('common.all') || 'All'));
-  let expandBtnLabel = $derived(i18n.t('common.expand') || 'Expand');
-  let collapseBtnLabel = $derived(i18n.t('common.collapse') || 'Less');
+  let effectiveAllLabel = $derived(allLabel ?? (i18n.t('common.all')));
+  let expandBtnLabel = $derived(i18n.t('common.expand'));
+  let collapseBtnLabel = $derived(i18n.t('common.collapse'));
 
   interface NormalizedTag {
     name: string;
@@ -403,18 +403,18 @@
 
   .tag-chip.is-active {
     background: var(--accent-primary) !important;
-    color: var(--accent-on-primary, #ffffff) !important;
+    color: var(--accent-on-primary, var(--text-primary)) !important;
     font-weight: 600;
   }
 
   .tag-chip.is-active .tag-hash {
-    color: var(--accent-on-primary, #ffffff) !important;
+    color: var(--accent-on-primary, var(--text-primary)) !important;
     opacity: 1 !important;
   }
 
   .tag-chip.is-active .tag-count-badge {
     background: rgba(0, 0, 0, 0.25) !important;
-    color: var(--accent-on-primary, #ffffff) !important;
+    color: var(--accent-on-primary, var(--text-primary)) !important;
     font-weight: 600;
   }
 
@@ -445,7 +445,7 @@
     padding: 2px 5px;
     margin-left: 3px;
     border-radius: var(--radius-full, 9999px);
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(var(--surface-tint-rgb), 0.07);
     color: var(--text-muted);
     min-width: 14px;
     transition: background var(--duration-fast) var(--ease-expo), color var(--duration-fast) var(--ease-expo);

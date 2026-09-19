@@ -167,7 +167,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { apiOpenInBrowser } from '$lib/utils/ipc';
   import { isDirectMediaUrl } from '$lib/utils/media';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import { ripple } from '$lib/motion';
   import IconFolder from '~icons/fluent/folder-open-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
@@ -350,8 +350,8 @@
           <IconFolder class="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
           <span class="text-[var(--text-primary)]">
             {linkPopover.resolvedPost?.link_type === 'creator'
-              ? (i18n.t('post.open_creator_in_app') || i18n.t('post.open_in_app') || 'Open in App')
-              : (i18n.t('post.open_in_app') || 'Open in App')}
+              ? i18n.t('post.open_creator_in_app')
+              : i18n.t('post.open_in_app')}
           </span>
         </button>
       {/if}
@@ -367,7 +367,7 @@
         }}
       >
         <IconOpen class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
-        <span>{i18n.t('post.open_in_browser') || 'Open in Browser'}</span>
+        <span>{i18n.t('post.open_in_browser')}</span>
       </button>
 
       <button
@@ -378,11 +378,11 @@
           const u = linkPopover!.url;
           linkPopover = null;
           navigator.clipboard.writeText(u);
-          toast.success(i18n.t('post.link_copied') || 'Link copied');
+          notify.success(i18n.t('post.link_copied'), { glyph: 'copied' });
         }}
       >
         <IconCopy class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
-        <span>{i18n.t('post.copy_link') || 'Copy Link'}</span>
+        <span>{i18n.t('post.copy_link')}</span>
       </button>
     </div>
   </div>

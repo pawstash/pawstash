@@ -42,7 +42,7 @@
   <div
     class="w-full h-full rounded-full overflow-hidden grid grid-cols-2 grid-rows-2 gap-[0.5px] bg-[#111215]/40 transition-transform duration-200"
     style="
-      border: {active ? '2px solid #111215' : '1px solid rgba(255, 255, 255, 0.12)'};
+      border: {active ? '2px solid #111215' : '1px solid var(--border-color)'};
     "
   >
     <div style="background-color: {quadrants[0]};"></div>

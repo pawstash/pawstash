@@ -34,7 +34,7 @@ export function ripple(node: HTMLElement, enabled = true) {
     el.style.cssText = `
       position:absolute;left:${x}px;top:${y}px;
       width:${size}px;height:${size}px;border-radius:50%;
-      background:var(--ripple-color, rgba(255, 255, 255, 0.15));opacity:0.6;pointer-events:none;
+      background:var(--ripple-color, rgba(var(--surface-tint-rgb), 0.15));opacity:0.6;pointer-events:none;
       transform:translate(-50%,-50%) scale(0);
       animation:_rpl-expand 0.45s cubic-bezier(0.2,0.9,0.3,1) forwards,
                 _rpl-fade 0.4s 0.2s ease-out forwards;

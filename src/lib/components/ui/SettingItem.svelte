@@ -80,13 +80,13 @@
           type="button"
           transition:fade={{ duration: 150 }}
           use:ripple
-          use:tooltip={layoutState.isMobile ? undefined : { text: i18n.t('settings.reset_setting_to_default') || 'Reset to default', placement: 'top' }}
+          use:tooltip={layoutState.isMobile ? undefined : { text: i18n.t('settings.reset_setting_to_default'), placement: 'top' }}
           onclick={(e) => {
             e.stopPropagation();
             onReset();
           }}
           class="setting-item__reset"
-          aria-label={i18n.t('settings.reset_setting_to_default') || 'Reset to default'}
+          aria-label={i18n.t('settings.reset_setting_to_default')}
         >
           <IconUndo />
         </button>
@@ -148,7 +148,7 @@
     justify-content: center;
     width: calc(21.5px * var(--ui-scale, 1));
     height: calc(21.5px * var(--ui-scale, 1));
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-secondary);
     flex: none;
   }
 
@@ -160,7 +160,7 @@
 
   .setting-item__title {
     min-width: 0;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: calc(13.5px * var(--ui-scale, 1));
     font-weight: var(--font-weight-normal);
@@ -196,7 +196,7 @@
 
   .setting-item__help:hover,
   .setting-item__reset:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
     color: var(--text-primary);
   }
 
@@ -307,6 +307,11 @@
     margin-left: auto;
   }
 
+  .setting-item__control > :global(.switch-root) {
+    flex: none;
+    margin-left: auto;
+  }
+
   .setting-item__control.is-left > :global(.choice-group) {
     margin-left: 0;
   }
@@ -328,7 +333,7 @@
     justify-content: flex-start;
   }
 
-  :global([data-layout='mobile']) .setting-item__control > :global(*),
+  :global([data-layout='mobile']) .setting-item__control > :global(*:not(.switch-root)),
   :global([data-layout='mobile']) .setting-item__control > :global(.input-box),
   :global([data-layout='mobile']) .setting-item__control > :global(.select-root),
   :global([data-layout='mobile']) .setting-item__control > :global(.choice-group),
@@ -339,6 +344,11 @@
     max-width: 100% !important;
     margin-left: 0 !important;
     flex: 1 1 auto !important;
+  }
+
+  :global([data-layout='mobile']) .setting-item__control > :global(.switch-root) {
+    flex: none !important;
+    margin-left: auto !important;
   }
 
   :global([data-layout='mobile']) .setting-item__control > :global(.btn),
@@ -378,7 +388,7 @@
       justify-content: flex-start;
     }
 
-    .setting-item__control > :global(*),
+    .setting-item__control > :global(*:not(.switch-root)),
     .setting-item__control > :global(.input-box),
     .setting-item__control > :global(.select-root),
     .setting-item__control > :global(.choice-group),
@@ -389,6 +399,11 @@
       max-width: 100% !important;
       margin-left: 0 !important;
       flex: 1 1 auto !important;
+    }
+
+    .setting-item__control > :global(.switch-root) {
+      flex: none !important;
+      margin-left: auto !important;
     }
 
     .setting-item__control > :global(.btn),

@@ -195,20 +195,21 @@
 
 {#snippet authActions()}
   {#if step === 'login'}
-    <div class="modal-confirm-actions">
+    <div class="dialog-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        class="justify-center"
         onclick={onclose}
         disabled={isSubmitting}
       >
         <span class="truncate">{i18n.t('common.cancel')}</span>
       </Button>
       <Button
-        variant="accent"
+        variant="ghost"
+        data-tone="accent"
         size="md"
-        class="w-full justify-center px-3"
+        class="justify-center"
         onclick={handleSubmitLogin}
         disabled={isSubmitting || loadingSchema}
       >
@@ -221,20 +222,21 @@
       </Button>
     </div>
   {:else if step === 'sync_prompt'}
-    <div class="modal-confirm-actions">
+    <div class="dialog-actions">
       <Button
         variant="ghost"
         size="md"
-        class="w-full justify-center px-3 border border-[var(--border-color)]"
+        class="justify-center"
         onclick={handleSkipSync}
       >
         <span class="truncate">{i18n.t('settings.auth_sync_skip')}</span>
       </Button>
 
       <Button
-        variant="accent"
+        variant="ghost"
+        data-tone="accent"
         size="md"
-        class="w-full justify-center px-3"
+        class="justify-center"
         onclick={() => handleExecuteSync('both')}
       >
         <IconArrowSync class="w-5 h-5 mr-1.5 shrink-0" />

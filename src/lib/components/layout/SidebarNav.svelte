@@ -10,6 +10,7 @@
   import { motion, tooltip } from '$lib/motion';
   import { syncState } from '$lib/state/syncState.svelte';
   import { openExternalUrl } from '$lib/utils/ipc';
+  import { scrollable } from '$lib/actions/scrollable';
   import IconFeed from '~icons/fluent/grid-24-regular';
   import IconFeedFilled from '~icons/fluent/grid-24-filled';
   import IconCreators from '~icons/fluent/people-24-regular';
@@ -18,10 +19,12 @@
   import IconFavoritesFilled from '~icons/fluent/heart-24-filled';
   import IconLibrary from '~icons/fluent/library-24-regular';
   import IconLibraryFilled from '~icons/fluent/library-24-filled';
+  import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
   import IconDownloads from '~icons/fluent/arrow-download-24-regular';
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
   import IconSettings from '~icons/fluent/settings-24-regular';
   import IconSettingsFilled from '~icons/fluent/settings-24-filled';
+  import IconDockLeft from '~icons/fluent/dock-left-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
   import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
   import IconTelegram from '~icons/simple-icons/telegram';
@@ -30,10 +33,10 @@
   import IconGithub from '~icons/simple-icons/github';
   import IconUser from '~icons/fluent/person-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
-  import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
   import pawstashLogo from '$lib/assets/pawstash.png';
   import { logoFlightState } from '$lib/state/logoFlightState.svelte';
+  import { themeState } from '$lib/theme/themeState.svelte';
 
   interface NavItem {
     id: 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'settings';
@@ -55,7 +58,7 @@
   const appWindow = getCurrentWindow();
   let isMaximized = $state(false);
   let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
-  let isCompact = $state(false);
+  let isCompact = $derived(layoutState.isSidebarCompact);
   let activeRoot = $derived(navigationState.activeRoot);
   let isTextLogo = $derived(
     activeRoot === 'settings' || (logoFlightState.isFlying && logoFlightState.direction === 'toSidebar')
@@ -64,6 +67,9 @@
 
   $effect(() => {
     logoFlightState.registerSidebar(sidebarLogoEl);
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.removeProperty('--sidebar-width-expanded');
+    }
   });
 
   function minimize() {
@@ -78,6 +84,7 @@
     appWindow.close();
   }
 
+
   onMount(() => {
     void appWindow.isMaximized().then((val) => {
       isMaximized = val;
@@ -89,8 +96,21 @@
       });
     });
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        layoutState.toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
     return () => {
       void unlistenPromise.then((unlisten) => unlisten());
+      window.removeEventListener('keydown', handleKeyDown);
     };
   });
 
@@ -98,23 +118,41 @@
     syncState.status.account_id || i18n.t('profile.local')
   );
 
+  let profileTooltipText = $derived.by(() => {
+    if (syncState.isSyncing) {
+      if (syncState.progress !== null && syncState.progress !== undefined) {
+        return `${profileName} (${Math.round(syncState.progress * 100)}%)`;
+      }
+      return `${profileName} (${i18n.t('sync.status_syncing')})`;
+    }
+    return profileName;
+  });
+
   let profileSub = $derived.by(() => {
+    if (syncState.isSyncing) {
+      if (syncState.progress !== null && syncState.progress !== undefined) {
+        const pct = Math.round(syncState.progress * 100);
+        if (syncState.phase === 'pushing') {
+          return `${i18n.t('sync.status_pushing')} ${pct}%`;
+        }
+        return `${i18n.t('sync.status_pulling')} ${pct}%`;
+      }
+      if (syncState.phase === 'connecting') return i18n.t('sync.status_connecting');
+      if (syncState.phase === 'pulling') return i18n.t('sync.status_pulling');
+      if (syncState.phase === 'pushing') return i18n.t('sync.status_pushing');
+      return i18n.t('sync.status_syncing');
+    }
     if (syncState.status.configured) {
-      if (syncState.busy) return i18n.t('sync.status_syncing');
       if (!syncState.status.unlocked) return i18n.t('sync.locked');
       return i18n.t('sync.title');
     }
     return i18n.t('profile.offline_session');
   });
 
-  let syncDotStatus = $derived.by(() => {
-    if (syncState.status.configured) {
-      if (!syncState.status.unlocked) return 'locked';
-      if (syncState.busy) return 'syncing';
-      return 'active';
-    }
-    return 'offline';
-  });
+  function hasProgressRing(id: string): boolean {
+    return id === 'downloads' && downloadState.activeDownloadsCount > 0;
+  }
+
 </script>
 
 <aside
@@ -162,12 +200,20 @@
     </div>
   {/if}
 
-  <button
+  <div
+    data-overlayscrollbars-initialize
+    class="sidebar-scrollable"
+    use:scrollable={{ overflowX: 'hidden' }}
+    data-tauri-drag-region
+  >
+    <div class="sidebar-content" data-tauri-drag-region>
+      <button
     data-tauri-drag-region="false"
     use:motion={'sidebar-item'}
     onclick={() => navigationState.navigateRoot('feed')}
     class="sidebar-btn logo-btn"
     aria-label="Pawstash Logo"
+    use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
   >
     <div class="sidebar-icon">
       <svg viewBox="0 0 602 602" fill="none" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
@@ -205,23 +251,20 @@
     class:active={activeRoot === 'profile'}
     aria-label={profileName}
     onclick={() => navigationState.navigateRoot('profile')}
+    use:tooltip={isCompact ? { text: profileTooltipText, placement: 'right' } : undefined}
   >
-    <div class="sidebar-icon relative">
-      {#if syncDotStatus === 'syncing'}
-        <IconLoading class="text-[var(--accent)]" />
-      {:else if syncState.status.configured}
+    <div
+      class="sidebar-icon relative"
+      class:has-progress={syncState.isSyncing}
+    >
+      {#if syncState.isSyncing}
+        <ProgressRing value={syncState.progress} variant="segmented" size={32} />
+      {/if}
+      {#if syncState.status.configured || syncState.isSyncing}
         <IconCloudSync />
       {:else}
         <IconUser />
       {/if}
-
-      <span
-        class="status-dot"
-        class:status-dot-active={syncDotStatus === 'active'}
-        class:status-dot-locked={syncDotStatus === 'locked'}
-        class:status-dot-syncing={syncDotStatus === 'syncing'}
-        class:status-dot-offline={syncDotStatus === 'offline'}
-      ></span>
     </div>
     <span class="sidebar-label profile-label">
       <span class="profile-name">{profileName}</span>
@@ -242,14 +285,21 @@
         class:active={isActive}
         aria-label={title}
       >
-        <div class="sidebar-icon" class:active={isActive}>
+        <div
+          class="sidebar-icon"
+          class:active={isActive}
+          class:has-progress={hasProgressRing(item.id)}
+        >
+          {#if hasProgressRing(item.id)}
+            <ProgressRing value={downloadState.activeProgress} size={32} />
+          {/if}
           {#if isActive}
             <item.iconActive />
           {:else}
             <item.icon />
           {/if}
 
-          {#if item.badge && item.badge() > 0}
+          {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
             <span class="sidebar-badge">{item.badge()}</span>
           {/if}
         </div>
@@ -269,6 +319,7 @@
       onclick={() => openExternalUrl('https://t.me/pawstashapp')}
       class="sidebar-btn"
       aria-label="Telegram"
+      use:tooltip={isCompact ? { text: 'Telegram', placement: 'right' } : undefined}
     >
       <div class="sidebar-icon">
         <IconTelegram />
@@ -283,6 +334,7 @@
       onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
       class="sidebar-btn"
       aria-label="Discord"
+      use:tooltip={isCompact ? { text: 'Discord', placement: 'right' } : undefined}
     >
       <div class="sidebar-icon">
         <IconDiscord />
@@ -297,6 +349,7 @@
       onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
       class="sidebar-btn"
       aria-label="Reddit"
+      use:tooltip={isCompact ? { text: 'Reddit', placement: 'right' } : undefined}
     >
       <div class="sidebar-icon">
         <IconReddit />
@@ -311,42 +364,35 @@
       onclick={() => openExternalUrl('https://github.com/pawstash')}
       class="sidebar-btn"
       aria-label="GitHub"
+      use:tooltip={isCompact ? { text: 'GitHub', placement: 'right' } : undefined}
     >
       <div class="sidebar-icon">
         <IconGithub />
       </div>
       <span class="sidebar-label">GitHub</span>
     </button>
-
-    <button
-      data-tauri-drag-region="false"
-      use:motion={'sidebar-item'}
-      onclick={() => isCompact = !isCompact}
-      class="sidebar-btn"
-      aria-label={i18n.t('nav.toggle_sidebar')}
-    >
-      <div class="sidebar-icon">
-        {#if isCompact}
-          <IconChevronRight />
-        {:else}
-          <IconChevronLeft />
-        {/if}
-      </div>
-      <span class="sidebar-label">{i18n.t('nav.collapse')}</span>
-    </button>
+  </div>
+    </div>
   </div>
 </aside>
 
 <style>
   .sidebar-btn.logo-btn {
     height: 44px;
-    padding: 0 14px 0 10px;
-    gap: 8px;
+    padding: 0 16px 0 11px;
+    gap: 10px;
     margin-bottom: 8px;
     width: max-content;
-    max-width: calc(100% - 6px);
+    max-width: 100%;
     box-sizing: border-box;
-    transition: background 200ms ease, color 200ms ease;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: background 200ms ease, color 200ms ease, padding 300ms cubic-bezier(0.16, 1, 0.3, 1), gap 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .sidebar-aside.compact .sidebar-btn.logo-btn {
+    padding-right: 11px;
+    gap: 0;
   }
 
   .sidebar-btn.logo-btn .sidebar-icon {
@@ -365,7 +411,7 @@
   }
 
   .logo-svg path {
-    fill: #ffffff;
+    fill: var(--text-primary);
     transition: fill var(--duration-normal) var(--ease-expo);
   }
 
@@ -382,18 +428,20 @@
     display: flex;
     align-items: center;
     justify-content: flex-start;
+    min-width: 0;
+    flex: 1 1 auto;
     width: 82px;
     max-width: 82px;
     height: 100%;
     font-weight: 600;
     font-size: 15px;
     letter-spacing: 0.03em;
-    color: #ffffff;
+    color: var(--text-primary);
     opacity: 0.95;
     white-space: nowrap;
     overflow: hidden;
     pointer-events: none;
-    transition: max-width 300ms ease-out, opacity 300ms ease-out;
+    transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1), max-width 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
   }
 
   .logo-swap {
@@ -438,101 +486,90 @@
     opacity: 0;
   }
 
+  :global(.light) .logo-text-img {
+    filter: invert(1);
+  }
+
   .profile-btn {
-    height: 48px !important;
+    height: 44px !important;
     margin-bottom: 4px;
-    width: 100% !important;
-    min-width: 0;
-    padding: 0 12px 0 11px !important;
-    gap: 8px !important;
+    padding: 0 16px 0 11px !important;
+    gap: 10px !important;
+    width: max-content !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+    overflow: hidden !important;
+    transition: background 200ms ease, color 200ms ease, padding 300ms cubic-bezier(0.16, 1, 0.3, 1), gap 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .sidebar-aside.compact .profile-btn {
+    padding-right: 11px !important;
+    gap: 0 !important;
   }
 
   .profile-label {
     display: flex !important;
     flex-direction: column !important;
     align-items: flex-start !important;
+    justify-content: center !important;
     text-align: left !important;
     gap: 1px;
     line-height: 1.2 !important;
-    min-width: 0;
-    width: 100%;
+    min-width: 0 !important;
+    flex: 1 1 0% !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    pointer-events: none;
+    transition: max-width 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
   }
 
   .profile-name {
     font-size: 13.5px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     width: 100%;
+    min-width: 0;
   }
 
   .profile-sub {
     font-size: 10px;
     font-weight: 400;
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-muted);
     letter-spacing: 0.02em;
     text-transform: none;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     width: 100%;
+    min-width: 0;
   }
 
   .profile-divider {
     height: 1px;
-    width: 80%;
-    margin: 4px auto 8px auto;
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .status-dot {
-    position: absolute;
-    bottom: -1px;
-    right: -1px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 1.5px solid var(--bg-surface, #121214);
-    pointer-events: none;
-    transition: all var(--duration-fast) var(--ease-out);
-  }
-
-  .status-dot-active {
-    background-color: #10b981;
-    box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
-  }
-
-  .status-dot-locked {
-    background-color: #f59e0b;
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
-  }
-
-  .status-dot-syncing {
-    background-color: #38bdf8;
-    box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
-    animation: pulse 1.2s infinite;
-  }
-
-  .status-dot-offline {
-    background-color: rgba(255, 255, 255, 0.25);
+    width: calc(100% - 12px);
+    max-width: calc(100% - 12px);
+    margin: 4px 0 8px 0;
+    background: rgba(var(--surface-tint-rgb), 0.08);
+    transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .sidebar-aside.compact .profile-divider {
-    margin-left: 4px;
-    margin-right: 4px;
+    width: 44px;
   }
 
   .sidebar-aside {
     position: relative;
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     height: 100%;
-    width: 160px;
-    padding: 12px 6px 12px 6px;
-    background: rgba(255, 255, 255, 0.02);
-    border-right: 1px solid rgba(255, 255, 255, 0.04);
+    width: var(--sidebar-width-expanded, 160px);
+    padding: 0;
+    background: rgba(var(--surface-tint-rgb), 0.02);
+    border-right: 1px solid rgba(var(--surface-tint-rgb), 0.04);
     user-select: none;
     flex-shrink: 0;
     border-top: none;
@@ -540,59 +577,107 @@
     border-bottom: none;
     outline: none;
     cursor: default;
-    transition: width 300ms ease-out, padding 300ms ease-out;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .sidebar-aside.compact {
-    width: 56px;
-    padding-left: 6px;
-    padding-right: 6px;
-    padding-top: 12px;
+    width: var(--sidebar-width-collapsed, 56px);
+  }
+
+  .sidebar-scrollable {
+    flex: 1 1 0%;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .sidebar-scrollable :global(.os-viewport) {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .sidebar-scrollable :global(.os-content) {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .sidebar-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex: 1 1 auto;
+    min-height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px 6px;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 6px;
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
   }
 
   .sidebar-bottom {
     margin-top: auto;
+    padding-top: 8px;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 6px;
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
   }
 
   .sidebar-btn {
     position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 11px;
     width: max-content;
+    max-width: 100%;
     height: 44px;
     padding: 0 20px 0 11px;
+    gap: 11px;
     border-radius: 9999px;
     border: none;
     outline: none;
     background: transparent;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--text-secondary);
     cursor: pointer;
     line-height: normal;
     text-decoration: none !important;
-    transition: all 300ms ease-out;
+    overflow: hidden;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    transition: background 200ms ease, color 200ms ease, padding 300ms cubic-bezier(0.16, 1, 0.3, 1), gap 300ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .sidebar-btn:hover {
-    color: rgba(255, 255, 255, 1);
-    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    background: rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .sidebar-btn.active {
-    color: #ffffff;
-    background: rgba(255, 255, 255, 0.10);
+    color: var(--text-primary);
+    background: rgba(var(--surface-tint-rgb), 0.10);
   }
 
   .sidebar-aside.compact .sidebar-btn {
@@ -613,12 +698,21 @@
     pointer-events: none;
   }
 
-  .sidebar-icon :global(svg) {
+  .sidebar-icon :global(svg:not(.progress-ring)) {
     width: 22px;
     height: 22px;
+    transition: transform var(--duration-normal) var(--ease-expo);
+  }
+
+  .sidebar-icon.has-progress :global(svg:not(.progress-ring)) {
+    transform: scale(0.74);
   }
 
   .sidebar-btn:hover .sidebar-icon {
+    opacity: 1;
+  }
+
+  .sidebar-icon.has-progress {
     opacity: 1;
   }
 
@@ -627,16 +721,20 @@
   }
 
   .sidebar-label {
+    display: block;
     font-size: 14px;
-    font-weight: 300;
+    font-weight: 475;
     letter-spacing: 0.015em;
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 0%;
+    max-width: 100%;
     opacity: 0.65;
     line-height: normal;
-    transition: opacity 300ms ease-out, max-width 300ms ease-out, margin 300ms ease-out;
-    max-width: 120px;
     pointer-events: none;
+    transition: max-width 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
   }
 
   .sidebar-label.active {
@@ -648,22 +746,18 @@
     opacity: 1;
   }
 
-  .sidebar-aside.compact .sidebar-label {
-    max-width: 0;
-    margin: 0;
-    opacity: 0;
+  .sidebar-aside.compact .sidebar-label,
+  .sidebar-aside.compact .profile-label {
+    max-width: 0 !important;
+    flex: 0 0 0% !important;
+    opacity: 0 !important;
+    overflow: hidden !important;
   }
 
   .sidebar-aside.compact .logo-label {
-    max-width: 0;
     width: 0;
-    margin: 0;
+    max-width: 0;
     opacity: 0;
-  }
-
-  .sidebar-aside.compact .sidebar-btn.logo-btn {
-    padding: 0 11px;
-    gap: 0;
   }
 
   .sidebar-badge {
@@ -676,8 +770,8 @@
     font-size: 8px;
     font-weight: 700;
     border-radius: 9999px;
-    background: white;
-    color: black;
+    background: var(--text-primary);
+    color: var(--surface-container);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -690,23 +784,24 @@
     50% { opacity: 0.7; }
   }
 
-  .sidebar-aside.mac-style {
-    padding-top: 38px;
+  .sidebar-aside.mac-style .sidebar-content {
+    padding-top: 0;
   }
 
-  .sidebar-aside.compact.mac-style {
-    padding-top: 38px;
-  }
-
-  /* macOS Traffic Lights */
   .sidebar-traffic-lights {
-    position: absolute;
-    top: 11px;
-    left: 12px;
+    position: relative;
+    height: 38px;
+    padding: 0 0 0 12px;
     display: flex;
     align-items: center;
     gap: 8px;
     z-index: 50;
+    flex-shrink: 0;
+  }
+
+  .sidebar-aside.compact .sidebar-traffic-lights {
+    padding-left: 8px;
+    gap: 6px;
   }
 
   .mac-light {

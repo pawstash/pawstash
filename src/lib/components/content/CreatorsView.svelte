@@ -28,6 +28,8 @@
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
+  import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
 
   import IconRefresh from '~icons/fluent/arrow-sync-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
@@ -47,6 +49,7 @@
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconPersonDelete from '~icons/fluent/person-delete-24-regular';
+  import IconPersonSubscribed from '~icons/fluent/person-available-24-filled';
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
 
@@ -108,6 +111,7 @@
   let gap = $derived((layoutState.isMobile ? 8 : 10) * scale);
   let targetCardWidth = $derived(baseCardWidth * scale);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
+  const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
@@ -203,10 +207,10 @@
   let sortOptions = $derived.by(() => {
     const sorts = activeCreatorSorts;
     const allOptions = [
-      { id: 'favorited', desc: { value: 'favorited_desc', label: i18n.t('creators.sort_favorited_desc') || 'Popularity (Desc)' }, asc: { value: 'favorited_asc', label: i18n.t('creators.sort_favorited_asc') || 'Popularity (Asc)' } },
-      { id: 'updated', desc: { value: 'updated_desc', label: i18n.t('creators.sort_updated_desc') || 'Updated (Newest first)' }, asc: { value: 'updated_asc', label: i18n.t('creators.sort_updated_asc') || 'Updated (Oldest first)' } },
-      { id: 'indexed', desc: { value: 'indexed_desc', label: i18n.t('creators.sort_indexed_desc') || 'Indexed (Newest first)' }, asc: { value: 'indexed_asc', label: i18n.t('creators.sort_indexed_asc') || 'Indexed (Oldest first)' } },
-      { id: 'name', asc: { value: 'name_asc', label: i18n.t('creators.sort_name_asc') || 'Name (A-Z)' }, desc: { value: 'name_desc', label: i18n.t('creators.sort_name_desc') || 'Name (Z-A)' } }
+      { id: 'favorited', desc: { value: 'favorited_desc', label: i18n.t('creators.sort_favorited_desc') }, asc: { value: 'favorited_asc', label: i18n.t('creators.sort_favorited_asc') } },
+      { id: 'updated', desc: { value: 'updated_desc', label: i18n.t('creators.sort_updated_desc') }, asc: { value: 'updated_asc', label: i18n.t('creators.sort_updated_asc') } },
+      { id: 'indexed', desc: { value: 'indexed_desc', label: i18n.t('creators.sort_indexed_desc') }, asc: { value: 'indexed_asc', label: i18n.t('creators.sort_indexed_asc') } },
+      { id: 'name', asc: { value: 'name_asc', label: i18n.t('creators.sort_name_asc') }, desc: { value: 'name_desc', label: i18n.t('creators.sort_name_desc') } }
     ];
 
     if (!sorts || sorts.length === 0) {
@@ -231,7 +235,7 @@
 
   let currentSortLabel = $derived.by(() => {
     const opt = sortOptions.find((o) => o.value === currentSortValue);
-    return opt?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+    return opt?.label ?? (i18n.t('favorites.sort_by'));
   });
 
   function handleSortChange(val: string) {
@@ -256,15 +260,19 @@
   let activeTab = $derived(creatorsState.activeTab);
 
   let creatorsList = $derived(creatorsState.creators);
+
+  const handoff = new GridHandoff();
+  $effect(() => handoff.sync(creatorsList.length > 0, creatorsState.loading));
+  onDestroy(() => handoff.destroy());
   let hasMore = $derived(creatorsState.hasMore);
 
   let mobileMoreOpen = $state(false);
 
   let creatorTabOptions = $derived<ChoiceOption<'all' | 'subscribed'>[]>([
-    { value: 'all', label: i18n.t('creators.tab_all') || 'All' },
+    { value: 'all', label: i18n.t('creators.tab_all') },
     {
       value: 'subscribed',
-      label: i18n.t('creators.tab_subscribed') || 'Subscriptions',
+      label: i18n.t('creators.tab_subscribed'),
       count: subscriptionState.items.length
     }
   ]);
@@ -349,12 +357,12 @@
         });
       }
       notify.success(
-        i18n.t('selection.subscribe') || 'Subscribed',
+        i18n.t('selection.subscribe'),
         `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error') || 'Failed to subscribe', err);
+      notify.error(i18n.t('subscriptions.action_error'), err);
     }
   }
 
@@ -369,12 +377,12 @@
         }
       }
       notify.success(
-        i18n.t('selection.unsubscribe') || 'Unsubscribed',
+        i18n.t('selection.unsubscribe'),
         `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error') || 'Failed to unsubscribe', err);
+      notify.error(i18n.t('subscriptions.action_error'), err);
     }
   }
 
@@ -392,7 +400,62 @@
       await accountState.fetchFavorites('creator');
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
+    }
+  }
+
+  let tilePending = $state<Record<string, boolean>>({});
+
+  async function toggleCreatorFavorite(event: MouseEvent, creator: Creator) {
+    event.stopPropagation();
+    event.preventDefault();
+    const key = `fav:${creator.service}:${creator.id}`;
+    if (tilePending[key]) return;
+    tilePending[key] = true;
+    const target = !accountState.isCreatorFavorite(creator.service, creator.id);
+    try {
+      await apiSetCreatorFavorite(creator.service, creator.id, target);
+      if (target) {
+        accountState.addCreatorFavoriteOptimistic(creator);
+        notify.success(i18n.t('post.added_to_favorites'), { description: creator.name, glyph: 'favorited' });
+      } else {
+        accountState.removeCreatorFavoriteOptimistic(creator.service, creator.id);
+        notify.success(i18n.t('post.removed_from_favorites'), { description: creator.name, glyph: 'unfavorited' });
+      }
+    } catch (err) {
+      notify.error(i18n.t('post.favorite_failed'), err);
+    } finally {
+      tilePending[key] = false;
+    }
+  }
+
+  async function toggleCreatorSubscription(event: MouseEvent, creator: Creator) {
+    event.stopPropagation();
+    event.preventDefault();
+    const key = `sub:${creator.service}:${creator.id}`;
+    if (tilePending[key]) return;
+    tilePending[key] = true;
+    try {
+      const existing = subscriptionState.forCreator(creator.service, creator.id);
+      if (existing) {
+        await subscriptionState.remove(existing.id);
+        notify.success(i18n.t('subscriptions.removed'), { description: creator.name, glyph: 'removed' });
+      } else {
+        await subscriptionState.save({
+          service: creator.service,
+          creator_id: creator.id,
+          creator_name: creator.name || creator.id,
+          initial_import: 'none',
+          auto_download: false,
+          download_scope: 'primary',
+          poll_interval_minutes: 30
+        });
+        notify.success(i18n.t('subscriptions.saved'), creator.name);
+      }
+    } catch (err) {
+      notify.error(i18n.t('subscriptions.action_error'), err);
+    } finally {
+      tilePending[key] = false;
     }
   }
 
@@ -406,7 +469,7 @@
 
 {#snippet filterInnerContent()}
   {#if enabledProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <span class="filter-label">{i18n.t('providers.title')}</span>
     <div class="service-options">
       {#each enabledProviders as provider}
         {@const state = creatorsState.providerFilters[provider.id] ?? 'neutral'}
@@ -419,9 +482,9 @@
         >
           <span>{cleanName}</span>
           {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
           {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
           {/if}
         </Button>
       {/each}
@@ -454,9 +517,9 @@
         <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -465,7 +528,7 @@
   {#if !configState.settings.pawchive_hide_ai}
     {@const state = creatorsState.aiFilter}
     <div class="floating-divider"></div>
-    <span class="filter-label">{i18n.t('feed.format') || 'Filters'}</span>
+    <span class="filter-label">{i18n.t('feed.format')}</span>
     <div class="service-options">
       <Button
         variant="ghost"
@@ -478,11 +541,11 @@
         class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
         <IconSparkle class="w-5 h-5" />
-        <span>{i18n.t('feed.format_ai') || 'AI Generated'}</span>
+        <span>{i18n.t('feed.format_ai')}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     </div>
@@ -505,7 +568,8 @@
         class="creators-sort-select"
         icon={IconArrowSort}
         iconOnly={true}
-        ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+        ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
+        align="right"
       />
     {/snippet}
   </ChoiceGroup>
@@ -539,15 +603,15 @@
   <HeaderActions
     bind:searchOpen
     bind:searchQuery={creatorsState.searchQuery}
-    searchPlaceholder={i18n.t('creators.search_placeholder') || 'Search creators...'}
+    searchPlaceholder={i18n.t('creators.search_placeholder')}
   >
     {#if !layoutState.isMobile}
       <Button
         variant={isSelectionActive ? 'accent' : 'ghost'}
         class="btn-icon"
         onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('creators'))}
-        title={i18n.t('selection.select_mode') || 'Select mode'}
-        aria-label="Select mode"
+        title={i18n.t('selection.select_mode')}
+        aria-label={i18n.t('selection.select_mode')}
       >
         <IconCheckboxChecked class="w-5 h-5" />
       </Button>
@@ -571,8 +635,8 @@
         variant="ghost"
         class="btn-icon"
         onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more') || 'More'}
-        aria-label="More actions"
+        title={i18n.t('common.more')}
+        aria-label={i18n.t('common.more')}
       >
         <IconMoreVertical class="w-5 h-5" />
       </Button>
@@ -601,12 +665,7 @@
     {/snippet}
   </PageHeader>
 
-  {#if creatorsState.loading && creatorsState.creators.length === 0}
-    <div class="status-container">
-      <IconLoading class="spinner" />
-      <span>{i18n.t('feed.loading')}</span>
-    </div>
-  {:else if creatorsState.error && creatorsState.creators.length === 0}
+  {#if creatorsState.error && creatorsState.creators.length === 0}
     <div class="status-container error">
       <strong>{creatorsState.error}</strong>
       <span class="error-msg">{creatorsState.error}</span>
@@ -614,7 +673,7 @@
         <IconArrowClockwise /> {i18n.t('feed.retry')}
       </Button>
     </div>
-  {:else if creatorsList.length === 0}
+  {:else if creatorsList.length === 0 && !handoff.skeletonMounted}
     {#if activeTab === 'subscribed'}
       <div class="status-container empty">
         <strong>{i18n.t('subscriptions.empty')}</strong>
@@ -631,20 +690,28 @@
       <div class="scale-indicator">{configState.settings.grid_scale}%</div>
     {/if}
 
-    <div
-      class="creators-grid"
-      onwheel={handleWheel}
-      style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}
-    >
-      {#each creatorsList as creator (creator.service + ':' + creator.id)}
+    <div class="grid-stack">
+      <div
+        class="creators-grid"
+        onwheel={handleWheel}
+        style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}
+      >
+      {#each creatorsList as creator, index (creator.service + ':' + creator.id)}
         {@const creatorKey = `${creator.service}:${creator.id}`}
         {@const isSelected = isSelectionActive && selectionState.isSelected(creatorKey)}
         {@const placeholder = creatorPlaceholderUrl(creator)}
         {@const avatarSrc = creatorAvatarSrc(creator)}
+        {@const isCreatorFav = accountState.isCreatorFavorite(creator.service, creator.id)}
+        {@const creatorSub = subscriptionState.forCreator(creator.service, creator.id)}
+        {@const favPending = tilePending[`fav:${creatorKey}`]}
+        {@const subPending = tilePending[`sub:${creatorKey}`]}
+        {@const enterDelay = handoff.delayFor(index)}
         <article
           class="grid-tile"
           class:selected={isSelected}
+          class:is-entering={enterDelay !== null}
           style:aspect-ratio={ratio}
+          style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
           data-creator-key={creatorKey}
         >
           <button
@@ -661,12 +728,56 @@
               class="grid-tile-select-checkbox"
               class:checked={isSelected}
               onclick={(e) => handleCreatorCheckbox(e, creator)}
-              aria-label="Select creator"
+              aria-label={i18n.t('selection.select_creator')}
             >
               {#if isSelected}
-                <IconCheckmark class="w-[14px] h-[14px]" />
+                <IconCheckmark />
               {/if}
             </button>
+          {:else}
+            <div class="grid-tile-top-actions tile-toolbar">
+              <div class="grid-tile-action-item" class:is-active={isCreatorFav}>
+                <button
+                  type="button"
+                  class="grid-tile-action grid-tile-action-fav"
+                  class:favorited={isCreatorFav}
+                  disabled={favPending}
+                  onclick={(e) => toggleCreatorFavorite(e, creator)}
+                  use:ripple
+                  use:tooltip={i18n.t(isCreatorFav ? 'post.unfavorite' : 'post.favorite')}
+                  aria-label={i18n.t(isCreatorFav ? 'post.unfavorite' : 'post.favorite')}
+                >
+                  {#if favPending}
+                    <IconLoading />
+                  {:else if isCreatorFav}
+                    <IconHeartFilled />
+                  {:else}
+                    <IconHeart />
+                  {/if}
+                </button>
+              </div>
+
+              <div class="grid-tile-action-item" class:is-active={Boolean(creatorSub)}>
+                <button
+                  type="button"
+                  class="grid-tile-action"
+                  class:is-selected={Boolean(creatorSub)}
+                  disabled={subPending}
+                  onclick={(e) => toggleCreatorSubscription(e, creator)}
+                  use:ripple
+                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                  aria-label={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                >
+                  {#if subPending}
+                    <IconLoading />
+                  {:else if creatorSub}
+                    <IconPersonSubscribed />
+                  {:else}
+                    <IconPersonAdd />
+                  {/if}
+                </button>
+              </div>
+            </div>
           {/if}
 
           <div class="grid-tile-placeholder">
@@ -698,6 +809,8 @@
           <div class="grid-tile-shade"></div>
 
           <div class="grid-tile-footer">
+            <h2 class="grid-tile-title">{creator.name}</h2>
+
             <div class="grid-tile-author">
               <button
                 type="button"
@@ -709,19 +822,11 @@
                 <ServiceIcon service={creator.service} />
               </button>
 
-              <span
-                role="link"
-                tabindex="0"
-                class="grid-tile-author-name"
-                onclick={(e) => handleCreatorClick(e, creator)}
-                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCreatorClick(e as any, creator)}
-              >
-                {creator.name}
-              </span>
+              <span class="grid-tile-author-name is-service">{creator.service}</span>
             </div>
 
             <div class="grid-tile-meta">
-              <span>{creator.service} · {creator.id}</span>
+              <span>{creator.id}</span>
               <div class="grid-tile-meta-stats">
                 {#if Number(creator.favorited ?? 0) > 0}
                   <span class="grid-tile-meta-row">
@@ -735,6 +840,15 @@
           </div>
         </article>
       {/each}
+      </div>
+      {#if handoff.skeletonMounted}
+        <SkeletonGrid
+          cardWidth={targetCardWidth}
+          {gap}
+          ratio={ratioValues[configState.settings.grid_aspect_ratio]}
+          fading={handoff.skeletonFading}
+        />
+      {/if}
     </div>
 
     {#if hasMore}
@@ -790,7 +904,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     open={mobileMoreOpen}
-    title={i18n.t('common.more') || 'More'}
+    title={i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -809,7 +923,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select creators')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -829,7 +943,7 @@
           <IconArrowClockwise class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
     </div>
@@ -855,7 +969,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
@@ -875,7 +989,7 @@
   :global(.creators-sort-select .select-trigger:hover),
   :global(.creators-sort-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.creators-sort-select .select-trigger:active),
@@ -887,51 +1001,8 @@
   :global(.creators-sort-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
-  }
-
-  .status-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    gap: 6px;
-    min-height: 310px;
-    color: rgba(255, 255, 255, 0.42);
-  }
-
-  .status-container.error {
-    color: #fca5a5;
-  }
-
-  .error-msg {
-    max-width: 400px;
-    font-size: 12px;
-    opacity: 0.8;
-    margin-bottom: 8px;
-    overflow-wrap: anywhere;
-  }
-
-  .status-container.empty strong {
-    font-size: 14px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.76);
-  }
-
-  .status-container.empty span {
-    max-width: 360px;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.42);
-    line-height: 1.5;
-  }
-
-  .status-container :global(svg) {
-    width: 34px;
-    height: 34px;
-    color: rgba(255, 255, 255, 0.42);
-    margin-bottom: 5px;
   }
 
   .creators-grid {
@@ -947,7 +1018,7 @@
     font-size: calc(30px * var(--grid-scale, 1));
     font-weight: 700;
     letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.22);
+    color: var(--text-muted);
   }
 
   .sentinel {
@@ -965,10 +1036,10 @@
     bottom: 34px;
     transform: translateX(-50%);
     padding: 7px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(var(--surface-tint-rgb), 0.14);
     border-radius: 999px;
     background: rgba(10, 10, 14, 0.82);
-    color: white;
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 650;
     backdrop-filter: blur(14px);

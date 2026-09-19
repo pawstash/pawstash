@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, getContext } from 'svelte';
+  import { onMount, onDestroy, tick, getContext } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { configState } from '$lib/state/configState.svelte';
@@ -7,6 +7,7 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import { apiSaveSettings } from '$lib/utils/ipc';
+  import { formatDate } from '$lib/utils/formatters';
   import { creatorAvatarSrc, creatorPlaceholderUrl } from '$lib/utils/media';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Creator, Favorite, Post } from '$lib/types/content';
@@ -24,7 +25,9 @@
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
-  import { ripple } from '$lib/motion';
+  import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
+  import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
+  import { ripple, tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
@@ -32,9 +35,11 @@
   import { getPostDownloadTargets } from '$lib/utils/media';
   import { apiSetPostFavorite, apiSetCreatorFavorite } from '$lib/utils/ipc';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
+  import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconHeartOff from '~icons/fluent/heart-broken-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
@@ -54,6 +59,7 @@
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
+  import IconPersonSubscribed from '~icons/fluent/person-available-24-filled';
   import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
@@ -83,26 +89,9 @@
      (activeTab === 'creators' && selectionState.scope === 'creators'))
   );
   let selectedPosts = $derived(activeTab === 'posts' && isSelectionActive ? selectionState.getItems<Post>() : []);
-  let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  const stashOptions = $derived(libraryState.stashOptions);
 
-  let batchSelectedStashes = $derived.by(() => {
-    if (selectedPosts.length === 0) return [];
-    const stashCounts = new Map<string, number>();
-    for (const post of selectedPosts) {
-      const ids = libraryState.getPostStashes(post);
-      for (const id of ids) {
-        stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
-      }
-    }
-    const result: string[] = [];
-    for (const [id, count] of stashCounts.entries()) {
-      if (count === selectedPosts.length) {
-        result.push(id);
-      }
-    }
-    return result;
-  });
+  const batchSelectedStashes = $derived(libraryState.stashesForPosts(selectedPosts));
 
   async function handleBatchToggleStash(collectionId: string) {
     const items = selectionState.getItems<Post>();
@@ -113,15 +102,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notifyRemovedFromStash(collectionId, items);
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notifyAddedToStash(collectionId);
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -133,9 +122,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -230,6 +219,11 @@
     }
     return sortCreators(filtered, creatorSort);
   });
+
+  const creatorsHandoff = new GridHandoff();
+  $effect(() => creatorsHandoff.sync(filteredCreators.length > 0, loading));
+  onDestroy(() => creatorsHandoff.destroy());
+
   let visibleCreators = $derived(filteredCreators.slice(0, visibleCreatorsCount));
   let hasMoreCreators = $derived(filteredCreators.length > visibleCreatorsCount);
 
@@ -282,17 +276,17 @@
       ]);
   let currentSort = $derived(activeTab === 'posts' ? postSort : creatorSort);
   let currentSortLabel = $derived(
-    sortOptions.find((o) => o.value === currentSort)?.label ?? (i18n.t('favorites.sort_by') || 'Sort')
+    sortOptions.find((o) => o.value === currentSort)?.label ?? (i18n.t('favorites.sort_by'))
   );
   let favoriteTabOptions = $derived<ChoiceOption<'posts' | 'creators'>[]>([
     {
       value: 'posts',
-      label: i18n.t('favorites.posts') || 'Posts',
+      label: i18n.t('favorites.posts'),
       count: posts.length
     },
     {
       value: 'creators',
-      label: i18n.t('favorites.creators') || 'Creators',
+      label: i18n.t('favorites.creators'),
       count: creators.length
     }
   ]);
@@ -302,6 +296,7 @@
   let gap = $derived(Math.round((layoutState.isMobile ? 8 : 10) * scale));
   let targetCardWidth = $derived(Math.round(baseCardWidth * scale));
   let ratio = $derived(({ square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const)[configState.settings.grid_aspect_ratio]);
+  const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 
   function mapFavoritePost(favorite: Favorite, index = 0): Post {
     return {
@@ -428,12 +423,12 @@
   }
 
   const formatList = [
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+    { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio'), icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft }
   ];
 
   async function loadFavorites(force = false) {
@@ -484,12 +479,12 @@
         await libraryState.save(post);
       }
       notify.success(
-        i18n.t('selection.save_to_library') || 'Saved to library',
+        i18n.t('selection.save_to_library'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('library.save_error') || 'Failed to save to library', err);
+      notify.error(i18n.t('library.save_error'), err);
     }
   }
 
@@ -499,12 +494,12 @@
     try {
       const count = await downloadState.downloadPosts(items);
       notify.success(
-        i18n.t('selection.download_all') || 'Queued downloads',
+        i18n.t('selection.download_all'),
         `${count} ${count === 1 ? 'file' : 'files'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -516,13 +511,13 @@
         await apiSetPostFavorite(post.service, post.user, post.id, false);
       }
       notify.success(
-        i18n.t('selection.unfavorite') || 'Removed from favorites',
+        i18n.t('selection.unfavorite'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       await accountState.fetchFavorites('post', true);
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
     }
   }
 
@@ -542,12 +537,12 @@
         });
       }
       notify.success(
-        i18n.t('selection.subscribe') || 'Subscribed',
+        i18n.t('selection.subscribe'),
         `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error') || 'Failed to subscribe', err);
+      notify.error(i18n.t('subscriptions.action_error'), err);
     }
   }
 
@@ -559,13 +554,13 @@
         await apiSetCreatorFavorite(creator.service, creator.id, false);
       }
       notify.success(
-        i18n.t('selection.unfavorite') || 'Removed from favorites',
+        i18n.t('selection.unfavorite'),
         `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
       );
       await accountState.fetchFavorites('creator', true);
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to remove from favorites', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
     }
   }
 
@@ -615,18 +610,64 @@
     selectionState.toggle('creators', key, creator, creatorKeys, event.shiftKey, creatorsMap);
   }
 
+  let tilePending = $state<Record<string, boolean>>({});
+
+  async function toggleCreatorFavorite(event: MouseEvent, creator: Creator) {
+    event.stopPropagation();
+    event.preventDefault();
+    const key = `fav:${creator.service}:${creator.id}`;
+    if (tilePending[key]) return;
+    tilePending[key] = true;
+    const target = !accountState.isCreatorFavorite(creator.service, creator.id);
+    try {
+      await apiSetCreatorFavorite(creator.service, creator.id, target);
+      if (target) {
+        accountState.addCreatorFavoriteOptimistic(creator);
+        notify.success(i18n.t('post.added_to_favorites'), { description: creator.name, glyph: 'favorited' });
+      } else {
+        accountState.removeCreatorFavoriteOptimistic(creator.service, creator.id);
+        notify.success(i18n.t('post.removed_from_favorites'), { description: creator.name, glyph: 'unfavorited' });
+      }
+    } catch (err) {
+      notify.error(i18n.t('post.favorite_failed'), err);
+    } finally {
+      tilePending[key] = false;
+    }
+  }
+
+  async function toggleCreatorSubscription(event: MouseEvent, creator: Creator) {
+    event.stopPropagation();
+    event.preventDefault();
+    const key = `sub:${creator.service}:${creator.id}`;
+    if (tilePending[key]) return;
+    tilePending[key] = true;
+    try {
+      const existing = subscriptionState.forCreator(creator.service, creator.id);
+      if (existing) {
+        await subscriptionState.remove(existing.id);
+        notify.success(i18n.t('subscriptions.removed'), { description: creator.name, glyph: 'removed' });
+      } else {
+        await subscriptionState.save({
+          service: creator.service,
+          creator_id: creator.id,
+          creator_name: creator.name || creator.id,
+          initial_import: 'none',
+          auto_download: false,
+          download_scope: 'primary',
+          poll_interval_minutes: 30
+        });
+        notify.success(i18n.t('subscriptions.saved'), creator.name);
+      }
+    } catch (err) {
+      notify.error(i18n.t('subscriptions.action_error'), err);
+    } finally {
+      tilePending[key] = false;
+    }
+  }
+
   function closeSearch() {
     searchOpen = false;
     searchQuery = '';
-  }
-
-  function formatDate(value: unknown) {
-    if (!value) return '';
-    const numeric = Number(value);
-    const date = Number.isFinite(numeric) && numeric > 0
-      ? new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric)
-      : new Date(String(value));
-    return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   function handleCreatorWheel(event: WheelEvent) {
@@ -669,7 +710,8 @@
         class="favorites-sort-select"
         icon={IconArrowSort}
         iconOnly={true}
-        ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+        ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
+        align="right"
       />
     {/snippet}
   </ChoiceGroup>
@@ -698,9 +740,9 @@
         <ServiceIcon {service} class="w-5 h-5" />
         <span>{service}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -721,9 +763,9 @@
           <IconComponent class="w-5 h-5" />
           <span>{fmt.label()}</span>
           {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
           {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
           {/if}
         </Button>
       {/each}
@@ -761,8 +803,8 @@
         variant={isSelectionActive ? 'accent' : 'ghost'}
         class="btn-icon"
         onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators'))}
-        title={i18n.t('selection.select_mode') || 'Select mode'}
-        aria-label="Select mode"
+        title={i18n.t('selection.select_mode')}
+        aria-label={i18n.t('selection.select_mode')}
       >
         <IconCheckboxChecked class="w-5 h-5" />
       </Button>
@@ -817,8 +859,8 @@
         variant="ghost"
         class="btn-icon"
         onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more') || 'More'}
-        aria-label="More actions"
+        title={i18n.t('common.more')}
+        aria-label={i18n.t('common.more')}
       >
         <IconMoreVertical class="w-5 h-5" />
       </Button>
@@ -847,9 +889,7 @@
     {/snippet}
   </PageHeader>
 
-  {#if loading && currentCount === 0}
-    <div class="status-container"><IconLoading class="spinner" /><span>{i18n.t('feed.loading')}</span></div>
-  {:else if error && currentCount === 0}
+  {#if error && currentCount === 0}
     <div class="status-container error">
       <strong>{i18n.t('favorites.load_error')}</strong>
       <span>{error}</span>
@@ -864,27 +904,35 @@
       emptyTitle={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results') : i18n.t('favorites.empty_posts')}
       emptyDescription={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_posts_guest') : i18n.t('favorites.empty_posts_desc'))}
     />
-  {:else if filteredCreators.length === 0}
+  {:else if filteredCreators.length === 0 && !creatorsHandoff.skeletonMounted}
     <div class="status-container empty">
       <IconPeople class="status-icon" />
       <strong>{searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results') : i18n.t('favorites.empty_creators')}</strong>
       <span>{searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_creators_guest') : i18n.t('favorites.empty_creators_desc'))}</span>
     </div>
   {:else}
-    <div
-      class="creators-grid"
-      onwheel={handleCreatorWheel}
-      style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
-    >
-      {#each visibleCreators as creator (creator.service + ':' + creator.id)}
+    <div class="grid-stack">
+      <div
+        class="creators-grid"
+        onwheel={handleCreatorWheel}
+        style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
+      >
+      {#each visibleCreators as creator, index (creator.service + ':' + creator.id)}
         {@const creatorKey = `${creator.service}:${creator.id}`}
         {@const isSelected = isSelectionActive && selectionState.isSelected(creatorKey)}
         {@const placeholder = creatorPlaceholderUrl(creator)}
         {@const avatarSrc = creatorAvatarSrc(creator)}
+        {@const isCreatorFav = accountState.isCreatorFavorite(creator.service, creator.id)}
+        {@const creatorSub = subscriptionState.forCreator(creator.service, creator.id)}
+        {@const favPending = tilePending[`fav:${creatorKey}`]}
+        {@const subPending = tilePending[`sub:${creatorKey}`]}
+        {@const enterDelay = creatorsHandoff.delayFor(index)}
         <article
           class="grid-tile"
           class:selected={isSelected}
+          class:is-entering={enterDelay !== null}
           style:aspect-ratio={ratio}
+          style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
           data-creator-key={creatorKey}
         >
           <button
@@ -901,12 +949,56 @@
               class="grid-tile-select-checkbox"
               class:checked={isSelected}
               onclick={(e) => handleCreatorCheckbox(e, creator)}
-              aria-label="Select creator"
+              aria-label={i18n.t('selection.select_creator')}
             >
               {#if isSelected}
-                <IconCheckmark class="w-[14px] h-[14px]" />
+                <IconCheckmark />
               {/if}
             </button>
+          {:else}
+            <div class="grid-tile-top-actions tile-toolbar">
+              <div class="grid-tile-action-item" class:is-active={isCreatorFav}>
+                <button
+                  type="button"
+                  class="grid-tile-action grid-tile-action-fav"
+                  class:favorited={isCreatorFav}
+                  disabled={favPending}
+                  onclick={(e) => toggleCreatorFavorite(e, creator)}
+                  use:ripple
+                  use:tooltip={i18n.t(isCreatorFav ? 'post.unfavorite' : 'post.favorite')}
+                  aria-label={i18n.t(isCreatorFav ? 'post.unfavorite' : 'post.favorite')}
+                >
+                  {#if favPending}
+                    <IconLoading />
+                  {:else if isCreatorFav}
+                    <IconHeartFilled />
+                  {:else}
+                    <IconHeart />
+                  {/if}
+                </button>
+              </div>
+
+              <div class="grid-tile-action-item" class:is-active={Boolean(creatorSub)}>
+                <button
+                  type="button"
+                  class="grid-tile-action"
+                  class:is-selected={Boolean(creatorSub)}
+                  disabled={subPending}
+                  onclick={(e) => toggleCreatorSubscription(e, creator)}
+                  use:ripple
+                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                  aria-label={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                >
+                  {#if subPending}
+                    <IconLoading />
+                  {:else if creatorSub}
+                    <IconPersonSubscribed />
+                  {:else}
+                    <IconPersonAdd />
+                  {/if}
+                </button>
+              </div>
+            </div>
           {/if}
 
           <div class="grid-tile-placeholder"><span class="fallback-initials">{creator.name.slice(0, 2).toUpperCase()}</span></div>
@@ -918,18 +1010,13 @@
           {/if}
           <div class="grid-tile-shade"></div>
           <div class="grid-tile-footer">
+            <h2 class="grid-tile-title">{creator.name}</h2>
             <div class="grid-tile-author">
               <span class="grid-tile-logo inline-logo"><ServiceIcon service={creator.service} /></span>
-              <span
-                role="link"
-                tabindex="0"
-                class="grid-tile-author-name"
-                onclick={(e) => handleCreatorClick(e, creator)}
-                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCreatorClick(e as any, creator)}
-              >{creator.name}</span>
+              <span class="grid-tile-author-name is-service">{creator.service}</span>
             </div>
             <div class="grid-tile-meta">
-              <span>{creator.service} · {creator.id}</span>
+              <span>{creator.id}</span>
               <div class="grid-tile-meta-stats">
                 <span class="grid-tile-meta-row"><IconHeartFilled />{i18n.t('favorites.saved')}</span>
                 <span>{formatDate(creator.updated ?? creator.indexed)}</span>
@@ -938,6 +1025,15 @@
           </div>
         </article>
       {/each}
+      </div>
+      {#if creatorsHandoff.skeletonMounted}
+        <SkeletonGrid
+          cardWidth={targetCardWidth}
+          {gap}
+          ratio={ratioValues[configState.settings.grid_aspect_ratio]}
+          fading={creatorsHandoff.skeletonFading}
+        />
+      {/if}
     </div>
 
     {#if hasMoreCreators}
@@ -967,6 +1063,7 @@
       closeOnChange={false}
       icon={IconFolder}
       class="selection-stash-select"
+      align="right"
     />
 
     <Button
@@ -1029,7 +1126,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     open={mobileMoreOpen}
-    title={i18n.t('common.more') || 'More'}
+    title={i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -1048,7 +1145,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select mode')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -1068,7 +1165,7 @@
           <IconArrowClockwise class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
     </div>
@@ -1093,7 +1190,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
@@ -1113,7 +1210,7 @@
   :global(.favorites-sort-select .select-trigger:hover),
   :global(.favorites-sort-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.favorites-sort-select .select-trigger:active),
@@ -1125,37 +1222,10 @@
   :global(.favorites-sort-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
   }
 
-  .status-container {
-    min-height: 310px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    text-align: center;
-    color: rgba(255, 255, 255, 0.42);
-  }
-
-  .status-container strong {
-    color: rgba(255, 255, 255, 0.76);
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .status-container span {
-    max-width: 360px;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.42);
-    line-height: 1.5;
-  }
-
-  .status-container.error span, .inline-error { color: #fca5a5; }
-  :global(.status-icon) { width: 34px; height: 34px; color: rgba(255, 255, 255, 0.42); margin-bottom: 5px; }
-  :global(.spinner) { width: 28px; height: 28px; }
 
   .creators-grid {
     display: grid;
@@ -1164,7 +1234,7 @@
     align-items: start;
   }
 
-  .fallback-initials { font-size: 26px; font-weight: 700; color: rgba(255,255,255,.35); }
+  .fallback-initials { font-size: 26px; font-weight: 700; color: var(--text-muted); }
   .inline-error { margin-top: 20px; text-align: center; font-size: 12px; }
   .sentinel {
     display: flex;

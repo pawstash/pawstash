@@ -22,10 +22,10 @@
   import type { AppSettings } from '$lib/types/config';
   import SectionTitle from '$lib/components/layout/SectionTitle.svelte';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
-  import ChoiceGroup from '$lib/components/ui/ChoiceGroup.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import ProviderAuthModal from '$lib/components/providers/ProviderAuthModal.svelte';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconMerge from '~icons/fluent/merge-24-regular';
@@ -192,12 +192,9 @@
         void apiSaveSettings(next);
       }}
     >
-      <ChoiceGroup
-        options={[
-          { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-          { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-        ]}
-        value={configState.settings.smart_merge_attachments ?? true}
+      <Toggle
+        checked={configState.settings.smart_merge_attachments ?? true}
+        ariaLabel={i18n.t('settings.smart_merge_attachments')}
         onchange={(val) => {
           const next = { ...configState.settings, smart_merge_attachments: Boolean(val) };
           configState.updateSettings(next);
@@ -244,12 +241,9 @@
         defaultValue={defProv?.enabled ?? true}
         onReset={() => void handleToggleEnabled(provider, defProv?.enabled ?? true)}
       >
-        <ChoiceGroup
-          options={[
-            { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-            { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-          ]}
-          value={provider.enabled}
+        <Toggle
+          checked={provider.enabled}
+          ariaLabel={i18n.t('settings.provider_active')}
           onchange={(val) => handleToggleEnabled(provider, Boolean(val))}
         />
       </SettingItem>
@@ -332,12 +326,9 @@
             void creatorsState.refresh();
           }}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={configState.settings.pawchive_hide_ai ?? false}
+          <Toggle
+            checked={configState.settings.pawchive_hide_ai ?? false}
+            ariaLabel={i18n.t('settings.pawchive_hide_ai')}
             onchange={(val) => {
               const next = { ...configState.settings, pawchive_hide_ai: Boolean(val) };
               configState.updateSettings(next);
@@ -377,11 +368,11 @@
     onclose={() => (logoutConfirmProvider = null)}
   >
     {#snippet actions()}
-      <div class="flex flex-col gap-2 w-full">
+      <div class="dialog-actions">
         <Button
           variant="ghost"
           size="md"
-          class="w-full justify-center px-3 border border-[var(--border-color)]"
+          class="justify-center"
           onclick={() => handleConfirmLogout(false)}
           disabled={isLoggingOut}
         >
@@ -390,9 +381,10 @@
         </Button>
 
         <Button
-          variant="danger"
+          variant="ghost"
+          data-tone="danger"
           size="md"
-          class="w-full justify-center px-3"
+          class="justify-center"
           onclick={() => handleConfirmLogout(true)}
           disabled={isLoggingOut}
         >

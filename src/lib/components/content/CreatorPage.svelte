@@ -37,7 +37,7 @@
     getPostDownloadTargets,
     getPostFormats
   } from '$lib/utils/media';
-  import { thumbHashToAverageColor } from '$lib/utils/thumbhash';
+  import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { parseTags, getPostTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import { logger } from '$lib/utils/logger';
   import type { DownloadScope, InitialImport } from '$lib/types/subscription';
@@ -101,6 +101,7 @@
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconWarning from '~icons/fluent/warning-24-regular';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { tooltip } from '$lib/motion';
 
   interface Props {
@@ -152,7 +153,7 @@
       }));
     }
     return [
-      { value: 'auto', label: i18n.t('post.source_auto') || 'Merged' },
+      { value: 'auto', label: i18n.t('post.source_auto') },
       ...candidateProviders.map((p) => ({
         value: p.id,
         label: formatProviderName(p.name)
@@ -253,13 +254,13 @@
   }
 
   let formatList = $derived([
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft },
-    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai') || 'AI Generated', icon: IconSparkle }] : [])
+    { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio'), icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft },
+    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai'), icon: IconSparkle }] : [])
   ]);
 
   function clearAllFilters() {
@@ -346,14 +347,10 @@
   let updatedDateStr = $derived(rawUpdated && rawUpdated !== 0 && rawUpdated !== '0' ? formatDate(rawUpdated) : '');
   let indexedDateStr = $derived(rawIndexed && rawIndexed !== 0 && rawIndexed !== '0' ? formatDate(rawIndexed) : '');
 
-  let showUpdated = $derived(Boolean(
-    updatedDateStr &&
-    updatedDateStr !== '—'
-  ));
+  let showUpdated = $derived(Boolean(updatedDateStr));
 
   let showIndexed = $derived(Boolean(
     indexedDateStr &&
-    indexedDateStr !== '—' &&
     (!showUpdated || indexedDateStr !== updatedDateStr)
   ));
 
@@ -505,19 +502,19 @@
 
   let sortOptions = $derived.by(() => {
     const opts = [
-      { value: 'default', label: i18n.t('post.media_sort_default') || 'Default Order' },
-      { value: 'newest', label: i18n.t('favorites.sort_published_desc') || 'Newest First' },
-      { value: 'oldest', label: i18n.t('favorites.sort_published_asc') || 'Oldest First' }
+      { value: 'default', label: i18n.t('post.media_sort_default') },
+      { value: 'newest', label: i18n.t('favorites.sort_published_desc') },
+      { value: 'oldest', label: i18n.t('favorites.sort_published_asc') }
     ];
     if (hasPopularityData) {
-      opts.push({ value: 'popular', label: i18n.t('creators.sort_favorited_desc') || 'Most Favorited' });
+      opts.push({ value: 'popular', label: i18n.t('creators.sort_favorited_desc') });
     }
     return opts;
   });
 
   let currentSortLabel = $derived.by(() => {
     const opt = sortOptions.find((o) => o.value === sortOrder);
-    return opt?.label ?? sortOptions[0]?.label ?? (i18n.t('favorites.sort_by') || 'Sort');
+    return opt?.label ?? sortOptions[0]?.label ?? (i18n.t('favorites.sort_by'));
   });
 
   $effect(() => {
@@ -562,7 +559,7 @@
     const list: Array<ChoiceOption<'posts' | 'similar' | 'links' | 'announcements' | 'fancards'>> = [
       {
         value: 'posts',
-        label: i18n.t('creator.posts') || 'Posts',
+        label: i18n.t('creator.posts'),
         count: postsCount
       }
     ];
@@ -570,7 +567,7 @@
     if (similarCreators.length > 0) {
       list.push({
         value: 'similar',
-        label: i18n.t('creator.similar_artists') || 'Similar Artists',
+        label: i18n.t('creator.similar_artists'),
         count: similarCreators.length
       });
     }
@@ -578,7 +575,7 @@
     if (creatorLinks.length > 0) {
       list.push({
         value: 'links',
-        label: i18n.t('creator.linked_accounts') || 'Linked Accounts',
+        label: i18n.t('creator.linked_accounts'),
         count: creatorLinks.length
       });
     }
@@ -586,7 +583,7 @@
     if (announcements.length > 0) {
       list.push({
         value: 'announcements',
-        label: i18n.t('creator.announcements') || 'Announcements',
+        label: i18n.t('creator.announcements'),
         count: announcements.length
       });
     }
@@ -594,7 +591,7 @@
     if (fancards.length > 0) {
       list.push({
         value: 'fancards',
-        label: i18n.t('creator.fancards') || 'Fancards',
+        label: i18n.t('creator.fancards'),
         count: fancards.length
       });
     }
@@ -812,38 +809,14 @@
         checkFavoriteStatus()
       ]);
     } catch (error) {
-      notify.error(i18n.t('feed.refresh_failed') || 'Failed to refresh', error);
+      notify.error(i18n.t('feed.refresh_failed'), error);
     }
-  }
-
-  function getAverageColor(url: string): Promise<string> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 1;
-          canvas.height = 1;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return resolve('');
-          ctx.drawImage(img, 0, 0, 1, 1);
-          const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-          resolve(`rgb(${r}, ${g}, ${b})`);
-        } catch (error) {
-          logger.warn('Creator artwork color extraction failed', error);
-          resolve('');
-        }
-      };
-      img.onerror = () => resolve('');
-      img.src = url;
-    });
   }
 
   async function getCreatorAccentColor(hasBanner: boolean, hasAvatar: boolean) {
     if (hasBanner && effectiveBanner) {
       try {
-        const color = await getAverageColor(effectiveBanner);
+        const color = await seedFromImageUrl(effectiveBanner);
         if (color) return color;
       } catch (error) {
         logger.warn(`Failed to extract creator banner accent for ${service}:${creatorId}`, error);
@@ -851,7 +824,7 @@
     }
     if (hasAvatar && effectiveAvatar) {
       try {
-        const color = await getAverageColor(effectiveAvatar);
+        const color = await seedFromImageUrl(effectiveAvatar);
         if (color) return color;
       } catch (error) {
         logger.warn(`Failed to extract creator avatar accent for ${service}:${creatorId}`, error);
@@ -868,7 +841,7 @@
     const cachedAccent = contentState.getCreatorAccent(service, creatorId);
     const headerThumb = (profile?.extra as any)?.header_thumbhash;
     const avatarThumb = (profile?.extra as any)?.avatar_thumbhash;
-    const thumbColor = cachedAccent || thumbHashToAverageColor(headerThumb) || thumbHashToAverageColor(avatarThumb);
+    const thumbColor = cachedAccent || seedFromThumbHash(headerThumb) || seedFromThumbHash(avatarThumb);
 
     if (thumbColor) {
       themeState.setOverrideAccent(thumbColor);
@@ -877,7 +850,7 @@
     const hasBanner = Boolean(effectiveBanner);
     const hasAvatar = Boolean(effectiveAvatar);
 
-    if (!cachedAccent && !thumbColor && (hasBanner || hasAvatar)) {
+    if (!cachedAccent && (hasBanner || hasAvatar)) {
       void getCreatorAccentColor(hasBanner, hasAvatar).then((color) => {
         if (!color || cancelled) return;
         contentState.setCreatorAccent(service, creatorId, color);
@@ -916,9 +889,14 @@
       }
 
       if (!authenticated) {
-        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'));
+        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'), {
+          glyph: targetState ? 'favorited' : 'unfavorited'
+        });
       } else {
-        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), creatorName);
+        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), {
+          description: creatorName,
+          glyph: targetState ? 'favorited' : 'unfavorited'
+        });
       }
     } catch (error) {
       notify.error(i18n.t('post.favorite_failed'), error);
@@ -988,7 +966,7 @@
       await subscriptionState.remove(subscription.id);
       subscriptionMenuOpen = false;
       mobileSubSettingsOpen = false;
-      notify.success(i18n.t('subscriptions.removed'), creatorName);
+      notify.success(i18n.t('subscriptions.removed'), { description: creatorName, glyph: 'removed' });
     } catch (error) {
       notify.error(i18n.t('subscriptions.action_error'), error);
     } finally {
@@ -1050,14 +1028,13 @@
     try {
       await navigator.clipboard.writeText(creatorId);
       copiedId = true;
-      notify.success(i18n.t('common.copied') || 'Copied ID');
+      notify.success(i18n.t('common.copied'), { glyph: 'copied' });
       setTimeout(() => { copiedId = false; }, 2000);
     } catch (e) {
       logger.error(`Failed to copy creator ID: ${creatorId}`, e);
     }
   }
 
-  // Media Viewer state for fancards
   let isViewerOpen = $state(false);
   let viewerActiveIndex = $state(0);
   let viewerItems = $derived.by((): MediaViewerItem[] =>
@@ -1084,25 +1061,9 @@
 
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
   let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  const stashOptions = $derived(libraryState.stashOptions);
 
-  let batchSelectedStashes = $derived.by(() => {
-    if (selectedPosts.length === 0) return [];
-    const stashCounts = new Map<string, number>();
-    for (const post of selectedPosts) {
-      const ids = libraryState.getPostStashes(post);
-      for (const id of ids) {
-        stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
-      }
-    }
-    const result: string[] = [];
-    for (const [id, count] of stashCounts.entries()) {
-      if (count === selectedPosts.length) {
-        result.push(id);
-      }
-    }
-    return result;
-  });
+  const batchSelectedStashes = $derived(libraryState.stashesForPosts(selectedPosts));
 
   function handleSelectAllPosts() {
     selectionState.selectAll(visibleCreatorPosts.map((p) => ({
@@ -1120,15 +1081,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notifyRemovedFromStash(collectionId, items);
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notifyAddedToStash(collectionId);
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -1140,9 +1101,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -1154,12 +1115,12 @@
         await libraryState.save(post);
       }
       notify.success(
-        i18n.t('selection.save_to_library') || 'Saved to library',
+        i18n.t('selection.save_to_library'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('library.save_error') || 'Failed to save to library', err);
+      notify.error(i18n.t('library.save_error'), err);
     }
   }
 
@@ -1169,12 +1130,12 @@
     try {
       const count = await downloadState.downloadPosts(items);
       notify.success(
-        i18n.t('selection.download_all') || 'Queued downloads',
+        i18n.t('selection.download_all'),
         `${count} ${count === 1 ? 'file' : 'files'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -1192,13 +1153,13 @@
       }
       notify.success(
         isFav
-          ? (i18n.t('selection.favorite') || 'Favorited')
-          : (i18n.t('selection.unfavorite') || 'Unfavorited'),
+          ? (i18n.t('selection.favorite'))
+          : (i18n.t('selection.unfavorite')),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('post.favorite_failed') || 'Failed to update favorites', err);
+      notify.error(i18n.t('post.favorite_failed'), err);
     }
   }
 </script>
@@ -1326,7 +1287,7 @@
 
 {#snippet filterInnerContent()}
   {#if candidateProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title') || 'Sources'}</span>
+    <span class="filter-label">{i18n.t('providers.title')}</span>
     <div class="service-options">
       {#each candidateProviders as provider}
         {@const state = providerFilters[provider.id] ?? 'neutral'}
@@ -1339,9 +1300,9 @@
         >
           <span>{cleanName}</span>
           {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
           {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
           {/if}
         </Button>
       {/each}
@@ -1349,7 +1310,7 @@
     <div class="floating-divider"></div>
   {/if}
 
-  <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
+  <span class="filter-label">{i18n.t('feed.format')}</span>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -1363,9 +1324,9 @@
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -1458,8 +1419,8 @@
               class="btn-icon action-btn"
               onclick={refreshCreator}
               disabled={entry.loading}
-              title={i18n.t('feed.refresh') || 'Refresh'}
-              aria-label="Refresh"
+              title={i18n.t('feed.refresh')}
+              aria-label={i18n.t('feed.refresh')}
             >
               {#if entry.loading}
                 <IconLoading class="w-[18px] h-[18px]" />
@@ -1472,8 +1433,8 @@
               variant={isSelectionActive ? 'accent' : 'ghost'}
               class="btn-icon action-btn"
               onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-              title={i18n.t('selection.select_mode') || 'Select mode'}
-              aria-label="Select mode"
+              title={i18n.t('selection.select_mode')}
+              aria-label={i18n.t('selection.select_mode')}
             >
               <IconCheckboxChecked class="w-[18px] h-[18px]" />
             </Button>
@@ -1492,8 +1453,8 @@
               variant="ghost"
               class="btn-icon action-btn"
               onclick={() => (mobileMoreOpen = true)}
-              title={i18n.t('common.more') || 'More'}
-              aria-label="More actions"
+              title={i18n.t('common.more')}
+              aria-label={i18n.t('common.more')}
             >
               <IconMoreVertical class="w-5 h-5" />
             </Button>
@@ -1508,7 +1469,6 @@
   {/if}
 
   <div class="post-content-wrapper">
-    <!-- Top Action Bar -->
     <div class="post-actions-bar">
       {#if !layoutState.isMobile}
         <div class="left-actions flex items-center flex-wrap gap-2 min-w-0">
@@ -1590,8 +1550,8 @@
             variant="ghost"
             class="action-btn btn-icon"
             onclick={() => (mobileMoreOpen = true)}
-            title={i18n.t('common.more') || 'More'}
-            aria-label="More options"
+            title={i18n.t('common.more')}
+            aria-label={i18n.t('common.more')}
           >
             <IconMoreVertical class="w-5 h-5" />
           </Button>
@@ -1599,7 +1559,6 @@
       {/if}
     </div>
 
-    <!-- Creator Header Info -->
     <header class="detail-header">
       <div class="creator-title-row">
         <div class="creator-header-avatar">
@@ -1655,7 +1614,7 @@
         <Button
           variant="ghost"
           onclick={openOriginalProfile}
-          tooltip={`${i18n.t('creator.open_original_profile') || 'Open original profile'}: ${service}`}
+          tooltip={`${i18n.t('creator.open_original_profile')}: ${service}`}
           aria-label={`Open on ${service}`}
         >
           <ServiceIcon {service} class="w-4 h-4" />
@@ -1668,7 +1627,7 @@
             <Button
               variant="ghost"
               onclick={() => openInProvider(prov.id)}
-              tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${formatProviderName(prov.name || prov.id)}`}
+              tooltip={`${i18n.t('creator.open_in_provider')}: ${formatProviderName(prov.name || prov.id)}`}
               aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
             >
               <IconOpen class="w-4 h-4" />
@@ -1680,7 +1639,7 @@
           <Button
             variant="ghost"
             onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
-            tooltip={`${i18n.t('creator.open_in_provider') || 'Open in provider'}: ${currentProviderName}`}
+            tooltip={`${i18n.t('creator.open_in_provider')}: ${currentProviderName}`}
             aria-label={`Open in ${currentProviderName}`}
           >
             <IconOpen class="w-4 h-4" />
@@ -1692,7 +1651,7 @@
         <Button
           variant="ghost"
           onclick={copyCreatorId}
-          tooltip={i18n.t('common.copy') || 'Copy ID'}
+          tooltip={i18n.t('common.copy')}
         >
           <span class="font-mono text-[var(--fg-subtle)]">{creatorId}</span>
           {#if copiedId}
@@ -1734,7 +1693,8 @@
               class="creator-sort-select"
               icon={IconArrowSort}
               iconOnly={true}
-              ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+              ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
+              align="right"
             />
           {/snippet}
         </ChoiceGroup>
@@ -1765,8 +1725,8 @@
                 variant={isSelectionActive ? 'accent' : 'ghost'}
                 class="btn-icon"
                 onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-                title={i18n.t('selection.select_mode') || 'Select mode'}
-                aria-label="Select mode"
+                title={i18n.t('selection.select_mode')}
+                aria-label={i18n.t('selection.select_mode')}
               >
                 <IconCheckboxChecked class="w-5 h-5" />
               </Button>
@@ -1788,7 +1748,6 @@
       </div>
     </div>
 
-    <!-- Active Tab Content -->
     {#if activeTab === 'posts'}
       <div class="creator-posts-section">
         {#if creatorTags.length > 0}
@@ -1797,7 +1756,7 @@
               tags={creatorTags}
               activeTag={selectedTag}
               showAll={true}
-              allLabel={i18n.t('common.all') || 'All'}
+              allLabel={i18n.t('common.all')}
               allCount={entry.posts.length}
               size="sm"
               onclick={(tag) => {
@@ -1819,10 +1778,10 @@
         {#if selectedTag && visibleCreatorPosts.length === 0}
           <div class="status-container empty py-12 text-center">
             <p class="text-sm font-medium text-[var(--text-secondary)]">
-              {i18n.t('creator.no_posts_with_tag') || 'No posts found matching tag'} <span class="text-[var(--accent-primary)] font-semibold">#{selectedTag}</span>
+              {i18n.t('creator.no_posts_with_tag')} <span class="text-[var(--accent-primary)] font-semibold">#{selectedTag}</span>
             </p>
             <Button variant="tonal" size="sm" class="mt-3" onclick={() => selectedTag = null}>
-              {i18n.t('creator.clear_tag_filter') || 'Clear tag filter'}
+              {i18n.t('creator.clear_tag_filter')}
             </Button>
           </div>
         {:else if postSearchError && visibleCreatorPosts.length === 0}
@@ -1849,7 +1808,7 @@
                 onclick={() => handleProviderChange('auto')}
               >
                 <IconSparkle class="w-4 h-4 mr-1.5" />
-                <span>{i18n.t('post.switch_to_merged') || 'Switch to Merged'}</span>
+                <span>{i18n.t('post.switch_to_merged')}</span>
               </Button>
             {/if}
           </div>
@@ -1857,7 +1816,7 @@
           <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
             <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
             <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-              {i18n.t('common.error') || 'Error'}
+              {i18n.t('common.error')}
             </h2>
             <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
               {entry.error}
@@ -1867,7 +1826,7 @@
               onclick={() => contentState.refreshCreator(service, creatorId, activeProviderId)}
             >
               <IconArrowClockwise class="w-4 h-4 mr-1.5" />
-              <span>{i18n.t('common.retry') || 'Retry'}</span>
+              <span>{i18n.t('common.retry')}</span>
             </Button>
           </div>
         {:else}
@@ -1875,7 +1834,7 @@
             posts={visibleCreatorPosts}
             loading={entry.loading || entry.loadingMore || (normalizedPostSearch.length >= 2 && postSearchLoading)}
             hasMore={normalizedPostSearch.length >= 2 ? postSearchHasMore : entry.hasMore}
-            emptyTitle={postSearchQuery ? (i18n.t('feed.no_results') || 'No posts found') : (i18n.t('feed.empty') || 'No posts available')}
+            emptyTitle={postSearchQuery ? (i18n.t('feed.no_results')) : (i18n.t('feed.empty'))}
             ariaLabel={creatorName}
             onLoadMore={handleLoadMore}
           />
@@ -1927,6 +1886,8 @@
                 <div class="grid-tile-shade"></div>
 
                 <div class="grid-tile-footer">
+                  <h2 class="grid-tile-title">{sName}</h2>
+
                   <div class="grid-tile-author">
                     <button
                       type="button"
@@ -1938,19 +1899,11 @@
                       <ServiceIcon service={sService} />
                     </button>
 
-                    <span
-                      role="link"
-                      tabindex="0"
-                      class="grid-tile-author-name"
-                      onclick={() => navigationState.openCreator(sService, sId)}
-                      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && navigationState.openCreator(sService, sId)}
-                    >
-                      {sName}
-                    </span>
+                    <span class="grid-tile-author-name is-service">{sService}</span>
                   </div>
 
                   <div class="grid-tile-meta">
-                    <span>{sService} · {sId}</span>
+                    <span>{sId}</span>
                   </div>
                 </div>
               </article>
@@ -1963,8 +1916,8 @@
         {#if creatorLinks.length === 0}
           <div class="status-container empty">
             <IconGlobe />
-            <strong>{i18n.t('creator.no_links') || 'No linked accounts found'}</strong>
-            <span>{i18n.t('creator.no_links_desc') || 'This creator does not have other platform accounts linked yet.'}</span>
+            <strong>{i18n.t('creator.no_links')}</strong>
+            <span>{i18n.t('creator.no_links_desc')}</span>
           </div>
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
@@ -2004,6 +1957,8 @@
                 <div class="grid-tile-shade"></div>
 
                 <div class="grid-tile-footer">
+                  <h2 class="grid-tile-title">{lName}</h2>
+
                   <div class="grid-tile-author">
                     <button
                       type="button"
@@ -2015,19 +1970,11 @@
                       <ServiceIcon service={lService} />
                     </button>
 
-                    <span
-                      role="link"
-                      tabindex="0"
-                      class="grid-tile-author-name"
-                      onclick={() => navigationState.openCreator(lService, lId)}
-                      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && navigationState.openCreator(lService, lId)}
-                    >
-                      {lName}
-                    </span>
+                    <span class="grid-tile-author-name is-service">{lService}</span>
                   </div>
 
                   <div class="grid-tile-meta">
-                    <span>{lService} · {lId}</span>
+                    <span>{lId}</span>
                   </div>
                 </div>
               </article>
@@ -2040,8 +1987,8 @@
         {#if announcements.length === 0}
           <div class="status-container empty">
             <IconNews />
-            <strong>{i18n.t('creator.no_announcements') || 'No community posts found'}</strong>
-            <span>{i18n.t('creator.no_announcements_desc') || 'There are no community posts or announcements from this creator yet.'}</span>
+            <strong>{i18n.t('creator.no_announcements')}</strong>
+            <span>{i18n.t('creator.no_announcements_desc')}</span>
           </div>
         {:else}
           <div class="announcements-list">
@@ -2065,8 +2012,8 @@
         {#if fancards.length === 0}
           <div class="status-container empty">
             <IconImageOff />
-            <strong>{i18n.t('creator.no_fancards') || 'No fancards found'}</strong>
-            <span>{i18n.t('creator.no_fancards_desc') || 'This creator does not have any fancards available.'}</span>
+            <strong>{i18n.t('creator.no_fancards')}</strong>
+            <span>{i18n.t('creator.no_fancards_desc')}</span>
           </div>
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
@@ -2123,13 +2070,15 @@
                       <ServiceIcon {service} />
                     </button>
 
-                    <span class="grid-tile-author-name">
-                      {ext} {card.size ? `· ${formatBytes(card.size)}` : ''}
-                    </span>
+                    <span class="grid-tile-author-name is-service">{service}</span>
                   </div>
 
                   <div class="grid-tile-meta">
                     <span>{formatDate(card.added)}</span>
+                    <div class="grid-tile-meta-stats">
+                      <span>{ext}</span>
+                      {#if card.size}<span>{formatBytes(card.size)}</span>{/if}
+                    </div>
                   </div>
                 </div>
               </article>
@@ -2165,6 +2114,7 @@
     closeOnChange={false}
     icon={IconFolder}
     class="selection-stash-select"
+    align="right"
   />
 
   <Button
@@ -2223,7 +2173,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select posts')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -2243,7 +2193,7 @@
           <IconArrowClockwise class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
 
@@ -2293,7 +2243,7 @@
       >
         <ServiceIcon {service} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_original_profile') || 'Open original profile'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_original_profile')}</span>
           <span class="text-xs text-muted capitalize">{service}</span>
         </div>
       </button>
@@ -2311,7 +2261,7 @@
           >
             <IconOpen class="text-secondary" />
             <div class="flex flex-col min-w-0">
-              <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
+              <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider')}</span>
               <span class="text-xs text-muted">{formatProviderName(prov.name || prov.id)}</span>
             </div>
           </button>
@@ -2328,7 +2278,7 @@
         >
           <IconOpen class="text-secondary" />
           <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider') || 'Open in provider'}</span>
+            <span class="text-sm font-semibold text-primary">{i18n.t('creator.open_in_provider')}</span>
             <span class="text-xs text-muted">{currentProviderName}</span>
           </div>
         </button>
@@ -2348,14 +2298,14 @@
           <IconCopy class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('common.copy') || 'Copy ID'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('common.copy')}</span>
           <span class="text-xs text-[var(--fg-muted)] font-mono">{creatorId}</span>
         </div>
       </button>
 
       {#if candidateProviders.length > 1}
         <div class="px-4 py-3 border-t border-[var(--border-color)]">
-          <div class="text-xs font-semibold text-[var(--fg-muted)] mb-1.5">{i18n.t('post.source') || 'Provider'}</div>
+          <div class="text-xs font-semibold text-[var(--fg-muted)] mb-1.5">{i18n.t('post.source')}</div>
           <Select
             variant="ghost"
             options={providerSelectOptions}
@@ -2507,7 +2457,7 @@
 
   .creator-title-row h1 {
     margin: 0;
-    color: white;
+    color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: clamp(28px, 4.5vw, 42px);
     font-weight: var(--font-weight-normal);
@@ -2554,7 +2504,7 @@
 
   .post-date {
     margin-top: 6px;
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-muted);
     font-size: 12px;
   }
 
@@ -2653,7 +2603,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
                    min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
@@ -2673,7 +2623,7 @@
   :global(.creator-sort-select .select-trigger:hover),
   :global(.creator-sort-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.creator-sort-select .select-trigger:active),
@@ -2685,7 +2635,7 @@
   :global(.creator-sort-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
   }
 
@@ -2760,37 +2710,6 @@
     padding: 16px 0;
   }
 
-  .status-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    gap: 6px;
-    min-height: 280px;
-    color: rgba(255, 255, 255, 0.42);
-  }
-
-  .status-container.empty strong {
-    font-size: 14px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.76);
-  }
-
-  .status-container.empty span {
-    max-width: 360px;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.42);
-    line-height: 1.5;
-  }
-
-  .status-container :global(svg) {
-    width: 34px;
-    height: 34px;
-    color: rgba(255, 255, 255, 0.42);
-    margin-bottom: 5px;
-  }
-
   .creator-cards-grid {
     position: relative;
     display: grid;
@@ -2804,7 +2723,7 @@
     font-size: calc(30px * var(--grid-scale, 1));
     font-weight: 700;
     letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.22);
+    color: var(--text-muted);
   }
 
   .announcements-list {

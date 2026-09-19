@@ -8,7 +8,7 @@
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { toast } from 'svelte-sonner';
+  import { notify } from '$lib/utils/toast';
   import { scrollable } from '$lib/actions/scrollable';
   import { ripple, tooltip } from '$lib/motion';
   import Modal from '$lib/components/ui/Modal.svelte';
@@ -416,7 +416,7 @@
     });
 
     if (filesToDownload.length === 0) {
-      toast.info(i18n.t('downloads.all_downloaded') || 'All selected files are already downloaded');
+      notify.info(i18n.t('downloads.all_downloaded'));
       clearSelection();
       return;
     }
@@ -433,9 +433,9 @@
     }
 
     if (started > 0) {
-      toast.success(
-        i18n.t('feed.download_started') || 'Download started',
-        { description: `${started} ${i18n.t('selection.items_count') || 'files added to queue'}` }
+      notify.success(
+        i18n.t('feed.download_started'),
+        { description: `${started} ${i18n.t('selection.items_count')}`, glyph: 'download' }
       );
     }
     clearSelection();
@@ -448,7 +448,7 @@
     if (node.is_folder) {
       const files = getAllDescendantFiles(node.id);
       if (files.length === 0) {
-        toast.error('Folder is empty');
+        notify.error('Folder is empty');
         return;
       }
 
@@ -460,7 +460,7 @@
       });
 
       if (filesToDownload.length === 0) {
-        toast.info(i18n.t('downloads.all_downloaded') || 'All files in folder are already downloaded');
+        notify.info(i18n.t('downloads.all_downloaded'));
         return;
       }
 
@@ -476,9 +476,9 @@
       }
 
       if (started > 0) {
-        toast.success(
-          i18n.t('feed.download_started') || 'Download started',
-          { description: `${started} files from "${node.name}" added to queue` }
+        notify.success(
+          i18n.t('feed.download_started'),
+          { description: `${started} files from "${node.name}" added to queue`, glyph: 'download' }
         );
       }
       return;
@@ -486,11 +486,11 @@
 
     const job = getNodeDownloadJob(node);
     if (job?.status === 'completed') {
-      toast.info(i18n.t('downloads.already_downloaded') || 'File is already downloaded');
+      notify.info(i18n.t('downloads.already_downloaded'));
       return;
     }
     if (job && ['downloading', 'resolving', 'verifying', 'queued'].includes(job.status)) {
-      toast.info(i18n.t('downloads.already_in_progress') || 'Download is already in progress');
+      notify.info(i18n.t('downloads.already_in_progress'));
       return;
     }
 
@@ -499,7 +499,7 @@
 
     try {
       await apiStartDownload(targetPost, node.id, dlUrl, node.name);
-      toast.success(i18n.t('feed.download_started') || 'Download started', { description: node.name });
+      notify.success(i18n.t('feed.download_started'), { description: node.name, glyph: 'download' });
     } catch {
     }
   }
@@ -518,11 +518,11 @@
   {#if folder}
     <div class="mega-explorer flex flex-col w-full h-full text-[var(--fg-default)] select-none">
       
-      <div class="mega-breadcrumbs h-11 min-h-[44px] max-h-[44px] flex items-center gap-1 px-4 text-[13px] text-[var(--fg-muted)] bg-transparent overflow-x-auto whitespace-nowrap shrink-0 border-b border-white/[0.04]">
+      <div class="mega-breadcrumbs h-11 min-h-[44px] max-h-[44px] flex items-center gap-1 px-4 text-[13px] text-[var(--fg-muted)] bg-transparent overflow-x-auto whitespace-nowrap shrink-0 border-b border-veil/[0.04]">
         {#if history.length > 1}
           <button
             type="button"
-            class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/10 text-[var(--fg-default)] transition-colors mr-1 shrink-0"
+            class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-veil/10 text-[var(--fg-default)] transition-colors mr-1 shrink-0"
             onclick={navigateUp}
             title="Go up one folder"
           >
@@ -549,7 +549,7 @@
       <div class="mega-table-container flex-1 min-h-0 relative overflow-hidden w-full bg-transparent" use:scrollable>
         <table class="mega-table w-full sm:min-w-[500px] border-collapse text-left bg-transparent">
           <thead class="bg-transparent">
-            <tr class="h-9 border-b border-white/[0.06] border-t-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]/80 sticky top-0 z-10 select-none bg-transparent backdrop-blur-sm">
+            <tr class="h-9 border-b border-veil/[0.06] border-t-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]/80 sticky top-0 z-10 select-none bg-transparent backdrop-blur-sm">
               <th class="py-2 px-3 sm:px-4 w-9 sm:w-10 text-center font-normal bg-transparent">
                 <Checkbox
                   checked={isAllCurrentSelected}
@@ -582,7 +582,7 @@
                 {@const isCompleted = progress.status === 'completed'}
 
                 <tr
-                  class="mega-row h-[46px] sm:h-[42px] transition-colors cursor-pointer select-none group even:bg-white/[0.015] hover:bg-white/[0.04] {isSelected ? 'bg-[var(--accent)]/10' : ''} {isCompleted ? 'is-completed' : ''} {isDownloading ? 'is-downloading' : ''}"
+                  class="mega-row h-[46px] sm:h-[42px] transition-colors cursor-pointer select-none group even:bg-veil/[0.015] hover:bg-veil/[0.04] {isSelected ? 'bg-[var(--accent)]/10' : ''} {isCompleted ? 'is-completed' : ''} {isDownloading ? 'is-downloading' : ''}"
                   style={isDownloading && progress.percent > 0 ? `--row-progress: ${progress.percent}%;` : ''}
                   onclick={() => isFolder ? navigateIntoFolder(node) : toggleSelect(node)}
                 >
@@ -610,16 +610,16 @@
                         <div class="flex items-center gap-1.5 text-[11px] text-[var(--fg-muted)] sm:hidden font-mono mt-0.5 leading-tight">
                           {#if isDownloading}
                             <span class="text-[var(--accent)] font-medium font-sans">
-                              {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued') || 'Queued')}
+                              {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued'))}
                             </span>
                           {:else if isCompleted}
                             <span class="text-emerald-400 font-medium font-sans">
-                              {displaySize > 0 ? formatBytes(displaySize) : '—'}
+                              {displaySize > 0 ? formatBytes(displaySize) : '-'}
                             </span>
                           {:else}
-                            <span>{displaySize > 0 ? formatBytes(displaySize) : '—'}</span>
+                            <span>{displaySize > 0 ? formatBytes(displaySize) : '-'}</span>
                           {/if}
-                          <span class="text-white/20">•</span>
+                          <span class="text-ink/20">•</span>
                           <span class="font-sans truncate">{typeLabel}</span>
                         </div>
                       </div>
@@ -633,15 +633,15 @@
                   <td class="py-2 px-4 text-right text-[12px] font-mono whitespace-nowrap relative z-[1] hidden sm:table-cell">
                     {#if isDownloading}
                       <span class="text-[var(--accent)] font-medium">
-                        {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued') || 'Queued')}
+                        {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued'))}
                       </span>
                     {:else if isCompleted}
                       <span class="text-emerald-400 font-medium inline-flex items-center gap-1 justify-end">
-                        {displaySize > 0 ? formatBytes(displaySize) : '—'}
+                        {displaySize > 0 ? formatBytes(displaySize) : '-'}
                       </span>
                     {:else}
                       <span class="text-[var(--fg-muted)]">
-                        {displaySize > 0 ? formatBytes(displaySize) : '—'}
+                        {displaySize > 0 ? formatBytes(displaySize) : '-'}
                       </span>
                     {/if}
                   </td>
@@ -653,9 +653,9 @@
                       {#if media}
                         <button
                           type="button"
-                          class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-white/10 transition-all shrink-0"
+                          class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-veil/10 transition-all shrink-0"
                           onclick={() => openMediaPreview(node)}
-                          title={i18n.t('post.viewer_open') || 'Preview'}
+                          title={i18n.t('post.viewer_open')}
                         >
                           <IconEye class="w-[18px] h-[18px]" />
                         </button>
@@ -666,8 +666,8 @@
                           href={resolveStreamUrl(node)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-white/10 transition-all inline-flex shrink-0"
-                          title={i18n.t('post.open_link') || 'Open direct stream'}
+                          class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-default)] hover:bg-veil/10 transition-all inline-flex shrink-0"
+                          title={i18n.t('post.open_link')}
                         >
                           <IconOpen class="w-[18px] h-[18px]" />
                         </a>
@@ -678,14 +678,14 @@
                           type="button"
                           class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-emerald-400 hover:bg-emerald-400/10 transition-all shrink-0"
                           onclick={() => isFolder ? navigateIntoFolder(node) : (media ? openMediaPreview(node) : downloadSingle(node))}
-                          title={i18n.t('downloads.completed') || 'Downloaded'}
+                          title={i18n.t('downloads.completed')}
                         >
                           <IconCheckmark class="w-[18px] h-[18px]" />
                         </button>
                       {:else if isDownloading}
                         <div
                           class="w-8 h-8 flex items-center justify-center text-[var(--accent)] shrink-0"
-                          title={`${i18n.t('downloads.status_downloading') || 'Downloading'}: ${progress.percent}%`}
+                          title={`${i18n.t('downloads.status_downloading')}: ${progress.percent}%`}
                         >
                           <IconLoading class="w-[18px] h-[18px]" />
                         </div>
@@ -694,7 +694,7 @@
                           type="button"
                           class="action-btn w-8 h-8 flex items-center justify-center rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all shrink-0"
                           onclick={() => downloadSingle(node)}
-                          title={i18n.t('post.download') || 'Download'}
+                          title={i18n.t('post.download')}
                         >
                           <IconDownload class="w-[18px] h-[18px]" />
                         </button>
@@ -720,14 +720,14 @@
 
 {#snippet dockFloating()}
   {#if selectedIds.size > 0}
-    <aside class="modal-selection-dock-wrapper" aria-label="Selection actions">
+    <aside class="modal-selection-dock-wrapper" aria-label={i18n.t('selection.select_mode')}>
       <div class="selection-dock" role="toolbar">
         <div class="selection-counter">
           <span class="selection-count-badge active">
             {selectedFiles.length}
           </span>
           <span class="selection-count-label">
-            {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : (i18n.t('selection.items_count') || 'selected')}
+            {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : (i18n.t('selection.items_count'))}
           </span>
         </div>
 
@@ -742,7 +742,7 @@
             aria-label={i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all')}
           >
             <IconSelectAll class="w-[17px] h-[17px]" />
-            <span>{i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all') || (isAllCurrentSelected ? 'Deselect all' : 'Select all')}</span>
+            <span>{i18n.t(isAllCurrentSelected ? 'selection.deselect_all' : 'selection.select_all')}</span>
           </button>
 
           <div class="selection-dock-divider"></div>
@@ -755,7 +755,7 @@
           onclick={downloadSelected}
         >
           <IconDownload class="w-[17px] h-[17px]" />
-          <span>{i18n.t('post.download') || 'Download'} ({selectedFiles.length})</span>
+          <span>{i18n.t('post.download')} ({selectedFiles.length})</span>
         </button>
 
         <div class="selection-dock-divider"></div>
@@ -765,8 +765,8 @@
           class="selection-dock-close-btn"
           use:ripple
           onclick={clearSelection}
-          use:tooltip={`${i18n.t('selection.cancel') || 'Cancel'} (Esc)`}
-          aria-label="Cancel selection"
+          use:tooltip={`${i18n.t('selection.cancel')} (Esc)`}
+          aria-label={i18n.t('selection.cancel')}
         >
           <IconDismiss class="w-[18px] h-[18px]" />
         </button>
@@ -845,8 +845,8 @@
   .mega-row.is-downloading {
     background-image: linear-gradient(
       to right,
-      rgba(255, 255, 255, 0.08) 0%,
-      rgba(255, 255, 255, 0.08) var(--row-progress, 0%),
+      rgba(var(--surface-tint-rgb), 0.08) 0%,
+      rgba(var(--surface-tint-rgb), 0.08) var(--row-progress, 0%),
       transparent var(--row-progress, 0%),
       transparent 100%
     );
@@ -878,7 +878,7 @@
     border-radius: 20px;
     background: rgba(16, 17, 22, 0.92);
     border: 1px solid var(--border-color);
-    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(var(--surface-tint-rgb), 0.05);
     backdrop-filter: blur(24px) saturate(1.6);
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     animation: floatingDockIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -910,7 +910,7 @@
     height: 36px;
     padding: 0 10px 0 6px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--surface-tint-rgb), 0.06);
     flex-shrink: 0;
   }
 
@@ -919,8 +919,8 @@
     height: 22px;
     padding: 0 6px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.7);
+    background: rgba(var(--surface-tint-rgb), 0.12);
+    color: var(--text-secondary);
     font-size: 11.5px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -931,20 +931,20 @@
 
   .selection-count-badge.active {
     background: var(--accent-primary);
-    color: var(--accent-text, #ffffff);
+    color: var(--accent-text, var(--text-primary));
   }
 
   .selection-count-label {
     font-size: 12.5px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
     letter-spacing: -0.01em;
   }
 
   .selection-dock-divider {
     width: 1px;
     height: 20px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--surface-tint-rgb), 0.08);
     margin: 0 2px;
     flex-shrink: 0;
   }
@@ -953,9 +953,9 @@
     height: 36px;
     padding: 0 12px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--surface-tint-rgb), 0.05);
     border: none;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
     font-size: 12.5px;
     font-weight: 500;
     display: inline-flex;
@@ -969,8 +969,8 @@
   }
 
   .selection-dock-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
+    background: rgba(var(--surface-tint-rgb), 0.12);
+    color: var(--text-primary);
   }
 
   .selection-dock-btn:active {
@@ -979,21 +979,21 @@
 
   .selection-dock-btn.btn-accent {
     background: var(--accent-primary);
-    color: var(--accent-text, #ffffff);
+    color: var(--accent-text, var(--text-primary));
   }
 
   .selection-dock-btn.btn-accent:hover {
     background: var(--accent-hover);
-    color: #ffffff;
+    color: var(--text-primary);
   }
 
   .selection-dock-close-btn {
     width: 36px;
     height: 36px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--surface-tint-rgb), 0.05);
     border: none;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1005,8 +1005,8 @@
   }
 
   .selection-dock-close-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
+    background: rgba(var(--surface-tint-rgb), 0.12);
+    color: var(--text-primary);
   }
 
   .selection-dock-close-btn:active {

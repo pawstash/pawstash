@@ -12,6 +12,8 @@
   import { i18n } from '$lib/i18n';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import PostCard from './PostCard.svelte';
+  import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
+  import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
   import IconEmpty from '~icons/fluent/image-off-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
@@ -89,6 +91,10 @@
       return { index, posts: posts.slice(index * columnCount, (index + 1) * columnCount) };
     }
   ));
+
+  const handoff = new GridHandoff();
+  $effect(() => handoff.sync(posts.length > 0, loading));
+  onDestroy(() => handoff.destroy());
 
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -287,24 +293,33 @@
           class="virtual-row"
           style={`transform: translateY(${Math.round(row.index * rowStride)}px); grid-template-columns: repeat(${columnCount}, minmax(0, 1fr)); gap: ${gap}px;`}
         >
-          {#each row.posts as post (`${post.service}:${post.user}:${post.id}`)}
-            <PostCard {post} {showCreator} orderedKeys={postKeys} itemsMap={postsMap} />
+          {#each row.posts as post, column (`${post.service}:${post.user}:${post.id}`)}
+            <PostCard
+              {post}
+              {showCreator}
+              orderedKeys={postKeys}
+              itemsMap={postsMap}
+              enterDelay={handoff.delayFor(row.index * columnCount + column)}
+            />
           {/each}
         </div>
       {/each}
     </div>
-  {:else if loading}
-    <div class="post-grid">
-      {#each Array(12) as _}
-        <div class="skeleton-card"></div>
-      {/each}
-    </div>
-  {:else}
+  {:else if !handoff.skeletonMounted}
     <div class="empty-state">
       <IconEmpty />
       <strong>{emptyTitle}</strong>
       <span>{emptyDescription}</span>
     </div>
+  {/if}
+
+  {#if handoff.skeletonMounted}
+    <SkeletonGrid
+      cardWidth={targetCardWidth}
+      {gap}
+      ratio={ratioValues[configState.settings.grid_aspect_ratio]}
+      fading={handoff.skeletonFading}
+    />
   {/if}
 
   <div class="load-sentinel" bind:this={loadSentinel} aria-hidden="true"></div>
@@ -318,16 +333,8 @@
   .grid-root { position: relative; width: 100%; }
   .virtual-grid { position: relative; width: 100%; contain: layout style; }
   .virtual-row { position: absolute; top: 0; left: 0; right: 0; display: grid; align-items: start; will-change: transform; }
-  .post-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width)), 1fr)); gap: var(--grid-gap); align-items: start; }
-  .skeleton-card { aspect-ratio: var(--grid-ratio); border-radius: calc(12px * var(--grid-scale)); background: linear-gradient(105deg, rgba(255,255,255,.035) 20%, rgba(255,255,255,.08) 42%, rgba(255,255,255,.035) 64%); background-size: 220% 100%; animation: shimmer 1.4s linear infinite; }
-  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(10,10,14,.82); color: white; font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
-  .empty-state { min-height: 310px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255,255,255,.42); text-align: center; }
-  .empty-state :global(svg) { width: 34px; height: 34px; margin-bottom: 5px; }
-  .empty-state strong { color: rgba(255,255,255,.76); font-size: 14px; }
-  .empty-state span { max-width: 360px; font-size: 12px; }
-  .loading-tail { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; color: rgba(255,255,255,.48); font-size: 11px; }
+  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(247, 247, 248, .14); border-radius: 999px; background: var(--on-media-scrim-strong); color: var(--on-media); font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
+  .loading-tail { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; color: var(--text-muted); font-size: 11px; }
   .load-sentinel { width: 100%; height: 1px; pointer-events: none; }
-  .loading-tail :global(svg) { width: 20px; height: 20px; color: white; }
-  @keyframes shimmer { to { background-position: -220% 0; } }
-  @media (prefers-reduced-motion: reduce) { .skeleton-card { animation: none; } }
+  .loading-tail :global(svg) { width: 20px; height: 20px; color: var(--text-primary); }
 </style>

@@ -107,10 +107,10 @@
 <div class="flex flex-col gap-3 w-full">
   <div class="flex items-baseline justify-between gap-2">
     <div class="flex items-baseline gap-2">
-      <span class="text-base font-semibold text-white tracking-tight">
+      <span class="text-base font-semibold text-ink tracking-tight">
         {formatBytes(stats.totalBytes)}
       </span>
-      <span class="text-xs text-white/40 font-mono">
+      <span class="text-xs text-ink/40 font-mono">
         {#if stats.activeCount > 0}
           ({stats.completedCount} / {stats.totalCount} {i18n.t('settings.cache_files').toLowerCase()})
         {:else}
@@ -129,7 +129,7 @@
 
   <div class="storage-bar-track">
     {#if stats.categories.length === 0}
-      <div class="h-full w-full bg-white/[0.04]"></div>
+      <div class="h-full w-full bg-veil/[0.04]"></div>
     {:else}
       <div class="flex h-full w-full">
         {#each stats.categories as cat (cat.id)}
@@ -146,10 +146,10 @@
   {#if stats.categories.length > 0}
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-0.5">
       {#each stats.categories as cat (cat.id)}
-        <div class="flex items-center gap-1.5 text-[11.5px] text-white/70">
+        <div class="flex items-center gap-1.5 text-[11.5px] text-ink/70">
           <span class="w-2 h-2 rounded-full shrink-0" style="background-color: {cat.color};"></span>
-          <span class="text-white/40">{cat.label}:</span>
-          <span class="font-mono text-white/90">{formatBytes(cat.bytes)}</span>
+          <span class="text-ink/40">{cat.label}:</span>
+          <span class="font-mono text-ink/90">{formatBytes(cat.bytes)}</span>
         </div>
       {/each}
     </div>
@@ -161,7 +161,7 @@
     width: 100%;
     height: 9px;
     border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(var(--surface-tint-rgb), 0.07);
     overflow: hidden;
     display: flex;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);

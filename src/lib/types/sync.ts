@@ -20,3 +20,13 @@ export interface SyncDevice {
   created_at: string;
   revoked_at?: string;
 }
+
+export type SyncPhase = 'idle' | 'connecting' | 'pulling' | 'pushing';
+
+export interface SyncProgress {
+  phase: SyncPhase;
+  current?: number | null;
+  total?: number | null;
+  progress?: number | null;
+  message?: string | null;
+}

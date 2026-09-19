@@ -1,4 +1,4 @@
-import type { AccentPalette } from './palette';
+import type { AccentPalette, ColorMode, ContrastLevel, SchemeVariant } from './palette';
 
 export type FontSizeScale = 'compact' | 'standard' | 'large';
 export type RadiusScale = 'sharp' | 'smooth' | 'rounded' | 'pill';
@@ -7,7 +7,7 @@ export type AccentPreset = '#D69085' | 'rose' | 'violet' | 'cyan' | 'emerald' | 
 export type AccentColor = 'system' | AccentPreset | (string & {});
 export type MotionSpeed = 'instant' | 'snappy' | 'smooth';
 
-export type { AccentPalette };
+export type { AccentPalette, ColorMode, ContrastLevel, SchemeVariant };
 
 export interface ThemeTokens {
   fontScale: FontSizeScale;
@@ -15,11 +15,14 @@ export interface ThemeTokens {
   radiusScale: RadiusScale;
   surfaceStyle: SurfaceStyle;
   accent: AccentColor;
+  colorMode: ColorMode;
+  schemeVariant: SchemeVariant;
+  contrastLevel: ContrastLevel;
   motionSpeed: MotionSpeed;
   backdropBlurPx: number;
   borderWidthPx: number;
   titlebarHeightPx: number;
-  sidebarWidthPx: number;
+  sidebarWidthPx?: number;
 }
 
 export const FONT_SCALE_MAP: Record<FontSizeScale, { xs: string; sm: string; base: string; lg: string; xl: string }> = {

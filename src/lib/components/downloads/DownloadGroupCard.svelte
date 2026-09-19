@@ -160,7 +160,7 @@
   {/if}
   <div class="grid-tile-shade"></div>
 
-  <div class="group-actions">
+  <div class="group-actions tile-toolbar">
     {#if busy}
       <span class="grid-tile-action group-action busy"><IconLoading /></span>
     {:else}
@@ -196,8 +196,8 @@
     {/if}
   </div>
 
-  <h2 class="grid-tile-title">{title}</h2>
   <div class="grid-tile-footer">
+    <h2 class="grid-tile-title">{title}</h2>
     <button class="grid-tile-author group-media-row" type="button" onclick={(event) => { event.stopPropagation(); oncreator?.(); }}>
       {#if avatarUrl}<img class="group-avatar" src={avatarUrl} alt="" />{:else}<IconDownload />{/if}
       <span class="grid-tile-author-name">{creatorName}</span>
@@ -217,17 +217,17 @@
 
 <style>
   :global(.grid-tile-hover-video) { pointer-events: none !important; }
-  .group-placeholder { color: rgba(255,255,255,.25); }
+  .group-placeholder { color: var(--text-muted); }
   .group-placeholder :global(svg) { width: calc(38px * var(--grid-scale, 1)); height: calc(38px * var(--grid-scale, 1)); }
   .download-group-tile .grid-tile-title { overflow-wrap: anywhere; word-break: break-word; }
-  .group-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); display: flex; gap: calc(5px * var(--grid-scale, 1)); }
+  .group-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); }
   .group-actions .group-action { position: relative; inset: auto; flex: none; }
   .group-action.busy { opacity: 1; cursor: wait; }
   .group-media-row { pointer-events: auto !important; justify-content: flex-start; text-align: left; cursor: pointer; }
-  .group-media-row > :global(svg) { width: calc(15px * var(--grid-scale, 1)); height: calc(15px * var(--grid-scale, 1)); flex: none; color: rgba(255,255,255,.7); }
+  .group-media-row > :global(svg) { width: calc(15px * var(--grid-scale, 1)); height: calc(15px * var(--grid-scale, 1)); flex: none; color: var(--on-media-secondary); }
   .group-media-row .grid-tile-author-name { cursor: pointer; pointer-events: none; text-align: left; }
   .group-media-row { position: relative; z-index: 8; border: 0; background: transparent; color: inherit; padding: 0; }
   .group-avatar { width: calc(18px * var(--grid-scale, 1)); height: calc(18px * var(--grid-scale, 1)); border-radius: 50%; object-fit: cover; }
-  .group-progress { position: absolute; z-index: 7; inset: auto 0 0; height: calc(3px * var(--grid-scale, 1)); overflow: hidden; background: rgba(255,255,255,.16); pointer-events: none; }
+  .group-progress { position: absolute; z-index: 7; inset: auto 0 0; height: calc(3px * var(--grid-scale, 1)); overflow: hidden; background: rgba(var(--surface-tint-rgb), .16); pointer-events: none; }
   .group-progress span { display: block; height: 100%; background: var(--accent-primary); transition: width 220ms var(--ease-expo); }
 </style>

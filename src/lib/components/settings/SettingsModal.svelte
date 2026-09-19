@@ -7,6 +7,7 @@
   import {
     backgroundState,
     defaultBackgroundType,
+    defaultAcrylicOpacity,
     supportedBackgroundTypes,
     type BackgroundType,
     type CustomBackgroundKind
@@ -69,6 +70,11 @@
   import IconKeyboard from '~icons/fluent/keyboard-24-regular';
   import IconWallpaper from '~icons/fluent/wallpaper-24-regular';
   import IconColorFill from '~icons/fluent/color-fill-24-regular';
+  import IconContrast from '~icons/fluent/dark-theme-24-regular';
+  import IconColorMode from '~icons/fluent/weather-moon-24-regular';
+  import IconModeSystem from '~icons/fluent/desktop-24-regular';
+  import IconModeLight from '~icons/fluent/weather-sunny-24-regular';
+  import IconModeDark from '~icons/fluent/weather-moon-24-regular';
   import IconCircleHalfFill from '~icons/fluent/circle-half-fill-24-regular';
   import IconBrightnessHigh from '~icons/fluent/brightness-high-24-regular';
   import IconZoomIn from '~icons/fluent/zoom-in-24-regular';
@@ -101,7 +107,16 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import PaletteCircle from '$lib/components/ui/PaletteCircle.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
-  import { PRESET_QUADRANTS, generateAccentPalette } from '$lib/theme/palette';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import {
+    COLOR_MODES,
+    DEFAULT_COLOR_MODE,
+    DEFAULT_CONTRAST_LEVEL,
+    DEFAULT_SCHEME_VARIANT,
+    PRESET_QUADRANTS,
+    SCHEME_VARIANTS,
+    generateAccentPalette
+  } from '$lib/theme/palette';
   import SyncSettings from './SyncSettings.svelte';
   import ProviderSettings from './ProviderSettings.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
@@ -394,8 +409,11 @@
     return ['#d69085', '#f59e0b', '#10b981', '#6366f1'];
   });
 
-  async function updateAndSaveSetting(key: keyof typeof settings, val: any) {
-    const previousValue = settings[key];
+  async function updateAndSaveSetting(
+    key: keyof typeof settings,
+    val: any,
+    previousValue: any = settings[key]
+  ) {
     (settings as any)[key] = val;
     const nextSettings = { ...settings };
     configState.updateSettings(nextSettings);
@@ -405,8 +423,23 @@
     } catch (err: any) {
       (settings as any)[key] = previousValue;
       configState.updateSettings({ ...settings });
-      notify.error(i18n.t('settings.save_failed') || 'Failed to save settings', err);
+      notify.error(i18n.t('settings.save_failed'), err);
     }
+  }
+
+  let previewedSetting: { key: keyof typeof settings; previousValue: any } | null = null;
+
+  function previewSetting(key: keyof typeof settings, val: any) {
+    if (previewedSetting?.key !== key) previewedSetting = { key, previousValue: settings[key] };
+    (settings as any)[key] = val;
+    configState.updateSettings({ ...settings });
+  }
+
+  function commitPreviewedSetting(key: keyof typeof settings, val: any) {
+    const previousValue =
+      previewedSetting?.key === key ? previewedSetting.previousValue : settings[key];
+    previewedSetting = null;
+    void updateAndSaveSetting(key, val, previousValue);
   }
 
   function resetSetting<K extends keyof AppSettings>(key: K) {
@@ -474,7 +507,7 @@
     try {
       const rawLogs = await readRecentLogs(500);
       await navigator.clipboard.writeText(rawLogs.trim());
-      notify.success(i18n.t('settings.logs_copied'));
+      notify.success(i18n.t('settings.logs_copied'), { glyph: 'copied' });
     } catch (e) {
       notify.error(i18n.t('settings.logs_copy_failed'));
       logger.error('Failed to copy debug logs', e);
@@ -497,7 +530,7 @@
     clearingLogs = true;
     try {
       await clearLogs();
-      notify.success(i18n.t('settings.logs_cleared'));
+      notify.success(i18n.t('settings.logs_cleared'), { glyph: 'cleared' });
     } catch (e) {
       notify.error('Failed to clear logs');
       logger.error('Failed to clear logs', e);
@@ -602,6 +635,10 @@
           next.auto_check_updates = defaults.auto_check_updates;
           next.include_prereleases = defaults.include_prereleases;
           break;
+
+        case 'background':
+          backgroundState.reset();
+          break;
       }
 
       settings = next;
@@ -622,10 +659,19 @@
     'mica-dark': 'settings.bg_mica_dark',
     tabbed: 'settings.bg_tabbed',
     oled: 'settings.bg_oled',
+    palette: 'settings.bg_palette',
     custom: 'settings.bg_custom'
   };
   let bgTypes = $derived(
-    availableBackgroundTypes.map((id) => ({ id, label: i18n.t(backgroundLabelKeys[id]) }))
+    availableBackgroundTypes.map((id) => {
+      let key = backgroundLabelKeys[id];
+      if (id === 'oled' && !themeState.isDark) {
+        key = 'settings.bg_oled_light';
+      } else if (id === 'mica-dark' && !themeState.isDark) {
+        key = 'settings.bg_mica_light';
+      }
+      return { id, label: i18n.t(key) };
+    })
   );
 
 
@@ -782,13 +828,11 @@
     try {
       await navigator.clipboard.writeText(fullDownloadPathPreview);
       copiedPreview = true;
-      notify.success(i18n.t('settings.copied_to_clipboard') || 'Copied to clipboard');
+      notify.success(i18n.t('settings.copied_to_clipboard'), { glyph: 'copied' });
       setTimeout(() => {
         copiedPreview = false;
       }, 2000);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 </script>
 
@@ -896,19 +940,19 @@
 
 {#snippet authorBuildBar()}
   <div class="flex flex-col items-center justify-center text-center w-full mt-2">
-    <div class="flex items-center justify-center gap-2 text-[16px] font-bold text-white/95">
+    <div class="flex items-center justify-center gap-2 text-[16px] font-bold text-ink/95">
       <span>{i18n.t('settings.made_with')}</span>
       <IconHeart class="w-4 h-4 text-[var(--color-danger,#f43f5e)] fill-current shrink-0" />
       <span>{i18n.t('settings.by_nichind')}</span>
     </div>
-    <span class="text-[13px] text-white/50 mt-1 mb-3 select-none">
+    <span class="text-[13px] text-ink/50 mt-1 mb-3 select-none">
       {i18n.t('settings.check_out_my_pages')}
     </span>
 
     <div class="grid grid-cols-2 gap-2.5 w-full">
       <Button
         variant="ghost"
-        class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
         onclick={() => openExternalUrl('https://nichind.dev')}
       >
         <svg viewBox="0 0 106 78" fill="currentColor" class="w-4 h-3.5 opacity-70 shrink-0">
@@ -919,7 +963,7 @@
 
       <Button
         variant="ghost"
-        class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+        class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
         onclick={() => openExternalUrl('https://github.com/nichind')}
       >
         <IconGithub class="w-4 h-4 opacity-70 shrink-0" />
@@ -1020,17 +1064,17 @@
         </button>
 
         <div class="flex items-center justify-center gap-3 w-full mt-0.5">
-          <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-white/35 select-none">
+          <div class="h-[1px] flex-1 bg-veil/[0.06]"></div>
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-ink/35 select-none">
             {i18n.t('settings.community')}
           </span>
-          <div class="h-[1px] flex-1 bg-white/[0.06]"></div>
+          <div class="h-[1px] flex-1 bg-veil/[0.06]"></div>
         </div>
 
         <div class="grid grid-cols-2 gap-2.5 w-full">
           <Button
             variant="ghost"
-            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
             onclick={() => openExternalUrl('https://t.me/pawstashapp')}
           >
             <IconTelegram class="w-4 h-4 opacity-70 shrink-0" />
@@ -1039,7 +1083,7 @@
 
           <Button
             variant="ghost"
-            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
             onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
           >
             <IconDiscord class="w-4 h-4 opacity-70 shrink-0" />
@@ -1048,7 +1092,7 @@
 
           <Button
             variant="ghost"
-            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
             onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
           >
             <IconReddit class="w-4 h-4 opacity-70 shrink-0" />
@@ -1057,7 +1101,7 @@
 
           <Button
             variant="ghost"
-            class="w-full justify-center gap-2 border border-white/8 hover:border-white/16 bg-white/[0.03] hover:bg-white/[0.07]"
+            class="w-full justify-center gap-2 border border-veil/8 hover:border-veil/16 bg-veil/[0.03] hover:bg-veil/[0.07]"
             onclick={() => openExternalUrl('https://github.com/pawstash')}
           >
             <IconGithub class="w-4 h-4 opacity-70 shrink-0" />
@@ -1142,7 +1186,7 @@
               />
             {/each}
 
-            <div class="w-[1px] h-5 bg-white/10 mx-0.5"></div>
+            <div class="w-[1px] h-5 bg-veil/10 mx-0.5"></div>
 
             <ColorPicker
               value={isCustomActive ? themeState.tokens.accent : '#8b5cf6'}
@@ -1168,6 +1212,69 @@
         </SettingItem>
 
         <SettingItem
+          title={i18n.t('settings.color_mode')}
+          description={i18n.t('settings.color_mode_desc')}
+          icon={IconColorMode}
+          align="right"
+          value={themeState.tokens.colorMode}
+          defaultValue={DEFAULT_COLOR_MODE}
+          onReset={() => themeState.setColorMode(DEFAULT_COLOR_MODE)}
+        >
+          <ChoiceGroup
+            options={COLOR_MODES.map((mode) => ({
+              value: mode,
+              label: i18n.t(`settings.color_mode_${mode}`),
+              icon: mode === 'system' ? IconModeSystem : mode === 'light' ? IconModeLight : IconModeDark
+            }))}
+            value={themeState.tokens.colorMode}
+            onchange={(value) => themeState.setColorMode(value)}
+          />
+        </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.color_scheme')}
+          description={themeState.schemeIsForcedNeutral
+            ? i18n.t('settings.color_scheme_neutral_source')
+            : i18n.t('settings.color_scheme_desc')}
+          icon={IconColorFill}
+          align="right"
+          value={themeState.tokens.schemeVariant}
+          defaultValue={DEFAULT_SCHEME_VARIANT}
+          onReset={() => themeState.setSchemeVariant(DEFAULT_SCHEME_VARIANT)}
+        >
+          <Select
+            options={SCHEME_VARIANTS.map((variant) => ({
+              value: variant,
+              label: i18n.t(`settings.scheme_${variant.replace('-', '_')}`)
+            }))}
+            value={themeState.tokens.schemeVariant}
+            onchange={(value) => themeState.setSchemeVariant(value)}
+            ariaLabel={i18n.t('settings.color_scheme')}
+          />
+        </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.scheme_contrast')}
+          description={i18n.t('settings.scheme_contrast_desc')}
+          icon={IconContrast}
+          align="right"
+          value={themeState.tokens.contrastLevel}
+          defaultValue={DEFAULT_CONTRAST_LEVEL}
+          onReset={() => themeState.setContrastLevel(DEFAULT_CONTRAST_LEVEL)}
+        >
+          <ChoiceGroup
+            options={[
+              { value: -1, label: i18n.t('settings.contrast_reduced') },
+              { value: 0, label: i18n.t('settings.contrast_default') },
+              { value: 0.5, label: i18n.t('settings.contrast_medium') },
+              { value: 1, label: i18n.t('settings.contrast_high') }
+            ]}
+            value={themeState.tokens.contrastLevel}
+            onchange={(value) => themeState.setContrastLevel(value)}
+          />
+        </SettingItem>
+
+        <SettingItem
           title={i18n.t('settings.dynamic_accent')}
           description={i18n.t('settings.dynamic_accent_desc')}
           icon={IconEyedropper}
@@ -1176,12 +1283,9 @@
           defaultValue={defaultSettings.dynamic_accent}
           onReset={() => resetSetting('dynamic_accent')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.dynamic_accent}
+          <Toggle
+            checked={settings.dynamic_accent}
+            ariaLabel={i18n.t('settings.dynamic_accent')}
             onchange={(value) => updateAndSaveSetting('dynamic_accent', value)}
           />
         </SettingItem>
@@ -1195,12 +1299,9 @@
           defaultValue={defaultSettings.sticky_header}
           onReset={() => resetSetting('sticky_header')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.sticky_header}
+          <Toggle
+            checked={settings.sticky_header}
+            ariaLabel={i18n.t('settings.sticky_header')}
             onchange={(value) => updateAndSaveSetting('sticky_header', value)}
           />
         </SettingItem>
@@ -1214,12 +1315,9 @@
           defaultValue={defaultSettings.scroll_edge_mask ?? true}
           onReset={() => resetSetting('scroll_edge_mask')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.scroll_edge_mask ?? true}
+          <Toggle
+            checked={settings.scroll_edge_mask ?? true}
+            ariaLabel={i18n.t('settings.scroll_edge_mask')}
             onchange={(value) => updateAndSaveSetting('scroll_edge_mask', value)}
           />
         </SettingItem>
@@ -1233,12 +1331,9 @@
           defaultValue={defaultSettings.disable_blur_placeholders ?? false}
           onReset={() => resetSetting('disable_blur_placeholders')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.disable_blur_placeholders ?? false}
+          <Toggle
+            checked={settings.disable_blur_placeholders ?? false}
+            ariaLabel={i18n.t('settings.disable_blur_placeholders')}
             onchange={(value) => updateAndSaveSetting('disable_blur_placeholders', value)}
           />
         </SettingItem>
@@ -1292,12 +1387,9 @@
             defaultValue={defaultSettings.panic_button_enabled ?? true}
             onReset={resetPanicEnabled}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.panic_button_enabled ?? settings.boss_key_enabled ?? true}
+            <Toggle
+              checked={settings.panic_button_enabled ?? settings.boss_key_enabled ?? true}
+              ariaLabel={i18n.t('settings.panic_button')}
               onchange={(val) => {
                 updateAndSaveSetting('panic_button_enabled', val);
                 void apiUpdatePanicKey(settings.panic_button_shortcut || settings.boss_key_shortcut || 'H', val);
@@ -1348,6 +1440,44 @@
             onchange={(val) => backgroundState.setType(val as BackgroundType)}
           />
         </SettingItem>
+
+        <SettingItem
+          title={i18n.t('settings.background_tint')}
+          description={i18n.t('settings.background_tint_desc')}
+          icon={IconPaint}
+          align="right"
+          value={backgroundState.settings.acrylicTint}
+          defaultValue={false}
+          onReset={() => backgroundState.setAcrylicTint(false)}
+        >
+          <Toggle
+            checked={backgroundState.settings.acrylicTint}
+            ariaLabel={i18n.t('settings.background_tint')}
+            onchange={(value) => backgroundState.setAcrylicTint(value)}
+          />
+        </SettingItem>
+
+        {#if backgroundState.settings.acrylicTint}
+          <SettingItem
+            title={i18n.t('settings.background_tint_opacity')}
+            description={i18n.t('settings.background_tint_opacity_desc')}
+            icon={IconCircleHalfFill}
+            value={backgroundState.settings.acrylicOpacity}
+            defaultValue={defaultAcrylicOpacity(themeState.isDark)}
+            onReset={() => backgroundState.setAcrylicOpacity(defaultAcrylicOpacity(themeState.isDark))}
+          >
+            <Slider
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={backgroundState.settings.acrylicOpacity}
+              ariaLabel={i18n.t('settings.background_tint_opacity')}
+              formatValue={(value) => `${Math.round(value * 100)}%`}
+              oninput={(value) => backgroundState.setAcrylicOpacity(value)}
+              onchange={(value) => backgroundState.setAcrylicOpacity(value)}
+            />
+          </SettingItem>
+        {/if}
 
         {#if backgroundState.settings.type === 'custom'}
           <SettingItem
@@ -1419,10 +1549,14 @@
               defaultValue={24}
               onReset={() => backgroundState.setBlur(24)}
             >
-              <div class="flex items-center gap-4 w-full">
-                <Slider min={0} max={40} value={backgroundState.settings.blurPx} oninput={(value) => backgroundState.setBlur(value)} />
-                <span class="text-[13px] font-mono text-gray-300 w-10 text-right shrink-0">{backgroundState.settings.blurPx}px</span>
-              </div>
+              <Slider
+                min={0}
+                max={40}
+                value={backgroundState.settings.blurPx}
+                ariaLabel={i18n.t('settings.background_blur')}
+                formatValue={(value) => `${value}px`}
+                oninput={(value) => backgroundState.setBlur(value)}
+              />
             </SettingItem>
 
             <SettingItem
@@ -1433,10 +1567,15 @@
               defaultValue={0.85}
               onReset={() => backgroundState.setOpacity(0.85)}
             >
-              <div class="flex items-center gap-4 w-full">
-                <Slider min={0.1} max={1} step={0.05} value={backgroundState.settings.opacity} oninput={(value) => backgroundState.setOpacity(value)} />
-                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.opacity * 100)}%</span>
-              </div>
+              <Slider
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={backgroundState.settings.opacity}
+                ariaLabel={i18n.t('settings.background_opacity')}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                oninput={(value) => backgroundState.setOpacity(value)}
+              />
             </SettingItem>
 
             <SettingItem
@@ -1447,10 +1586,15 @@
               defaultValue={0.5}
               onReset={() => backgroundState.setBrightness(0.5)}
             >
-              <div class="flex items-center gap-4 w-full">
-                <Slider min={0.2} max={1.5} step={0.05} value={backgroundState.settings.brightness} oninput={(value) => backgroundState.setBrightness(value)} />
-                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.brightness * 100)}%</span>
-              </div>
+              <Slider
+                min={0.2}
+                max={1.5}
+                step={0.05}
+                value={backgroundState.settings.brightness}
+                ariaLabel={i18n.t('settings.background_brightness')}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                oninput={(value) => backgroundState.setBrightness(value)}
+              />
             </SettingItem>
 
             <SettingItem
@@ -1461,10 +1605,15 @@
               defaultValue={1.2}
               onReset={() => backgroundState.setSaturation(1.2)}
             >
-              <div class="flex items-center gap-4 w-full">
-                <Slider min={0} max={2} step={0.05} value={backgroundState.settings.saturation} oninput={(value) => backgroundState.setSaturation(value)} />
-                <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{Math.round(backgroundState.settings.saturation * 100)}%</span>
-              </div>
+              <Slider
+                min={0}
+                max={2}
+                step={0.05}
+                value={backgroundState.settings.saturation}
+                ariaLabel={i18n.t('settings.background_saturation')}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                oninput={(value) => backgroundState.setSaturation(value)}
+              />
             </SettingItem>
 
             {#if (backgroundState.settings.customKind === 'image' && backgroundState.settings.imageUrl) || (backgroundState.settings.customKind === 'video' && backgroundState.settings.videoUrl)}
@@ -1492,15 +1641,17 @@
           defaultValue={defaultSettings.grid_scale}
           onReset={() => resetSetting('grid_scale')}
         >
-          <div class="flex items-center gap-4 w-full">
-            <Slider
-              min={60}
-              max={160}
-              value={settings.grid_scale}
-              oninput={(value) => updateAndSaveSetting('grid_scale', Math.round(value / 5) * 5)}
-            />
-            <span class="text-[13px] font-mono text-gray-300 w-12 text-right shrink-0">{settings.grid_scale}%</span>
-          </div>
+          <Slider
+            min={60}
+            max={160}
+            step={5}
+            ticks
+            value={settings.grid_scale}
+            ariaLabel={i18n.t('settings.grid_scale')}
+            formatValue={(value) => `${value}%`}
+            oninput={(value) => previewSetting('grid_scale', value)}
+            onchange={(value) => commitPreviewedSetting('grid_scale', value)}
+          />
         </SettingItem>
 
         <SettingItem
@@ -1636,12 +1787,9 @@
             defaultValue={defaultSettings.proxy_bypass_local}
             onReset={() => resetSetting('proxy_bypass_local')}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.proxy_bypass_local}
+            <Toggle
+              checked={settings.proxy_bypass_local}
+              ariaLabel={i18n.t('settings.proxy_bypass_local')}
               onchange={(value) => updateAndSaveSetting('proxy_bypass_local', value)}
             />
           </SettingItem>
@@ -1688,12 +1836,9 @@
           defaultValue={defaultSettings.download_group_by_creator}
           onReset={() => resetSetting('download_group_by_creator')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.download_group_by_creator}
+          <Toggle
+            checked={settings.download_group_by_creator}
+            ariaLabel={i18n.t('settings.download_group_by_creator')}
             onchange={(val) => updateAndSaveSetting('download_group_by_creator', val)}
           />
         </SettingItem>
@@ -1728,12 +1873,9 @@
           defaultValue={defaultSettings.download_group_by_post}
           onReset={() => resetSetting('download_group_by_post')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.download_group_by_post}
+          <Toggle
+            checked={settings.download_group_by_post}
+            ariaLabel={i18n.t('settings.download_group_by_post')}
             onchange={(val) => updateAndSaveSetting('download_group_by_post', val)}
           />
         </SettingItem>
@@ -1787,12 +1929,9 @@
           defaultValue={defaultSettings.download_save_metadata ?? false}
           onReset={() => resetSetting('download_save_metadata')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.download_save_metadata ?? false}
+          <Toggle
+            checked={settings.download_save_metadata ?? false}
+            ariaLabel={i18n.t('settings.download_save_metadata')}
             onchange={(val) => updateAndSaveSetting('download_save_metadata', val)}
           />
         </SettingItem>
@@ -1828,12 +1967,9 @@
           defaultValue={defaultSettings.use_aria2c}
           onReset={() => resetSetting('use_aria2c')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.use_aria2c}
+          <Toggle
+            checked={settings.use_aria2c}
+            ariaLabel={i18n.t('settings.aria2c_engine')}
             onchange={(val) => updateAndSaveSetting('use_aria2c', val)}
           />
         </SettingItem>
@@ -1876,7 +2012,7 @@
 
         <SettingItem
           title={i18n.t('settings.template_preview')}
-          description={i18n.t('settings.download_preview_desc') || 'Resolved destination path for saved files'}
+          description={i18n.t('settings.download_preview_desc')}
           icon={IconEye}
           class="col-span-full"
         >
@@ -1886,7 +2022,7 @@
               readonly={true}
               class="font-mono text-[13px]"
               actionIcon={copiedPreview ? IconCheck : IconCopy}
-              actionTooltip={copiedPreview ? (i18n.t('common.copied') || 'Copied') : (i18n.t('common.copy') || 'Copy')}
+              actionTooltip={copiedPreview ? (i18n.t('common.copied')) : (i18n.t('common.copy'))}
               onAction={copyPreviewPath}
             />
           </div>
@@ -1907,12 +2043,9 @@
           defaultValue={defaultSettings.notifications_enabled}
           onReset={() => resetSetting('notifications_enabled')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.notifications_enabled}
+          <Toggle
+            checked={settings.notifications_enabled}
+            ariaLabel={i18n.t('settings.notifications_enabled')}
             onchange={(val) => updateAndSaveSetting('notifications_enabled', val)}
           />
         </SettingItem>
@@ -1927,12 +2060,9 @@
             defaultValue={defaultSettings.notifications_download_completed}
             onReset={() => resetSetting('notifications_download_completed')}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.notifications_download_completed}
+            <Toggle
+              checked={settings.notifications_download_completed}
+              ariaLabel={i18n.t('settings.notifications_download_completed')}
               onchange={(val) => updateAndSaveSetting('notifications_download_completed', val)}
             />
           </SettingItem>
@@ -1946,12 +2076,9 @@
             defaultValue={defaultSettings.notifications_download_progress}
             onReset={() => resetSetting('notifications_download_progress')}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.notifications_download_progress}
+            <Toggle
+              checked={settings.notifications_download_progress}
+              ariaLabel={i18n.t('settings.notifications_download_progress')}
               onchange={(val) => updateAndSaveSetting('notifications_download_progress', val)}
             />
           </SettingItem>
@@ -1965,12 +2092,9 @@
             defaultValue={defaultSettings.notifications_show_preview}
             onReset={() => resetSetting('notifications_show_preview')}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.notifications_show_preview}
+            <Toggle
+              checked={settings.notifications_show_preview}
+              ariaLabel={i18n.t('settings.notifications_show_preview')}
               onchange={(val) => updateAndSaveSetting('notifications_show_preview', val)}
             />
           </SettingItem>
@@ -1984,12 +2108,9 @@
             defaultValue={defaultSettings.notifications_sound}
             onReset={() => resetSetting('notifications_sound')}
           >
-            <ChoiceGroup
-              options={[
-                { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-                { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-              ]}
-              value={settings.notifications_sound}
+            <Toggle
+              checked={settings.notifications_sound}
+              ariaLabel={i18n.t('settings.notifications_sound')}
               onchange={(val) => updateAndSaveSetting('notifications_sound', val)}
             />
           </SettingItem>
@@ -2005,7 +2126,7 @@
           {#if cacheStats}
             <StorageBar stats={cacheStats} limitMb={settings.cache_max_mb} {formatBytes} />
           {:else}
-            <div class="flex items-center gap-2 py-3 text-white/50 text-xs">
+            <div class="flex items-center gap-2 py-3 text-ink/50 text-xs">
               <IconLoading />
               <span>{i18n.t('settings.cache_section')}...</span>
             </div>
@@ -2154,12 +2275,9 @@
           defaultValue={defaultSettings.auto_check_updates ?? true}
           onReset={() => resetSetting('auto_check_updates')}
         >
-          <ChoiceGroup
-            options={[
-              { value: false, label: i18n.t('settings.no'), icon: IconDismiss },
-              { value: true, label: i18n.t('settings.yes'), icon: IconCheck }
-            ]}
-            value={settings.auto_check_updates ?? true}
+          <Toggle
+            checked={settings.auto_check_updates ?? true}
+            ariaLabel={i18n.t('settings.auto_check_updates')}
             onchange={(val: boolean) => {
               settings.auto_check_updates = val;
               updateAndSaveSetting('auto_check_updates', val);
@@ -2192,10 +2310,10 @@
     </div>
 
     <div class="flex flex-col items-center justify-center text-center w-full pt-4 pb-6 opacity-40 select-none">
-      <span class="text-[12px] font-mono tracking-wider font-semibold text-white/90">
+      <span class="text-[12px] font-mono tracking-wider font-semibold text-ink/90">
         Pawstash v{APP_VERSION} ({COMMIT_HASH})
       </span>
-      <span class="text-[11.5px] text-white/70 mt-0.5">
+      <span class="text-[11.5px] text-ink/70 mt-0.5">
         {i18n.t('settings.built_on')} {formattedBuildTime}
       </span>
     </div>
@@ -2412,7 +2530,7 @@
   }
 
   .mobile-profile-hero:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--surface-tint-rgb), 0.04);
   }
 
   .mobile-profile-hero:active {
@@ -2451,20 +2569,20 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: rgba(255, 255, 255, 0.35);
+    color: var(--text-muted);
   }
 
   .mobile-pillar-name {
     font-size: 13.5px;
     font-weight: 600;
-    color: var(--text-primary, #ffffff);
+    color: var(--text-primary);
     font-family: var(--font-sans);
     max-width: 100%;
   }
 
   .mobile-pillar-sub {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--text-muted);
     font-weight: 300;
     max-width: 100%;
   }
@@ -2478,7 +2596,7 @@
     font-weight: 500;
     color: var(--accent);
     padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid rgba(var(--surface-tint-rgb), 0.05);
     width: 100%;
   }
 
@@ -2505,7 +2623,7 @@
   }
 
   .mobile-hero-dot.offline {
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(var(--surface-tint-rgb), 0.3);
   }
 
   @media (max-width: 640px) {

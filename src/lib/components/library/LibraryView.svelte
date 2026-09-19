@@ -24,9 +24,11 @@
   import ServiceIcon from '$lib/components/content/ServiceIcon.svelte';
   import { ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
+  import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { getPostDownloadTargets, attachmentMediaUrl } from '$lib/utils/media';
   import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
@@ -75,26 +77,9 @@
   let input = $state<HTMLInputElement>();
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
-  let stashes = $derived(libraryState.allStashes);
-  let stashOptions = $derived(stashes.map((s) => ({ value: s.id, label: libraryState.getStashDisplayName(s) })));
+  const stashOptions = $derived(libraryState.stashOptions);
 
-  let batchSelectedStashes = $derived.by(() => {
-    if (selectedPosts.length === 0) return [];
-    const stashCounts = new Map<string, number>();
-    for (const post of selectedPosts) {
-      const ids = libraryState.getPostStashes(post);
-      for (const id of ids) {
-        stashCounts.set(id, (stashCounts.get(id) || 0) + 1);
-      }
-    }
-    const result: string[] = [];
-    for (const [id, count] of stashCounts.entries()) {
-      if (count === selectedPosts.length) {
-        result.push(id);
-      }
-    }
-    return result;
-  });
+  const batchSelectedStashes = $derived(libraryState.stashesForPosts(selectedPosts));
 
   async function handleBatchToggleStash(collectionId: string) {
     const items = selectionState.getItems<Post>();
@@ -105,15 +90,15 @@
         for (const p of items) {
           await libraryState.removeFromStash(collectionId, p);
         }
-        notify.success(i18n.t('library.removed_from_stash') || 'Removed from stash');
+        notifyRemovedFromStash(collectionId, items);
       } else {
         for (const p of items) {
           await libraryState.save(p, collectionId);
         }
-        notify.success(i18n.t('library.added_to_stash') || 'Added to stash');
+        notifyAddedToStash(collectionId);
       }
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Stash operation failed', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -125,9 +110,9 @@
       for (const p of items) {
         await libraryState.save(p, newStash.id);
       }
-      notify.success(i18n.t('library.added_to_stash') || 'Added to stash', newStash.name);
+      notifyAddedToStash(newStash.id, newStash.name);
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to create stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -152,12 +137,12 @@
         await libraryState.removeFromStash(stashId, post);
       }
       notify.success(
-        i18n.t('selection.remove_from_stash') || 'Removed from stash',
+        i18n.t('selection.remove_from_stash'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('library.save_error') || 'Failed to remove from stash', err);
+      notify.error(i18n.t('library.save_error'), err);
     }
   }
 
@@ -169,12 +154,12 @@
         await libraryState.remove(post);
       }
       notify.success(
-        i18n.t('selection.remove_from_library') || 'Deleted from library',
+        i18n.t('selection.remove_from_library'),
         `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('library.save_error') || 'Failed to delete from library', err);
+      notify.error(i18n.t('library.save_error'), err);
     }
   }
 
@@ -184,12 +169,12 @@
     try {
       const count = await downloadState.downloadPosts(items);
       notify.success(
-        i18n.t('selection.download_all') || 'Queued downloads',
+        i18n.t('selection.download_all'),
         `${count} ${count === 1 ? 'file' : 'files'}`
       );
       selectionState.exit();
     } catch (err) {
-      notify.error(i18n.t('downloads.action_error') || 'Download failed', err);
+      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -198,6 +183,9 @@
   let editStashName = $state('');
   let renamingPending = $state(false);
   let clearingPending = $state(false);
+  let clearConfirmOpen = $state(false);
+  let deleteConfirmOpen = $state(false);
+  let deletingPending = $state(false);
 
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
@@ -235,7 +223,7 @@
   ]);
 
   let currentSortLabel = $derived(
-    sortOptions.find((o) => o.value === currentSortValue)?.label ?? (i18n.t('favorites.sort_by') || 'Sort')
+    sortOptions.find((o) => o.value === currentSortValue)?.label ?? (i18n.t('favorites.sort_by'))
   );
 
   let mobileMoreOpen = $state(false);
@@ -307,9 +295,9 @@
     try {
       editStashColor = color;
       await libraryState.updateStash(collectionId, { color });
-      notify.success(i18n.t('settings.stash_color') || 'Stash color updated');
+      notify.success(i18n.t('settings.stash_color'));
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to update color', error);
+      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -325,7 +313,7 @@
       stickyManageOpen = false;
       mobileManageOpen = false;
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to rename stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     } finally {
       renamingPending = false;
     }
@@ -335,18 +323,17 @@
     const collectionId = libraryState.selectedCollectionId;
     if (!collectionId || clearingPending) return;
     const name = libraryState.selectedCollection?.name ?? '';
-    const message = i18n.t('library.clear_confirm') || `Are you sure you want to clear "${name}"?`;
-    if (!confirm(message)) return;
 
     clearingPending = true;
     try {
       await libraryState.clearStash(collectionId);
-      notify.success(i18n.t('library.stash_cleared'), name || undefined);
+      notify.success(i18n.t('library.stash_cleared'), { description: name || undefined, glyph: 'cleared' });
+      clearConfirmOpen = false;
       manageOpen = false;
       stickyManageOpen = false;
       mobileManageOpen = false;
     } catch (error) {
-      notify.error(i18n.t('library.save_error') || 'Failed to clear stash', error);
+      notify.error(i18n.t('library.save_error'), error);
     } finally {
       clearingPending = false;
     }
@@ -354,20 +341,21 @@
 
   async function handleDeleteStash() {
     const collectionId = libraryState.selectedCollectionId;
-    if (!collectionId) return;
+    if (!collectionId || deletingPending) return;
     const name = libraryState.selectedCollection?.name ?? '';
-    const message = i18n.t('library.delete_confirm') || `Are you sure you want to delete "${name}"?`;
-    
-    const confirmed = confirm(message);
-    if (!confirmed) return;
-    
+
+    deletingPending = true;
     try {
+      await libraryState.deleteStash(collectionId);
+      notify.success(i18n.t('library.stash_deleted'), { description: name || undefined, glyph: 'deleted' });
+      deleteConfirmOpen = false;
       manageOpen = false;
       stickyManageOpen = false;
       mobileManageOpen = false;
-      await libraryState.deleteStash(collectionId);
     } catch (error) {
-      libraryState.error = error instanceof Error ? error.message : String(error);
+      notify.error(i18n.t('library.save_error'), error);
+    } finally {
+      deletingPending = false;
     }
   }
 
@@ -387,12 +375,12 @@
   }
 
   const formatList = [
-    { id: 'image', label: () => i18n.t('feed.format_photo') || 'Photo', icon: IconImage },
-    { id: 'video', label: () => i18n.t('feed.format_video') || 'Video', icon: IconVideo },
-    { id: 'audio', label: () => i18n.t('feed.format_audio') || 'Audio', icon: IconMusic },
-    { id: 'text', label: () => i18n.t('feed.format_text') || 'Text', icon: IconText },
-    { id: 'archive', label: () => i18n.t('feed.format_archive') || 'Files', icon: IconDocument },
-    { id: 'wip', label: () => i18n.t('feed.format_wip') || 'WIP / Sketch', icon: IconDraft }
+    { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
+    { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
+    { id: 'audio', label: () => i18n.t('feed.format_audio'), icon: IconMusic },
+    { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
+    { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
+    { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft }
   ];
 
   function isPostDownloaded(post: Post): boolean {
@@ -491,7 +479,7 @@
           use:ripple
           disabled={!editStashName.trim() || editStashName.trim() === (libraryState.selectedCollection ? libraryState.getStashDisplayName(libraryState.selectedCollection) : '') || renamingPending}
           title={i18n.t('library.rename_stash')}
-          aria-label="Rename stash"
+          aria-label={i18n.t('library.rename_stash')}
         >
           {#if renamingPending}
             <IconLoading style="width: 18px; height: 18px;" />
@@ -503,7 +491,7 @@
     </Input>
   </form>
 
-  <span class="filter-label" style="margin-top: 10px;">{i18n.t('settings.stash_color') || 'Stash Color'}</span>
+  <span class="filter-label" style="margin-top: 10px;">{i18n.t('settings.stash_color')}</span>
   <div class="stash-color-swatches">
     {#each stashColorPalette as color}
       <button
@@ -520,8 +508,8 @@
       class="stash-color-swatch stash-color-reset"
       class:is-active={!editStashColor}
       onclick={() => handleSetStashColor(null)}
-      title="Reset color"
-      aria-label="Reset color"
+      title={i18n.t('library.reset_color')}
+      aria-label={i18n.t('library.reset_color')}
     >
       <IconDismiss class="w-3.5 h-3.5" />
     </button>
@@ -534,7 +522,7 @@
       variant="ghost"
       size="sm"
       disabled={clearingPending || (libraryState.selectedCollection?.item_count ?? 0) === 0}
-      onclick={handleClearStash}
+      onclick={() => (clearConfirmOpen = true)}
       class="manage-stash-btn"
     >
       <IconBroom class="w-[16px] h-[16px]" />
@@ -546,7 +534,7 @@
         variant="danger"
         size="sm"
         disabled={clearingPending}
-        onclick={handleDeleteStash}
+        onclick={() => (deleteConfirmOpen = true)}
         class="manage-stash-btn"
       >
         <IconDelete class="w-[16px] h-[16px]" />
@@ -603,9 +591,9 @@
         <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -613,7 +601,7 @@
 
   <div class="floating-divider"></div>
 
-  <span class="filter-label">{i18n.t('feed.format') || 'Format'}</span>
+  <span class="filter-label">{i18n.t('feed.format')}</span>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -627,9 +615,9 @@
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
         {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[#4ade80] shrink-0" />
+          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
         {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[#f87171] shrink-0" />
+          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
         {/if}
       </Button>
     {/each}
@@ -682,7 +670,7 @@
       options={[
         {
           value: 'all',
-          label: i18n.t('library.all') || 'All',
+          label: i18n.t('library.all'),
           count: libraryState.collections.reduce((sum, c) => sum + c.item_count, 0)
         },
         ...libraryState.collections.map((c) => ({
@@ -694,13 +682,14 @@
       ]}
       value={libraryState.selectedCollectionId ?? 'all'}
       onchange={(val) => selectCollection(val === 'all' ? null : String(val))}
-      createLabel={i18n.t('library.new_stash') || 'New stash'}
+      createLabel={i18n.t('library.new_stash')}
       onCreate={async (name) => {
         if (!name.trim()) return;
         const newStash = await libraryState.createStash(name.trim());
         await selectCollection(newStash.id);
       }}
       class="library-collection-select"
+      align="right"
     />
 
     <Select
@@ -711,7 +700,8 @@
       class="library-sort-select"
       icon={IconArrowSort}
       iconOnly={true}
-      ariaLabel={`${i18n.t('favorites.sort_by') || 'Sort'}: ${currentSortLabel}`}
+      ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
+      align="right"
     />
   </div>
 {/snippet}
@@ -745,7 +735,7 @@
     <HeaderActions
       bind:searchOpen
       bind:searchQuery
-      searchPlaceholder={i18n.t('library.search_placeholder') || 'Search library...'}
+      searchPlaceholder={i18n.t('library.search_placeholder')}
     >
       {#if !layoutState.isMobile}
         {#if !searchOpen}
@@ -755,8 +745,8 @@
           variant={isSelectionActive ? 'accent' : 'ghost'}
           class="btn-icon"
           onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-          title={i18n.t('selection.select_mode') || 'Select mode'}
-          aria-label="Select mode"
+          title={i18n.t('selection.select_mode')}
+          aria-label={i18n.t('selection.select_mode')}
         >
           <IconCheckboxChecked class="w-5 h-5" />
         </Button>
@@ -769,8 +759,8 @@
           variant="ghost"
           class="btn-icon"
           onclick={() => (mobileMoreOpen = true)}
-          title={i18n.t('common.more') || 'More'}
-          aria-label="More actions"
+          title={i18n.t('common.more')}
+          aria-label={i18n.t('common.more')}
         >
           <IconMoreVertical class="w-5 h-5" />
         </Button>
@@ -802,7 +792,7 @@
 
   {#if libraryState.error && filteredPosts.length === 0}
       <div class="library-error">
-        <strong class="text-sm font-semibold text-white/85">{i18n.t('library.load_error')}</strong>
+        <strong class="text-sm font-semibold text-ink/85">{i18n.t('library.load_error')}</strong>
         <span class="library-error-desc">{libraryState.error}</span>
         <Button variant="accent" size="sm" onclick={() => void libraryState.refresh()}>
           <IconArrowClockwise class="h-4 w-4" /> {i18n.t('feed.retry')}
@@ -842,6 +832,7 @@
     closeOnChange={false}
     icon={IconFolder}
     class="selection-stash-select"
+    align="right"
   />
 
   {#if isStashSelected}
@@ -883,7 +874,7 @@
 {#if layoutState.isMobile}
   <BottomSheet
     open={mobileMoreOpen}
-    title={i18n.t('common.more') || 'More'}
+    title={i18n.t('common.more')}
     onclose={() => (mobileMoreOpen = false)}
   >
     <div class="flex flex-col gap-1 py-1">
@@ -899,7 +890,7 @@
         >
           <IconEdit class="text-secondary" />
           <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('library.manage_stash') || 'Manage stash'}</span>
+            <span class="text-sm font-semibold text-primary">{i18n.t('library.manage_stash')}</span>
           </div>
         </button>
       {/if}
@@ -919,7 +910,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit') || 'Exit selection mode') : (i18n.t('selection.select_mode') || 'Select mode')}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
         </div>
       </button>
 
@@ -939,7 +930,7 @@
           <IconArrowClockwise class="text-secondary" />
         {/if}
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh') || 'Refresh'}</span>
+          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
         </div>
       </button>
     </div>
@@ -947,12 +938,35 @@
 
   <BottomSheet
     open={mobileManageOpen}
-    title={i18n.t('library.manage_stash') || 'Manage stash'}
+    title={i18n.t('library.manage_stash')}
     onclose={() => (mobileManageOpen = false)}
   >
     {@render manageStashContent()}
   </BottomSheet>
 {/if}
+
+
+<ConfirmDialog
+  isOpen={clearConfirmOpen}
+  title={i18n.t('library.confirm_clear')}
+  description={i18n.t('library.clear_confirm')}
+  confirmLabel={i18n.t('library.clear_stash')}
+  confirmVariant="danger"
+  loading={clearingPending}
+  onconfirm={handleClearStash}
+  onclose={() => (clearConfirmOpen = false)}
+/>
+
+<ConfirmDialog
+  isOpen={deleteConfirmOpen}
+  title={i18n.t('library.confirm_delete')}
+  description={i18n.t('library.delete_confirm')}
+  confirmLabel={i18n.t('library.delete_stash')}
+  confirmVariant="danger"
+  loading={deletingPending}
+  onconfirm={handleDeleteStash}
+  onclose={() => (deleteConfirmOpen = false)}
+/>
 
 <style>
   .library-segmented-group {
@@ -973,7 +987,7 @@
   :global(.library-collection-select .select-trigger) {
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     background: var(--choice-active-bg, var(--accent-primary)) !important;
-    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+    color: var(--choice-active-text, var(--text-on-accent, var(--text-primary))) !important;
     font-weight: var(--font-weight-semibold) !important;
     border-top-left-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
     border-bottom-left-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
@@ -991,7 +1005,7 @@
 
   :global(.library-collection-select .select-trigger:hover) {
     background: color-mix(in srgb, var(--choice-active-bg, var(--accent-primary)) 88%, white) !important;
-    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+    color: var(--choice-active-text, var(--text-on-accent, var(--text-primary))) !important;
   }
 
   :global(.library-collection-select .select-trigger:active) {
@@ -1000,7 +1014,7 @@
 
   :global(.library-collection-select .select-trigger .trigger-label) {
     font-weight: var(--font-weight-semibold) !important;
-    color: var(--choice-active-text, var(--text-on-accent, #ffffff)) !important;
+    color: var(--choice-active-text, var(--text-on-accent, var(--text-primary))) !important;
   }
 
   :global(.library-collection-select .select-trigger .count-badge) {
@@ -1036,7 +1050,7 @@
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
     background: var(--accent-container) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
     border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
     border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
@@ -1052,7 +1066,7 @@
   :global(.library-sort-select .select-trigger:hover),
   :global(.library-sort-select .select-trigger.icon-only:hover) {
     background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
   }
 
   :global(.library-sort-select .select-trigger:active),
@@ -1064,7 +1078,7 @@
   :global(.library-sort-select .select-trigger.icon-only svg) {
     width: 20px !important;
     height: 20px !important;
-    color: var(--choice-active-bg, var(--accent-on-container)) !important;
+    color: var(--accent-on-container) !important;
     opacity: 1 !important;
   }
 
@@ -1182,13 +1196,13 @@
   }
 
   .stash-color-swatch.is-active {
-    border-color: #ffffff;
+    border-color: rgb(var(--surface-tint-rgb));
     transform: scale(1.2);
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+    box-shadow: 0 0 8px rgba(var(--surface-tint-rgb), 0.4);
   }
 
   .stash-color-reset {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--surface-tint-rgb), 0.1);
     color: var(--text-secondary);
   }
 </style>

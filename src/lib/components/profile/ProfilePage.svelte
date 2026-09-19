@@ -130,7 +130,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    notify.success(i18n.t('sync.recovery_copied'));
+    notify.success(i18n.t('sync.recovery_copied'), { glyph: 'copied' });
   }
 
   async function handleUnlockSubmit() {
@@ -188,10 +188,10 @@
                   <path fill="url(#logo-profile-connected)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
                 </g>
               </svg>
-              <h2 class="text-xl font-semibold text-white m-0">
+              <h2 class="text-xl font-semibold text-ink m-0">
                 {syncState.status.account_id}
               </h2>
-              <span class="text-xs text-white/50 font-light">
+              <span class="text-xs text-ink/50 font-light">
                 {syncState.status.unlocked
                   ? i18n.t('sync.revision', { revision: syncState.status.revision, cursor: syncState.status.cursor })
                   : i18n.t('sync.locked')}
@@ -217,7 +217,7 @@
               <div class="flex flex-col gap-2">
                 <div class="grid grid-cols-2 gap-2">
                   <Button variant="primary" class="w-full !px-2.5" onclick={() => void openRecoveryView()}>
-                    <IconKey class="w-4 h-4 mr-1.5 text-white/60 shrink-0" />
+                    <IconKey class="w-4 h-4 mr-1.5 text-ink/60 shrink-0" />
                     <span class="truncate">{i18n.t('sync.export_recovery_kit')}</span>
                   </Button>
 
@@ -228,14 +228,14 @@
                     </Button>
                   {:else}
                     <Button variant="primary" class="w-full !px-2.5" onclick={() => void runSyncAction(() => syncState.lock())}>
-                      <IconLock class="w-4 h-4 mr-1.5 text-white/60 shrink-0" />
+                      <IconLock class="w-4 h-4 mr-1.5 text-ink/60 shrink-0" />
                       <span class="truncate">{i18n.t('sync.lock')}</span>
                     </Button>
                   {/if}
                 </div>
 
                 <Button variant="primary" class="w-full" onclick={() => (activeView = 'change_password')}>
-                  <IconPassword class="w-4 h-4 mr-2 text-white/60 shrink-0" />
+                  <IconPassword class="w-4 h-4 mr-2 text-ink/60 shrink-0" />
                   <span>{i18n.t('sync.change_password')}</span>
                 </Button>
               </div>
@@ -265,10 +265,10 @@
                 <path fill="url(#logo-profile-grad)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
               </g>
             </svg>
-            <h2 class="text-2xl font-semibold text-white m-0">
+            <h2 class="text-2xl font-semibold text-ink m-0">
               Pawstash Cloud
             </h2>
-            <p class="text-xs text-white/50 font-light leading-relaxed m-0 px-2">
+            <p class="text-xs text-ink/50 font-light leading-relaxed m-0 px-2">
               {i18n.t('sync.setup_desc')}
             </p>
           </div>
@@ -300,7 +300,7 @@
               class="w-full"
               onclick={() => (activeView = 'recover')}
             >
-              <IconKey class="w-5 h-5 mr-2 text-white/50" />
+              <IconKey class="w-5 h-5 mr-2 text-ink/50" />
               <span>{i18n.t('sync.mode_recover')}</span>
             </Button>
           </div>
@@ -311,7 +311,7 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.connect_account')}
           </h2>
         </div>
@@ -321,17 +321,17 @@
           onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
         >
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.server_url')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
             <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.account_id')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.account_id')}</span>
             <Input icon={IconPerson} clearable={true} bind:value={syncAccount} placeholder="account-id" />
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.master_password')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.master_password')}</span>
             <Input
               icon={IconKey}
               bind:value={syncPassword}
@@ -342,7 +342,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
             <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
@@ -364,7 +364,7 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.create_account')}
           </h2>
         </div>
@@ -374,12 +374,12 @@
           onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
         >
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.server_url')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
             <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.account_id')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.account_id')}</span>
             <Input
               icon={IconPerson}
               clearable={true}
@@ -392,7 +392,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.master_password')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.master_password')}</span>
             <Input
               icon={IconKey}
               bind:value={syncPassword}
@@ -403,7 +403,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
             <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
@@ -425,7 +425,7 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.recover_account')}
           </h2>
         </div>
@@ -435,7 +435,7 @@
           onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
         >
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.recovery_kit')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.recovery_kit')}</span>
             <textarea
               class="recovery-textarea"
               bind:value={syncRecoveryInput}
@@ -444,7 +444,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.new_password')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.new_password')}</span>
             <Input
               icon={IconKey}
               bind:value={syncPassword}
@@ -455,7 +455,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.device_name')}</span>
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
             <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
           </div>
 
@@ -477,26 +477,26 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.recovery_kit_title')}
           </h2>
         </div>
 
         <div class="flex flex-col gap-3.5">
-          <p class="text-xs text-white/60 leading-relaxed m-0">
+          <p class="text-xs text-ink/60 leading-relaxed m-0">
             {i18n.t('sync.recovery_warning')}
           </p>
 
           <div class="flex items-center justify-between p-3.5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]">
-            <span class="text-xs text-white/50">{i18n.t('sync.account_id')}</span>
-            <span class="font-mono text-xs font-semibold text-white tracking-wider">
+            <span class="text-xs text-ink/50">{i18n.t('sync.account_id')}</span>
+            <span class="font-mono text-xs font-semibold text-ink tracking-wider">
               {parsedRecovery?.accountId || syncState.status.account_id}
             </span>
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <span class="text-xs text-white/60 font-medium">{i18n.t('sync.vault_key')}</span>
-            <div class="font-mono text-[12px] text-white/90 break-all select-all tracking-wide py-3 px-4 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]">
+            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.vault_key')}</span>
+            <div class="font-mono text-[12px] text-ink/90 break-all select-all tracking-wide py-3 px-4 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]">
               {parsedRecovery?.vaultKey || recoveryKitText}
             </div>
           </div>
@@ -519,14 +519,14 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.change_password_title')}
           </h2>
         </div>
 
         <form onsubmit={(e) => { e.preventDefault(); void handleChangePasswordSubmit(); }} class="flex flex-col gap-3">
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/70 font-medium">{i18n.t('sync.current_password')}</span>
+            <span class="text-xs text-ink/70 font-medium">{i18n.t('sync.current_password')}</span>
             <Input
               icon={IconKey}
               type="password"
@@ -537,7 +537,7 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-white/70 font-medium">{i18n.t('sync.new_password')}</span>
+            <span class="text-xs text-ink/70 font-medium">{i18n.t('sync.new_password')}</span>
             <Input
               icon={IconKey}
               type="password"
@@ -563,13 +563,13 @@
           <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
             <IconArrowLeft class="w-5 h-5" />
           </Button>
-          <h2 class="text-lg font-semibold text-white m-0">
+          <h2 class="text-lg font-semibold text-ink m-0">
             {i18n.t('sync.unlock_title')}
           </h2>
         </div>
 
         <form onsubmit={(e) => { e.preventDefault(); void handleUnlockSubmit(); }} class="flex flex-col gap-3">
-          <p class="text-xs text-white/60 leading-relaxed m-0">
+          <p class="text-xs text-ink/60 leading-relaxed m-0">
             {i18n.t('sync.master_password_desc')}
           </p>
 
@@ -605,7 +605,7 @@
     border-radius: var(--radius-lg, 16px);
     background: var(--bg-card);
     border: var(--border-width, 1px) solid var(--border-color);
-    color: var(--text-primary, #ffffff);
+    color: var(--text-primary);
     font-family: var(--font-mono, monospace);
     font-size: 12px;
     line-height: 1.4;
