@@ -8,7 +8,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
-use crate::db::storage::content_cache_path;
+use crate::db::storage::{content_cache_path, sanitize_cache_key};
 use futures_util::future::join_all;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -23,19 +23,6 @@ fn provider_errors(operation: &str, errors: Vec<String>) -> String {
             errors.join("; ")
         )
     }
-}
-
-fn sanitize_cache_key(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, String> {
@@ -1754,14 +1741,19 @@ impl ProviderManager {
         }
 
         if post.preview_path.is_none() {
-            let dir = content_cache_path().join("previews");
             let s = sanitize_cache_key(&post.service);
             let u = sanitize_cache_key(&post.user);
             let id = sanitize_cache_key(&post.id);
-            for ext in &["jpg", "jpeg", "webp", "png", "gif", "mp4", "webm"] {
-                let p = dir.join(format!("{s}_{u}_{id}.{ext}"));
-                if p.is_file() {
-                    post.preview_path = Some(p.to_string_lossy().into_owned());
+            let thumb_dir = content_cache_path().join("thumbnails");
+            for prefix in &[format!("post_{s}_{u}_{id}"), format!("{s}_{u}_{id}")] {
+                for ext in &["webp", "jpg", "jpeg", "png", "gif", "mp4", "webm"] {
+                    let p = thumb_dir.join(format!("{prefix}.{ext}"));
+                    if p.is_file() {
+                        post.preview_path = Some(p.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+                if post.preview_path.is_some() {
                     break;
                 }
             }

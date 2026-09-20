@@ -21,14 +21,14 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks } from './RichContent.svelte';
   import { apiResolveCloudLink } from '$lib/utils/ipc';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
+  import { getVideoThumbnail } from '$lib/utils/mediaThumbnail';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
@@ -664,26 +664,7 @@
     return false;
   }
 
-  function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
-    if (!a || !b) return false;
-    if (a === b) return true;
 
-    const aNode = (a as any).cloud_node_id;
-    const bNode = (b as any).cloud_node_id;
-    if (aNode && bNode) return aNode === bNode;
-    if (aNode && b.path && (b.path === aNode || b.path.endsWith(aNode))) return true;
-    if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
-
-    if (a.path && b.path && a.path === b.path) return true;
-
-    const aIsCloud = (a as any).is_cloud === true;
-    const bIsCloud = (b as any).is_cloud === true;
-    if (aIsCloud === bIsCloud && a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) {
-      return true;
-    }
-
-    return false;
-  }
 
   let media = $derived.by(() => {
     const items: Attachment[] = [];
@@ -1192,7 +1173,7 @@
     return {
       id: key,
       url,
-      poster: cachedVideoThumb || attachmentThumbnailUrl(file, service),
+      poster: cachedVideoThumb || attachmentThumbnailUrl(file, service, post),
       name: file.name || i18n.t('post.file'),
       kind: isEmbed ? 'video' : mediaViewerKind(file, url),
       size: getEffectiveFileSize(file) || file.size,
@@ -1655,7 +1636,7 @@
     const thumb = postThumbnailUrl(post);
     if (thumb) return thumb;
     if (post.file) {
-      return attachmentThumbnailUrl(post.file, service);
+      return attachmentThumbnailUrl(post.file, service, post);
     }
     return '';
   });
@@ -1707,25 +1688,34 @@
     if (!post || favoritingPending) return;
     favoritingPending = true;
     const targetState = !isFavorited;
+    const previousState = isFavorited;
+
+    isFavorited = targetState;
+    if (!authenticated) {
+      notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'), {
+        glyph: targetState ? 'favorited' : 'unfavorited'
+      });
+    } else {
+      notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), {
+        glyph: targetState ? 'favorited' : 'unfavorited'
+      });
+    }
+    if (targetState) {
+      accountState.addPostFavoriteOptimistic(post);
+    } else {
+      accountState.removePostFavoriteOptimistic(service, creatorId, postId);
+    }
+
     try {
       await apiSetPostFavorite(service, creatorId, postId, targetState);
-      isFavorited = targetState;
-      if (!authenticated) {
-        notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'), {
-          glyph: targetState ? 'favorited' : 'unfavorited'
-        });
-      } else {
-        notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), {
-          glyph: targetState ? 'favorited' : 'unfavorited'
-        });
-      }
-      if (targetState) {
-        accountState.addPostFavoriteOptimistic(post);
-      } else {
-        accountState.removePostFavoriteOptimistic(service, creatorId, postId);
-      }
     } catch (error) {
       logger.error(`Failed to toggle post favorite for ${service}:${postId}`, error);
+      isFavorited = previousState;
+      if (targetState) {
+        accountState.removePostFavoriteOptimistic(service, creatorId, postId);
+      } else {
+        accountState.addPostFavoriteOptimistic(post);
+      }
       notify.error(i18n.t('post.favorite_failed'), error);
     } finally {
       favoritingPending = false;
@@ -2983,7 +2973,7 @@
                         </div>
                       {:else}
                         {#if isVid}
-                          {@const thumbUrl = videoThumbnails[index] || attachmentThumbnailUrl(file, service)}
+                          {@const thumbUrl = videoThumbnails[index] || attachmentThumbnailUrl(file, service, post)}
                           {#if activeVideoIndexes.has(index)}
                             <!-- svelte-ignore a11y_media_has_caption -->
                             <video
@@ -3044,6 +3034,8 @@
                             aria-label={i18n.t('post.viewer_open')}
                           ><IconFullscreen /></button>
                         {:else}
+                          {@const thumbUrl = attachmentThumbnailUrl(file!, service, post)}
+                          {@const displaySrc = downloaded?.final_path ? url : (thumbUrl || url)}
                           <button
                             class="media-open-surface"
                             type="button"
@@ -3051,13 +3043,13 @@
                             aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || post.title}`}
                           >
                             <img
-                              src={url}
+                              src={displaySrc}
                               alt={file?.name || post.title}
                               loading={index < 2 ? 'eager' : 'lazy'}
                               decoding="async"
                               onerror={(e) => {
                                 const target = e.currentTarget as HTMLImageElement;
-                                const fallback = attachmentThumbnailUrl(file!, service);
+                                const fallback = target.src === thumbUrl ? url : thumbUrl;
                                 if (fallback && target.src !== fallback) {
                                   target.src = fallback;
                                 }

@@ -15,6 +15,7 @@
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
   import { isVideoUrl, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
+  import { getMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -76,6 +77,32 @@
   let placeholderUrl = $derived(postPlaceholderUrl(effectivePost));
   let video = $derived(isVideoUrl(mediaUrl));
 
+  let generatedThumbnail = $state<string | null>(null);
+
+  $effect(() => {
+    if (thumbnailUrl) {
+      generatedThumbnail = null;
+      return;
+    }
+    if (!effectivePost?.service || !effectivePost?.user || !effectivePost?.id) return;
+    const key = `post:${effectivePost.service}:${effectivePost.user}:${effectivePost.id}`;
+    const url = effectivePost.thumbnail_url || effectivePost.file?.thumbnail_url || mediaUrl || effectivePost.file?.path;
+    if (!url) return;
+
+    let cancelled = false;
+    getMediaThumbnail(key, url, video ? 'video' : 'image', 360).then((thumb) => {
+      if (!cancelled && thumb) {
+        generatedThumbnail = thumb;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  let activeThumbnail = $derived(thumbnailUrl || generatedThumbnail);
+
   let isLite = $derived(configState.settings.card_view_mode === 'lite');
   let fileCounts = $derived(getPostFileCounts(effectivePost));
 
@@ -128,16 +155,23 @@
     if (!post || favoritingPending) return;
     favoritingPending = true;
     const target = !isFavorited;
+
+    if (target) {
+      accountState.addPostFavoriteOptimistic(post);
+      notify.success(i18n.t('post.added_to_favorites'), { glyph: 'favorited' });
+    } else {
+      accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
+      notify.success(i18n.t('post.removed_from_favorites'), { glyph: 'unfavorited' });
+    }
+
     try {
       await apiSetPostFavorite(post.service, post.user, post.id, target);
-      if (target) {
-        accountState.addPostFavoriteOptimistic(post);
-        notify.success(i18n.t('post.added_to_favorites'), { glyph: 'favorited' });
-      } else {
-        accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
-        notify.success(i18n.t('post.removed_from_favorites'), { glyph: 'unfavorited' });
-      }
     } catch (err) {
+      if (target) {
+        accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
+      } else {
+        accountState.addPostFavoriteOptimistic(post);
+      }
       notify.error(i18n.t('post.favorite_failed'), err);
     } finally {
       favoritingPending = false;
@@ -543,10 +577,10 @@
     />
   {/if}
 
-  {#if thumbnailUrl}
+  {#if activeThumbnail}
     <img
       class="grid-tile-media"
-      src={thumbnailUrl}
+      src={activeThumbnail}
       alt=""
       loading="lazy"
       decoding="async"

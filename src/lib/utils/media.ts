@@ -242,23 +242,98 @@ export function attachmentMediaUrl(file: Attachment, _service?: string, _post?: 
   return '';
 }
 
-export function attachmentThumbnailUrl(file: Attachment, _service?: string): string {
+export function isSameAttachment(a: Attachment | null | undefined, b: Attachment | null | undefined): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const aNode = (a as any).cloud_node_id;
+  const bNode = (b as any).cloud_node_id;
+  if (aNode && bNode) return aNode === bNode;
+  if (aNode && b.path && (b.path === aNode || b.path.endsWith(aNode))) return true;
+  if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
+
+  if (a.path && b.path && a.path === b.path) return true;
+
+  const aIsCloud = (a as any).is_cloud === true;
+  const bIsCloud = (b as any).is_cloud === true;
+  if (aIsCloud === bIsCloud && a.name && b.name && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()) {
+    return true;
+  }
+
+  return false;
+}
+
+export function attachmentThumbnailUrl(file: Attachment, _service?: string, post?: Post | null): string {
   if (!file) return '';
-  return file.thumbnail_url || '';
+  if (file.thumbnail_url) return file.thumbnail_url;
+  const extra = file.extra as Record<string, unknown> | undefined;
+  if (extra?.thumbnail_url) return extra.thumbnail_url as string;
+  if (extra?.preview_path) {
+    const p = extra.preview_path as string;
+    if (!p.includes('/previews/') && !p.includes('\\previews\\')) {
+      const local = resolveLocalMediaUrl(p);
+      if (local) return local;
+    }
+  }
+  if (extra?.local_preview_path) {
+    const p = extra.local_preview_path as string;
+    if (!p.includes('/previews/') && !p.includes('\\previews\\')) {
+      const local = resolveLocalMediaUrl(p);
+      if (local) return local;
+    }
+  }
+  if (post) {
+    if (post.file && isSameAttachment(post.file, file)) {
+      if (post.thumbnail_url) return post.thumbnail_url;
+      if (post.file?.thumbnail_url) return post.file.thumbnail_url;
+      if (post.preview_path && !post.preview_path.includes('/previews/') && !post.preview_path.includes('\\previews\\')) {
+        const local = resolveLocalMediaUrl(post.preview_path);
+        if (local) return local;
+      }
+    }
+    if (post.attachments) {
+      const match = post.attachments.find((att) => isSameAttachment(att, file));
+      if (match) {
+        if (match.thumbnail_url) return match.thumbnail_url;
+        const matchExtra = match.extra as Record<string, unknown> | undefined;
+        if (matchExtra?.thumbnail_url) return matchExtra.thumbnail_url as string;
+      }
+    }
+    if ((!post.attachments || post.attachments.length <= 1) && (!post.file || isSameAttachment(post.file, file))) {
+      if (post.thumbnail_url) return post.thumbnail_url;
+      if (post.preview_path && !post.preview_path.includes('/previews/') && !post.preview_path.includes('\\previews\\')) {
+        const local = resolveLocalMediaUrl(post.preview_path);
+        if (local) return local;
+      }
+    }
+  }
+  return '';
 }
 
 export function postThumbnailUrl(post: Post): string | null {
-  return post.thumbnail_url || null;
+  return post.thumbnail_url || post.file?.thumbnail_url || null;
 }
 
 export function postThumbnailSrc(post?: Post | null): string | null {
   if (!post) return null;
-  if (post.preview_path) {
-    const local = resolveLocalMediaUrl(post.preview_path);
+  const extra = post.extra as Record<string, unknown> | undefined;
+  const previewPath =
+    post.preview_path ||
+    (extra?.local_preview_path as string | undefined) ||
+    (extra?.preview_path as string | undefined);
+  if (previewPath && !previewPath.includes('/previews/') && !previewPath.includes('\\previews\\')) {
+    const local = resolveLocalMediaUrl(previewPath);
     if (local) return local;
   }
   if (post.thumbnail_url) {
     return post.thumbnail_url;
+  }
+  if (post.file?.thumbnail_url) {
+    return post.file.thumbnail_url;
+  }
+  const firstAttachmentThumb = post.attachments?.find((a) => a.thumbnail_url)?.thumbnail_url;
+  if (firstAttachmentThumb) {
+    return firstAttachmentThumb;
   }
   return postThumbnailUrl(post);
 }

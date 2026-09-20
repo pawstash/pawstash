@@ -650,7 +650,7 @@
     "cache_protected": "Kept offline",
     "cache_section": "Cache",
     "cache_stats_failed": "Couldn't read cache usage",
-    "cache_thumbnails": "Video thumbnails",
+    "cache_thumbnails": "Thumbnails",
     "cache_usage": "Disk usage",
     "cache_usage_desc": "Cached previews, avatars, and creator banners stored on this device.",
     "card_view_mode": "Card View Mode",

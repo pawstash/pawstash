@@ -36,5 +36,7 @@ export interface DownloadItem {
   creator_name: string;
   post_preview_path?: string;
   post_preview_url?: string;
+  file_preview_path?: string;
+  file_preview_url?: string;
   creator_avatar_path?: string;
 }

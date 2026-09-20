@@ -289,13 +289,19 @@
   }
 
   function itemThumbnailUrl(item: DownloadItem): string | undefined {
-    const filename = (item.filename || '').toLowerCase();
-    const isImage = /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(filename);
-    if (isImage) {
-      return previewUrl(item);
-    }
+    return localPathUrl(item.file_preview_path) || item.file_preview_url || undefined;
+  }
 
-    return localPathUrl(item.post_preview_path) || item.post_preview_url;
+  function groupThumbnailUrl(items: DownloadItem[]): string | undefined {
+    const withPostThumb = items.find((i) => i.post_preview_path);
+    if (withPostThumb?.post_preview_path) return localPathUrl(withPostThumb.post_preview_path);
+    const withPostUrl = items.find((i) => i.post_preview_url);
+    if (withPostUrl?.post_preview_url) return withPostUrl.post_preview_url;
+    const withFileThumb = items.find((i) => i.file_preview_path);
+    if (withFileThumb?.file_preview_path) return localPathUrl(withFileThumb.file_preview_path);
+    const withFileUrl = items.find((i) => i.file_preview_url);
+    if (withFileUrl?.file_preview_url) return withFileUrl.file_preview_url;
+    return undefined;
   }
 
   $effect(() => {
@@ -311,7 +317,7 @@
   });
 
   onMount(() => {
-    void downloadState.init().catch((error) => downloadState.error = String(error));
+    void downloadState.init().then(() => downloadState.refresh()).catch((error) => downloadState.error = String(error));
     void libraryState.init();
     void serverPortState.ensurePort();
 
@@ -646,7 +652,7 @@
             <DownloadGroupCard
               items={group.items}
               previewUrl={previewUrl(media)}
-              thumbnailUrl={localPathUrl(media.post_preview_path) || media.post_preview_url}
+              thumbnailUrl={groupThumbnailUrl(group.items)}
               avatarUrl={localPathUrl(media.creator_avatar_path)}
               title={media.post_title || i18n.t('downloads.unknown_post')}
               creatorName={media.creator_name}

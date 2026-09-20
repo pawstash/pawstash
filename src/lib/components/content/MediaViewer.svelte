@@ -34,7 +34,7 @@
   import { logMediaError } from '$lib/utils/logger';
   import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
   import { apiOpenDownloadFile } from '$lib/utils/ipc';
-  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
+  import { getVideoThumbnail } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
@@ -117,6 +117,24 @@
   let videoElement = $state<HTMLVideoElement>();
   let loadedWidth = $state(0);
   let loadedHeight = $state(0);
+  let fullImageLoaded = $state(false);
+  let fullImageError = $state(false);
+
+  $effect(() => {
+    const _ = index;
+    fullImageLoaded = false;
+    fullImageError = false;
+  });
+
+  $effect(() => {
+    if (mediaElement && mediaElement.complete && mediaElement.naturalWidth > 0) {
+      if (!fullImageLoaded) {
+        fullImageLoaded = true;
+        loadedWidth = mediaElement.naturalWidth;
+        loadedHeight = mediaElement.naturalHeight;
+      }
+    }
+  });
   let controlsTimer: ReturnType<typeof setTimeout> | undefined;
   let closing = false;
   let hasAppliedInitialTime = false;
@@ -504,6 +522,22 @@
     const image = event.currentTarget as HTMLImageElement;
     loadedWidth = image.naturalWidth;
     loadedHeight = image.naturalHeight;
+  }
+
+  function handleFullImageLoad(event: Event) {
+    fullImageLoaded = true;
+    fullImageError = false;
+    handleImageLoad(event);
+  }
+
+  function handleFullImageError(event: Event) {
+    const target = event.currentTarget as HTMLImageElement;
+    logMediaError('image', target.src, current?.name || 'image');
+    fullImageError = true;
+    if (current?.poster && target.src !== current.poster) {
+      target.src = current.poster;
+      fullImageLoaded = true;
+    }
   }
 
   function requestDownload() {
@@ -907,22 +941,26 @@
         style:opacity={isDismissing ? dismissOpacity : swipeOpacity}
       >
         {#if current.kind === 'image'}
+          {#if current.poster && current.url && current.poster !== current.url && !fullImageLoaded}
+            <img
+              class="media-viewer-media image-media is-poster-underlay"
+              src={current.poster}
+              alt=""
+              draggable="false"
+              style:transform
+            />
+          {/if}
           <img
             bind:this={mediaElement}
             class="media-viewer-media image-media"
             class:zoomed={scale > MIN_SCALE}
+            class:is-loading={!fullImageLoaded && Boolean(current.poster && current.url && current.poster !== current.url)}
             src={current.url || current.poster}
             alt={current.name}
             draggable="false"
             style:transform
-            onload={handleImageLoad}
-            onerror={(e) => {
-              const target = e.currentTarget as HTMLImageElement;
-              logMediaError('image', target.src, current.name);
-              if (current?.poster && target.src !== current.poster) {
-                target.src = current.poster;
-              }
-            }}
+            onload={handleFullImageLoad}
+            onerror={handleFullImageError}
           />
         {:else if current.html}
           <div
@@ -1375,13 +1413,21 @@
   .media-fit-frame {
     position: absolute;
     inset: 84px clamp(18px, 7vw, 104px) 100px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    place-items: center;
     min-width: 0;
     min-height: 0;
     transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease-out;
     will-change: transform, opacity;
+  }
+
+  .media-fit-frame.file-frame {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
   }
 
   .media-fit-frame.is-swiping {
@@ -1401,6 +1447,8 @@
   }
 
   .media-viewer-media {
+    grid-area: 1 / 1;
+    place-self: center;
     display: block;
     min-width: 0;
     min-height: 0;
@@ -1414,9 +1462,24 @@
     transition: transform 150ms var(--ease-expo, ease-out);
   }
 
+  .is-poster-underlay {
+    grid-area: 1 / 1;
+    place-self: center;
+    pointer-events: none;
+    z-index: 1;
+  }
+
   .image-media {
+    grid-area: 1 / 1;
+    place-self: center;
+    position: relative;
+    z-index: 2;
     will-change: transform;
-    transition: transform 150ms var(--ease-expo, ease-out);
+    transition: transform 150ms var(--ease-expo, ease-out), opacity 180ms ease-out;
+  }
+
+  .image-media.is-loading {
+    opacity: 0;
   }
 
   .image-media.zoomed {

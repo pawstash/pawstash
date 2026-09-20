@@ -4,9 +4,8 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 
-// New databases start from this schema; ordered migrations below upgrade existing databases.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
@@ -262,6 +261,19 @@ pub fn content_cache_path() -> PathBuf {
     data_root().join("content-cache")
 }
 
+pub fn sanitize_cache_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 pub fn open_database() -> Result<Connection, String> {
     let path = database_path();
     if let Some(parent) = path.parent() {
@@ -356,6 +368,18 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                          UPDATE creators SET is_ai = 1 WHERE lower(name) LIKE '%[ai]%' OR lower(name) LIKE '%(ai)%';"
                     )
                     .map_err(|e| e.to_string())?;
+            }
+            4 => {
+                transaction
+                    .execute(
+                        "UPDATE posts SET preview_path = NULL WHERE preview_path LIKE '%previews%'",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+                let legacy = content_cache_path().join("previews");
+                if legacy.exists() {
+                    let _ = std::fs::remove_dir_all(&legacy);
+                }
             }
             _ => return Err(format!("Missing database migration {next_version}")),
         }

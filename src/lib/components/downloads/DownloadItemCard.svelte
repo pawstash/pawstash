@@ -20,10 +20,11 @@
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
+  import IconImage from '~icons/fluent/image-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
+  import { getMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { playbackState } from '$lib/state/playbackState.svelte';
 
   interface Props {
@@ -42,7 +43,7 @@
   let thumbnailFailed = $state(false);
   let previewFailed = $state(false);
   let generatedThumbnail = $state<string | undefined>(undefined);
-  let effectiveThumbnail = $derived(!thumbnailFailed && thumbnailUrl ? thumbnailUrl : generatedThumbnail);
+  let effectiveThumbnail = $derived(generatedThumbnail || (!thumbnailFailed && thumbnailUrl ? thumbnailUrl : undefined));
   let playMenuOpen = $state(false);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let percent = $derived(item.total_bytes > 0 ? Math.min(100, Math.round(item.downloaded_bytes / item.total_bytes * 100)) : 0);
@@ -105,10 +106,11 @@
     }
   }
 
-  function requestVideoThumbnail() {
-    if (mediaKind !== 'video' || generatedThumbnail || !previewUrl) return;
+  function requestMediaThumbnail() {
+    if (generatedThumbnail || !previewUrl) return;
+    if (mediaKind !== 'video' && mediaKind !== 'image') return;
     const key = item.media_id || item.id || item.filename;
-    getVideoThumbnail(key, previewUrl).then((thumb) => {
+    getMediaThumbnail(key, previewUrl, mediaKind).then((thumb) => {
       if (thumb) {
         generatedThumbnail = thumb;
       }
@@ -120,11 +122,10 @@
       lastThumbnailUrl = thumbnailUrl;
       thumbnailFailed = false;
     }
-    if (!thumbnailUrl && mediaKind === 'video') {
-      requestVideoThumbnail();
-    }
-    if (previewUrl && mediaKind === 'video' && (!thumbnailUrl || thumbnailFailed)) {
-      requestVideoThumbnail();
+    if (previewUrl && (mediaKind === 'video' || mediaKind === 'image')) {
+      if (!generatedThumbnail && (!thumbnailUrl || thumbnailFailed || (item.status === 'completed' && !item.file_preview_path))) {
+        requestMediaThumbnail();
+      }
     }
   });
 
@@ -293,22 +294,13 @@
       onerror={() => {
         if (!thumbnailFailed && effectiveThumbnail === thumbnailUrl) {
           thumbnailFailed = true;
-          requestVideoThumbnail();
+          requestMediaThumbnail();
         }
       }}
     />
-  {:else if previewUrl && !previewFailed && mediaKind === 'image'}
-    <img
-      class="grid-tile-media"
-      src={previewUrl}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      onerror={() => previewFailed = true}
-    />
   {:else}
     <div class="grid-tile-placeholder download-placeholder">
-      {#if mediaKind === 'audio'}<IconMusic />{:else if mediaKind === 'video'}<IconVideo />{:else}<IconDocument />{/if}
+      {#if mediaKind === 'audio'}<IconMusic />{:else if mediaKind === 'video'}<IconVideo />{:else if mediaKind === 'image'}<IconImage />{:else}<IconDocument />{/if}
       {#if extension}<span>{extension}</span>{/if}
     </div>
   {/if}

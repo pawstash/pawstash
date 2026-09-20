@@ -227,20 +227,32 @@ export class LibraryState {
     const key = libraryPostKey(post);
     if (this.pendingKeys.has(key)) return;
     this.pendingKeys = new Set(this.pendingKeys).add(key);
+
+    const previousSaved = this.savedKeys.has(key);
+    const previousStashes = this.postStashes[key] ? [...this.postStashes[key]] : [];
+    this.savedKeys = new Set(this.savedKeys).add(key);
+    if (collectionId) {
+      const current = this.postStashes[key] || [];
+      if (!current.includes(collectionId)) {
+        this.postStashes[key] = [...current, collectionId];
+      }
+    }
+
     try {
       await apiSaveLibraryPost(post, collectionId);
-      this.savedKeys = new Set(this.savedKeys).add(key);
-      if (collectionId) {
-        const current = this.postStashes[key] || [];
-        if (!current.includes(collectionId)) {
-          this.postStashes[key] = [...current, collectionId];
-        }
-      }
-      await this.refreshCollections();
+      void this.refreshCollections();
       const target = collectionId ?? this.inbox?.id;
       if (this.selectedCollectionId === null || this.selectedCollectionId === target) {
-        await this.refresh();
+        void this.refresh();
       }
+    } catch (err) {
+      if (!previousSaved) {
+        const rollbackSaved = new Set(this.savedKeys);
+        rollbackSaved.delete(key);
+        this.savedKeys = rollbackSaved;
+      }
+      this.postStashes[key] = previousStashes;
+      throw err;
     } finally {
       const pending = new Set(this.pendingKeys);
       pending.delete(key);
@@ -252,14 +264,27 @@ export class LibraryState {
     const key = libraryPostKey(post);
     if (this.pendingKeys.has(key)) return;
     this.pendingKeys = new Set(this.pendingKeys).add(key);
+
+    const previousSaved = this.savedKeys.has(key);
+    const previousStashes = this.postStashes[key] ? [...this.postStashes[key]] : [];
+    const previousPosts = [...this.posts];
+
+    const saved = new Set(this.savedKeys);
+    saved.delete(key);
+    this.savedKeys = saved;
+    delete this.postStashes[key];
+    this.posts = this.posts.filter((item) => libraryPostKey(item) !== key);
+
     try {
       await apiRemoveLibraryPost(post.service, post.user, post.id);
-      const saved = new Set(this.savedKeys);
-      saved.delete(key);
-      this.savedKeys = saved;
-      delete this.postStashes[key];
-      this.posts = this.posts.filter((item) => libraryPostKey(item) !== key);
-      await this.refreshCollections();
+      void this.refreshCollections();
+    } catch (err) {
+      if (previousSaved) {
+        this.savedKeys = new Set(this.savedKeys).add(key);
+      }
+      this.postStashes[key] = previousStashes;
+      this.posts = previousPosts;
+      throw err;
     } finally {
       const pending = new Set(this.pendingKeys);
       pending.delete(key);
@@ -326,16 +351,27 @@ export class LibraryState {
 
   async removeFromStash(collectionId: string, post: Pick<Post, 'service' | 'user' | 'id'>) {
     const key = libraryPostKey(post);
-    const removed = await apiRemoveLibraryPostFromStash(collectionId, post.service, post.user, post.id);
-    if (!removed) return false;
-    const current = this.postStashes[key] || [];
-    this.postStashes[key] = current.filter((id) => id !== collectionId);
-    await this.refreshCollections();
-    await this.refreshSavedKeys();
+    const previous = this.postStashes[key] || [];
+    const previousPosts = [...this.posts];
+    this.postStashes[key] = previous.filter((id) => id !== collectionId);
     if (this.selectedCollectionId === collectionId) {
       this.posts = this.posts.filter((item) => libraryPostKey(item) !== key);
     }
-    return true;
+    try {
+      const removed = await apiRemoveLibraryPostFromStash(collectionId, post.service, post.user, post.id);
+      if (!removed) {
+        this.postStashes[key] = previous;
+        this.posts = previousPosts;
+        return false;
+      }
+      void this.refreshCollections();
+      void this.refreshSavedKeys();
+      return true;
+    } catch (err) {
+      this.postStashes[key] = previous;
+      this.posts = previousPosts;
+      throw err;
+    }
   }
 
   async deleteStash(collectionId: string) {

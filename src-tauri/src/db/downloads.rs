@@ -1,4 +1,4 @@
-use crate::db::storage::open_database;
+use crate::db::storage::{content_cache_path, open_database, sanitize_cache_key};
 #[cfg(test)]
 use crate::db::storage::prepare_connection;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -33,6 +33,8 @@ pub struct DownloadJob {
     pub creator_name: String,
     pub post_preview_path: Option<String>,
     pub post_preview_url: Option<String>,
+    pub file_preview_path: Option<String>,
+    pub file_preview_url: Option<String>,
     pub creator_avatar_path: Option<String>,
 }
 
@@ -114,7 +116,7 @@ impl DownloadRepository {
                 "SELECT d.id, d.service, d.creator_id, d.post_id, d.media_id, d.url, d.filename, d.output_dir, d.temp_path, d.final_path, d.engine,
                         d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
                         d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
-                        d.completed_at, p.title, c.name, p.preview_path, c.avatar_path
+                        d.completed_at, p.title, c.name, p.preview_path, c.avatar_path, p.snapshot_json
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id)
                  ORDER BY
@@ -140,7 +142,7 @@ impl DownloadRepository {
                         d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
                         d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
                         d.completed_at
-                        , p.title, c.name, p.preview_path, c.avatar_path
+                        , p.title, c.name, p.preview_path, c.avatar_path, p.snapshot_json
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.id = ?1",
                 params![id],
@@ -525,7 +527,7 @@ impl DownloadRepository {
                         d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
                         d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
                         d.completed_at
-                        , p.title, c.name, p.preview_path, c.avatar_path
+                        , p.title, c.name, p.preview_path, c.avatar_path, p.snapshot_json
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.logical_key = ?1",
                 params![logical_key],
@@ -542,7 +544,7 @@ impl DownloadRepository {
                         d.status, d.downloaded_bytes, d.total_bytes, d.speed_bps, d.sha256,
                         d.error_code, d.error_message, d.retry_count, d.created_at, d.updated_at,
                         d.completed_at
-                        , p.title, c.name, p.preview_path, c.avatar_path
+                        , p.title, c.name, p.preview_path, c.avatar_path, p.snapshot_json
                  FROM download_jobs d JOIN posts p USING(service,creator_id,post_id)
                  JOIN creators c USING(service,creator_id) WHERE d.id = ?1",
                 params![id],
@@ -553,34 +555,164 @@ impl DownloadRepository {
     }
 
     fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadJob> {
+        let id: String = row.get(0)?;
+        let service: String = row.get(1)?;
+        let creator_id: String = row.get(2)?;
+        let post_id: String = row.get(3)?;
+        let media_id: String = row.get(4)?;
+        let url: String = row.get(5)?;
+        let filename: String = row.get(6)?;
+        let output_dir: String = row.get(7)?;
+        let temp_path: String = row.get(8)?;
+        let final_path: String = row.get(9)?;
+        let engine: String = row.get(10)?;
+        let status: String = row.get(11)?;
+        let downloaded_bytes = row.get::<_, i64>(12)?.max(0) as u64;
+        let total_bytes = row.get::<_, i64>(13)?.max(0) as u64;
+        let speed_bps = row.get::<_, i64>(14)?.max(0) as u64;
+        let sha256: Option<String> = row.get(15)?;
+        let error_code: Option<String> = row.get(16)?;
+        let error_message: Option<String> = row.get(17)?;
+        let retry_count = row.get::<_, i64>(18)?.max(0) as u32;
+        let created_at: String = row.get(19)?;
+        let updated_at: String = row.get(20)?;
+        let completed_at: Option<String> = row.get(21)?;
+        let post_title: String = row.get(22)?;
+        let creator_name: String = row.get(23)?;
+        let raw_preview_path: Option<String> = row.get(24)?;
+        let creator_avatar_path: Option<String> = row.get(25)?;
+        let snapshot_json: Option<String> = row.get(26).unwrap_or(None);
+
+        let thumb_dir = content_cache_path().join("thumbnails");
+        let s_mid = sanitize_cache_key(&media_id);
+        let s_id = sanitize_cache_key(&id);
+        let s_fn = sanitize_cache_key(&filename);
+        let s_mid_trimmed = s_mid.trim_start_matches('_').to_string();
+        let s_fp = sanitize_cache_key(&final_path);
+
+        let mut file_preview_path: Option<String> = None;
+
+        // 1. Look for a file-specific thumbnail on disk:
+        for candidate in [&s_mid, &s_mid_trimmed, &s_id, &s_fn, &s_fp] {
+            if candidate.is_empty() {
+                continue;
+            }
+            for ext in &["webp", "jpg", "jpeg", "png", "gif"] {
+                let p = thumb_dir.join(format!("{candidate}.{ext}"));
+                if p.is_file() {
+                    file_preview_path = Some(p.to_string_lossy().into_owned());
+                    break;
+                }
+            }
+            if file_preview_path.is_some() {
+                break;
+            }
+        }
+
+        // 2. Parse snapshot_json for attachment-specific thumbnail_url and post-level thumbnail_url:
+        let mut file_preview_url: Option<String> = None;
+        let mut post_preview_url: Option<String> = None;
+
+        if let Some(json_str) = snapshot_json.as_deref() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                post_preview_url = v.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+
+                let main_file = v.get("file").and_then(|f| f.as_object());
+                let attachments = v.get("attachments").and_then(|a| a.as_array());
+
+                // Check if this job matches the main file:
+                if let Some(f) = main_file {
+                    let path_match = f.get("path").and_then(|p| p.as_str()).map_or(false, |p| p == media_id);
+                    let name_match = f.get("name").and_then(|n| n.as_str()).map_or(false, |n| n == filename);
+                    let url_match = f.get("url").and_then(|u| u.as_str()).map_or(false, |u| u == url);
+
+                    if path_match || name_match || url_match {
+                        file_preview_url = f.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+                    }
+                }
+
+                // If not matched to main file, check attachments:
+                if file_preview_url.is_none() {
+                    if let Some(atts) = attachments {
+                        for att in atts {
+                            let path_match = att.get("path").and_then(|p| p.as_str()).map_or(false, |p| p == media_id);
+                            let name_match = att.get("name").and_then(|n| n.as_str()).map_or(false, |n| n == filename);
+                            let url_match = att.get("url").and_then(|u| u.as_str()).map_or(false, |u| u == url);
+
+                            if path_match || name_match || url_match {
+                                file_preview_url = att.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if post_preview_url.is_none() {
+                    post_preview_url = main_file.and_then(|f| f.get("thumbnail_url")).and_then(|t| t.as_str()).map(|s| s.to_string());
+                }
+            }
+        }
+
+        // 3. Post-level cover on disk (strictly for group view / post-level representation):
+        let mut post_preview_path: Option<String> = None;
+        if let Some(ref p) = raw_preview_path {
+            if std::path::Path::new(p).is_file() {
+                post_preview_path = Some(p.clone());
+            }
+        }
+
+        if post_preview_path.is_none() {
+            let s_srv = sanitize_cache_key(&service);
+            let s_creator = sanitize_cache_key(&creator_id);
+            let s_post = sanitize_cache_key(&post_id);
+
+            for candidate in [
+                format!("post_{s_srv}_{s_creator}_{s_post}"),
+                format!("{s_srv}_{s_creator}_{s_post}"),
+            ] {
+                for ext in &["webp", "jpg", "jpeg", "png", "gif"] {
+                    let p = thumb_dir.join(format!("{candidate}.{ext}"));
+                    if p.is_file() {
+                        post_preview_path = Some(p.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+                if post_preview_path.is_some() {
+                    break;
+                }
+            }
+        }
+
         Ok(DownloadJob {
-            id: row.get(0)?,
-            service: row.get(1)?,
-            creator_id: row.get(2)?,
-            post_id: row.get(3)?,
-            media_id: row.get(4)?,
-            url: row.get(5)?,
-            filename: row.get(6)?,
-            output_dir: row.get(7)?,
-            temp_path: row.get(8)?,
-            final_path: row.get(9)?,
-            engine: row.get(10)?,
-            status: row.get(11)?,
-            downloaded_bytes: row.get::<_, i64>(12)?.max(0) as u64,
-            total_bytes: row.get::<_, i64>(13)?.max(0) as u64,
-            speed_bps: row.get::<_, i64>(14)?.max(0) as u64,
-            sha256: row.get(15)?,
-            error_code: row.get(16)?,
-            error_message: row.get(17)?,
-            retry_count: row.get::<_, i64>(18)?.max(0) as u32,
-            created_at: row.get(19)?,
-            updated_at: row.get(20)?,
-            completed_at: row.get(21)?,
-            post_title: row.get(22)?,
-            creator_name: row.get(23)?,
-            post_preview_path: row.get(24)?,
-            post_preview_url: None,
-            creator_avatar_path: row.get(25)?,
+            id,
+            service,
+            creator_id,
+            post_id,
+            media_id,
+            url,
+            filename,
+            output_dir,
+            temp_path,
+            final_path,
+            engine,
+            status,
+            downloaded_bytes,
+            total_bytes,
+            speed_bps,
+            sha256,
+            error_code,
+            error_message,
+            retry_count,
+            created_at,
+            updated_at,
+            completed_at,
+            post_title,
+            creator_name,
+            post_preview_path,
+            post_preview_url,
+            file_preview_path,
+            file_preview_url,
+            creator_avatar_path,
         })
     }
 }

@@ -1,7 +1,7 @@
 use crate::api::models::{Creator, CreatorProfile, Favorite, Post, PostRevision};
 #[cfg(test)]
 use crate::db::storage::prepare_connection;
-use crate::db::storage::{content_cache_path, open_database};
+use crate::db::storage::{content_cache_path, open_database, sanitize_cache_key};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
@@ -11,6 +11,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
+
+fn map_post_row(json: String, preview: Option<String>) -> Result<Post, String> {
+    let mut post = Post::from_json_str(&json).map_err(|e| e.to_string())?;
+    if let Some(path) = preview {
+        if std::path::Path::new(&path).is_file() {
+            post.preview_path = Some(path.clone());
+            post.extra
+                .insert("local_preview_path".into(), serde_json::Value::String(path));
+        }
+    }
+    Ok(post)
+}
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct CreatorsQuery {
@@ -112,6 +124,10 @@ impl ContentRepository {
             .execute("UPDATE creators SET avatar_path=NULL, banner_path=NULL", [])
             .map_err(|error| error.to_string())?;
         drop(connection);
+        let legacy_previews = root.join("previews");
+        if legacy_previews.exists() {
+            let _ = std::fs::remove_dir_all(&legacy_previews);
+        }
         remove_empty_cache_dirs(&root)?;
         self.cache_stats()
     }
@@ -397,10 +413,11 @@ impl ContentRepository {
             .map_err(|e| e.to_string())?;
             let snapshot = serde_json::to_string(&clean_post).map_err(|e| e.to_string())?;
             tx.execute(
-                "INSERT INTO posts(service, creator_id, post_id, title, content, published_at, snapshot_json, last_checked_at)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,CURRENT_TIMESTAMP)
+                "INSERT INTO posts(service, creator_id, post_id, title, content, published_at, snapshot_json, preview_path, last_checked_at)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,CURRENT_TIMESTAMP)
                  ON CONFLICT(service, creator_id, post_id) DO UPDATE SET
                     title=excluded.title, content=excluded.content, published_at=excluded.published_at,
+                    preview_path=COALESCE(posts.preview_path, excluded.preview_path),
                     snapshot_json=CASE
                         WHEN json_extract(posts.snapshot_json, '$.detail_fetched') = 1 AND (json_extract(excluded.snapshot_json, '$.detail_fetched') IS NULL OR json_extract(excluded.snapshot_json, '$.detail_fetched') = 0)
                         THEN posts.snapshot_json
@@ -408,7 +425,7 @@ impl ContentRepository {
                     END,
                     remote_state='active',
                     cached_at=CURRENT_TIMESTAMP, last_checked_at=CURRENT_TIMESTAMP",
-                params![clean_post.service, clean_post.user, clean_post.id, clean_post.title, clean_post.content, clean_post.published, snapshot],
+                params![clean_post.service, clean_post.user, clean_post.id, clean_post.title, clean_post.content, clean_post.published, snapshot, clean_post.preview_path],
             ).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())
@@ -421,23 +438,16 @@ impl ContentRepository {
         post_id: &str,
     ) -> Result<Option<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let row: Option<(String,Option<String>)> = connection
+        let row: Option<(String, Option<String>)> = connection
             .query_row(
                 "SELECT snapshot_json,preview_path FROM posts WHERE service=?1 AND creator_id=?2 AND post_id=?3",
                 params![service, creator_id, post_id],
-                |r| Ok((r.get(0)?,r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        row.map(|(value, preview)| {
-            let mut post: Post = Post::from_json_str(&value).map_err(|e| e.to_string())?;
-            if let Some(path) = preview {
-                post.extra
-                    .insert("local_preview_path".into(), serde_json::Value::String(path));
-            }
-            Ok(post)
-        })
-        .transpose()
+        row.map(|(value, preview)| map_post_row(value, preview))
+            .transpose()
     }
 
     pub fn find_post_identity(
@@ -493,18 +503,18 @@ impl ContentRepository {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT snapshot_json FROM posts WHERE service=?1 AND creator_id=?2
+                "SELECT snapshot_json, preview_path FROM posts WHERE service=?1 AND creator_id=?2
              ORDER BY published_at DESC, post_id DESC LIMIT ?3 OFFSET ?4",
             )
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map(params![service, creator_id, limit, offset], |r| {
-                r.get::<_, String>(0)
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
             })
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| Post::from_json_str(&json))
+                .and_then(|(json, preview)| map_post_row(json, preview))
         })
         .collect()
     }
@@ -513,27 +523,31 @@ impl ContentRepository {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let pattern = format!("%{query}%");
         let mut statement = connection.prepare(
-            "SELECT snapshot_json FROM posts WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY published_at DESC LIMIT 100"
+            "SELECT snapshot_json, preview_path FROM posts WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY published_at DESC LIMIT 100"
         ).map_err(|e| e.to_string())?;
         let rows = statement
-            .query_map(params![pattern], |r| r.get::<_, String>(0))
+            .query_map(params![pattern], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| Post::from_json_str(&json))
+                .and_then(|(json, preview)| map_post_row(json, preview))
         })
         .collect()
     }
 
     pub fn list_recent_posts(&self, offset: u32, limit: u32) -> Result<Vec<Post>, String> {
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let mut statement = connection.prepare("SELECT snapshot_json FROM posts ORDER BY published_at DESC, post_id DESC LIMIT ?1 OFFSET ?2").map_err(|e| e.to_string())?;
+        let mut statement = connection.prepare("SELECT snapshot_json, preview_path FROM posts ORDER BY published_at DESC, post_id DESC LIMIT ?1 OFFSET ?2").map_err(|e| e.to_string())?;
         let rows = statement
-            .query_map(params![limit, offset], |r| r.get::<_, String>(0))
+            .query_map(params![limit, offset], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         rows.map(|row| {
             row.map_err(|e| e.to_string())
-                .and_then(|json| Post::from_json_str(&json))
+                .and_then(|(json, preview)| map_post_row(json, preview))
         })
         .collect()
     }
@@ -588,12 +602,7 @@ impl ContentRepository {
                 .optional()
                 .map_err(|e| e.to_string())?;
             if let Some((snapshot, preview)) = row {
-                let mut post: Post = Post::from_json_str(&snapshot).map_err(|e| e.to_string())?;
-                if let Some(path) = preview {
-                    post.extra
-                        .insert("local_preview_path".into(), serde_json::Value::String(path));
-                }
-                posts.push(post);
+                posts.push(map_post_row(snapshot, preview)?);
             }
         }
         Ok(posts)
@@ -1278,8 +1287,8 @@ impl ContentRepository {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let safe = format!(
             "{}_{}_{}.{}",
-            sanitize(service),
-            sanitize(creator_id),
+            sanitize_cache_key(service),
+            sanitize_cache_key(creator_id),
             kind,
             extension
         );
@@ -1360,9 +1369,23 @@ impl ContentRepository {
         let bytes = BASE64_STANDARD.decode(encoded).map_err(|e| e.to_string())?;
         let dir = content_cache_path().join("thumbnails");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let safe = format!("{}.{}", sanitize(key), extension);
+        let safe = format!("{}.{}", sanitize_cache_key(key), extension);
         let path = dir.join(safe);
         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        let path_str = path.to_string_lossy();
+        if let Some(post_key) = key.strip_prefix("post:") {
+            let parts: Vec<&str> = post_key.split(':').collect();
+            if parts.len() == 3 {
+                let _ = connection.execute(
+                    "UPDATE posts SET preview_path=?1 WHERE service=?2 AND creator_id=?3 AND post_id=?4",
+                    params![path_str, parts[0], parts[1], parts[2]],
+                );
+            }
+        }
+        drop(connection);
+
         self.enforce_cache_limit();
         Ok(path)
     }
@@ -1370,7 +1393,7 @@ impl ContentRepository {
     pub fn thumbnail_data_url(&self, key: &str) -> Result<Option<String>, String> {
         let dir = content_cache_path().join("thumbnails");
         for ext in &["webp", "jpg", "png"] {
-            let path = dir.join(format!("{}.{}", sanitize(key), ext));
+            let path = dir.join(format!("{}.{}", sanitize_cache_key(key), ext));
             if path.is_file() {
                 let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
                 let mime = if *ext == "webp" {
@@ -1421,13 +1444,13 @@ impl ContentRepository {
         } else {
             "jpg"
         };
-        let dir = content_cache_path().join("previews");
+        let dir = content_cache_path().join("thumbnails");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!(
-            "{}_{}_{}.{}",
-            sanitize(&post.service),
-            sanitize(&post.user),
-            sanitize(&post.id),
+            "post_{}_{}_{}.{}",
+            sanitize_cache_key(&post.service),
+            sanitize_cache_key(&post.user),
+            sanitize_cache_key(&post.id),
             ext
         ));
         std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
@@ -1457,12 +1480,12 @@ impl ContentRepository {
         } else {
             "avatars"
         });
-        let s_san = sanitize(service);
-        let id_san = sanitize(creator_id);
+        let s_san = sanitize_cache_key(service);
+        let id_san = sanitize_cache_key(creator_id);
 
         let existing = if is_specific {
             let pid = provider_id.unwrap();
-            let p_san = sanitize(pid);
+            let p_san = sanitize_cache_key(pid);
             let mut found = None;
             for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
                 let p = dir.join(format!("{s_san}_{id_san}_{p_san}_{kind}.{ext}"));
@@ -1527,7 +1550,7 @@ impl ContentRepository {
 
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let safe = if is_specific {
-            let p_san = sanitize(provider_id.unwrap());
+            let p_san = sanitize_cache_key(provider_id.unwrap());
             format!("{s_san}_{id_san}_{p_san}_{kind}.{ext}")
         } else {
             format!("{s_san}_{id_san}_{kind}.{ext}")
@@ -1651,19 +1674,6 @@ fn remove_empty_cache_dirs(root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

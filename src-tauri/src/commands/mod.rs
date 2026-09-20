@@ -1353,40 +1353,71 @@ pub async fn fetch_account_favorites(
                         .or_else(|| fav.extra.get("title").and_then(|v| v.as_str()))
                         .unwrap_or("");
                     let srv = fav.service.as_deref().unwrap_or("");
-                    if !user_id.is_empty() && !srv.is_empty() {
-                        let mut post = Post {
-                            id: fav.id.clone(),
-                            user: user_id.to_string(),
-                            service: srv.to_string(),
-                            title: title.to_string(),
-                            content: None,
-                            substring: None,
-                            published: fav.indexed.clone(),
-                            added: fav.last_imported.clone(),
-                            edited: fav.updated.clone(),
-                            embed: None,
-                            shared_file: None,
-                            attachments: None,
-                            file: None,
-                            poll: None,
-                            captions: None,
-                            tags: None,
-                            origin: None,
-                            preview_state: None,
-                            has_full: None,
-                            detail_fetched: None,
-                            next: None,
-                            prev: None,
-                            favorite_count: None,
-                            attachment_count: None,
-                            thumbnail_url: None,
-                            media_url: None,
-                            page_url: None,
-                            preview_path: None,
-                            cloud_urls: Vec::new(),
-                            extra: fav.extra.clone(),
+                    if !srv.is_empty() {
+                        let cached_post = if !user_id.is_empty() {
+                            state.content.get_post(srv, user_id, &fav.id).ok().flatten()
+                        } else {
+                            None
+                        }
+                        .or_else(|| {
+                            if let Ok(Some((s, c, p))) = state.content.find_post_identity(
+                                srv,
+                                &fav.id,
+                                if user_id.is_empty() {
+                                    None
+                                } else {
+                                    Some(user_id)
+                                },
+                            ) {
+                                state.content.get_post(&s, &c, &p).ok().flatten()
+                            } else {
+                                None
+                            }
+                        });
+
+                        let post = if let Some(mut existing) = cached_post {
+                            if !title.is_empty() && existing.title.is_empty() {
+                                existing.title = title.to_string();
+                            }
+                            existing
+                        } else if !user_id.is_empty() {
+                            let mut p = Post {
+                                id: fav.id.clone(),
+                                user: user_id.to_string(),
+                                service: srv.to_string(),
+                                title: title.to_string(),
+                                content: None,
+                                substring: None,
+                                published: fav.indexed.clone(),
+                                added: fav.last_imported.clone(),
+                                edited: fav.updated.clone(),
+                                embed: None,
+                                shared_file: None,
+                                attachments: None,
+                                file: None,
+                                poll: None,
+                                captions: None,
+                                tags: None,
+                                origin: None,
+                                preview_state: None,
+                                has_full: None,
+                                detail_fetched: None,
+                                next: None,
+                                prev: None,
+                                favorite_count: None,
+                                attachment_count: None,
+                                thumbnail_url: None,
+                                media_url: None,
+                                page_url: None,
+                                preview_path: None,
+                                cloud_urls: Vec::new(),
+                                extra: fav.extra.clone(),
+                            };
+                            p.clean_extra();
+                            p
+                        } else {
+                            continue;
                         };
-                        post.clean_extra();
                         let _ = state.content.pin_post(&post, "favorite", &account);
                     }
                 } else {
@@ -1483,6 +1514,73 @@ pub async fn fetch_account_favorites(
                                 item.name = Some(cached.name);
                             }
                         }
+                    } else if kind == "post" {
+                        let user_id = item
+                            .extra
+                            .get("user")
+                            .or_else(|| item.extra.get("user_id"))
+                            .and_then(|v| v.as_str());
+
+                        let cached_post = if let Some(uid) = user_id {
+                            state.content.get_post(&srv, uid, &id).ok().flatten()
+                        } else {
+                            None
+                        }
+                        .or_else(|| {
+                            if let Ok(Some((s, c, p))) =
+                                state.content.find_post_identity(&srv, &id, user_id)
+                            {
+                                state.content.get_post(&s, &c, &p).ok().flatten()
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(post) = cached_post {
+                            if item.name.is_none() || item.name.as_deref() == Some(&item.id) {
+                                if !post.title.is_empty() {
+                                    item.name = Some(post.title.clone());
+                                }
+                            }
+                            if let Some(file) = &post.file {
+                                if let Ok(v) = serde_json::to_value(file) {
+                                    item.extra.insert("file".to_string(), v);
+                                }
+                            }
+                            if let Some(attachments) = &post.attachments {
+                                if let Ok(v) = serde_json::to_value(attachments) {
+                                    item.extra.insert("attachments".to_string(), v);
+                                }
+                            }
+                            if let Some(thumb) = &post.thumbnail_url {
+                                item.extra.insert(
+                                    "thumbnail_url".to_string(),
+                                    serde_json::Value::String(thumb.clone()),
+                                );
+                            }
+                            if let Some(media) = &post.media_url {
+                                item.extra.insert(
+                                    "media_url".to_string(),
+                                    serde_json::Value::String(media.clone()),
+                                );
+                            }
+                            if let Some(prev) = &post.preview_path {
+                                item.extra.insert(
+                                    "preview_path".to_string(),
+                                    serde_json::Value::String(prev.clone()),
+                                );
+                            }
+                            if let Some(local_prev) = post.extra.get("local_preview_path") {
+                                item.extra
+                                    .insert("local_preview_path".to_string(), local_prev.clone());
+                            }
+                            if !post.user.is_empty() && !item.extra.contains_key("user") {
+                                item.extra.insert(
+                                    "user".to_string(),
+                                    serde_json::Value::String(post.user.clone()),
+                                );
+                            }
+                        }
                     }
                     merged.push(item);
                 }
@@ -1546,16 +1644,22 @@ pub async fn set_post_favorite(
     }
 
     if favorite {
-        let post = match state
-            .provider_manager
-            .fetch_post(&service, &creator_id, &post_id, None)
-            .await
+        let post = if let Ok(Some(cached_post)) =
+            state.content.get_post(&service, &creator_id, &post_id)
         {
-            Ok(Some(reconciled)) => reconciled.post,
-            _ => state
-                .content
-                .get_post(&service, &creator_id, &post_id)?
-                .ok_or_else(|| "Post is not cached".to_string())?,
+            cached_post
+        } else {
+            match state
+                .provider_manager
+                .fetch_post(&service, &creator_id, &post_id, None)
+                .await
+            {
+                Ok(Some(reconciled)) => reconciled.post,
+                _ => state
+                    .content
+                    .get_post(&service, &creator_id, &post_id)?
+                    .ok_or_else(|| "Post is not cached".to_string())?,
+            }
         };
         state.content.pin_post(&post, "favorite", &account)?;
         if settings.persist_in_app_favorites_locally && !account.is_empty() {
@@ -2124,72 +2228,88 @@ pub async fn start_download(
 ) -> Result<DownloadJob, String> {
     let settings = state.config_manager.load()?;
     state.content.pin_post(&post, "download", "")?;
-    if let Ok(creator) = state
-        .provider_manager
-        .fetch_creator_profile(&post.service, &post.user, None)
-        .await
-    {
-        let profile = CreatorProfile {
-            id: creator.id,
-            name: creator.name,
-            service: creator.service,
-            public_id: creator.public_id,
-            relation_id: creator.relation_id,
-            indexed: creator.indexed.map(serde_json::Value::from),
-            updated: creator.updated.map(serde_json::Value::from),
-            favorited: creator.favorited,
-            ever_imported: creator.ever_imported,
-            avatar_url: creator.avatar_url,
-            avatar_path: creator.avatar_path,
-            banner_url: creator.banner_url,
-            banner_path: creator.banner_path,
-            page_url: creator.page_url,
-            extra: creator.extra,
-        };
-        let _ = state.content.save_creator(&profile);
-    }
-    for kind in ["avatar", "banner"] {
-        if state
-            .content
-            .artwork_path(&post.service, &post.user, kind)?
-            .is_none()
+
+    let bg_content = state.content.clone();
+    let bg_provider = state.provider_manager.clone();
+    let bg_post = post.clone();
+    tokio::spawn(async move {
+        if let Ok(creator) = bg_provider
+            .fetch_creator_profile(&bg_post.service, &bg_post.user, None)
+            .await
         {
-            if let Ok(data) = state
-                .provider_manager
-                .fetch_creator_artwork_data_url(&post.service, &post.user, kind)
-                .await
+            let profile = CreatorProfile {
+                id: creator.id,
+                name: creator.name,
+                service: creator.service,
+                public_id: creator.public_id,
+                relation_id: creator.relation_id,
+                indexed: creator.indexed.map(serde_json::Value::from),
+                updated: creator.updated.map(serde_json::Value::from),
+                favorited: creator.favorited,
+                ever_imported: creator.ever_imported,
+                avatar_url: creator.avatar_url,
+                avatar_path: creator.avatar_path,
+                banner_url: creator.banner_url,
+                banner_path: creator.banner_path,
+                page_url: creator.page_url,
+                extra: creator.extra,
+            };
+            let _ = bg_content.save_creator(&profile);
+        }
+        for kind in ["avatar", "banner"] {
+            if bg_content
+                .artwork_path(&bg_post.service, &bg_post.user, kind)
+                .ok()
+                .flatten()
+                .is_none()
             {
-                let _ =
-                    state
-                        .content
-                        .store_artwork_data_url(&post.service, &post.user, kind, &data);
+                if let Ok(data) = bg_provider
+                    .fetch_creator_artwork_data_url(&bg_post.service, &bg_post.user, kind)
+                    .await
+                {
+                    let _ = bg_content.store_artwork_data_url(
+                        &bg_post.service,
+                        &bg_post.user,
+                        kind,
+                        &data,
+                    );
+                }
             }
         }
-    }
-    if let Some(file) = post
-        .file
-        .as_ref()
-        .filter(|file| file.path.is_some())
-        .or_else(|| {
-            post.attachments
-                .as_ref()
-                .and_then(|items| items.iter().find(|file| file.path.is_some()))
-        })
-        .and_then(|file| file.path.as_deref())
-    {
-        let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
-        let preview_url = state
-            .provider_manager
-            .resolve_thumbnail_url(&post.service, file, prov_id)
-            .await;
-        let _ = state.content.cache_post_preview(&post, &preview_url).await;
-    }
+        if let Some(file) = bg_post
+            .file
+            .as_ref()
+            .filter(|file| file.path.is_some())
+            .or_else(|| {
+                bg_post
+                    .attachments
+                    .as_ref()
+                    .and_then(|items| items.iter().find(|file| file.path.is_some()))
+            })
+            .and_then(|file| file.path.as_deref())
+        {
+            let prov_id = bg_post.extra.get("provider_id").and_then(|v| v.as_str());
+            let preview_url = bg_provider
+                .resolve_thumbnail_url(&bg_post.service, file, prov_id)
+                .await;
+            let _ = bg_content.cache_post_preview(&bg_post, &preview_url).await;
+        }
+    });
+
     let creator_name = state
         .content
         .get_creator(&post.service, &post.user)
         .ok()
         .flatten()
-        .map(|c| c.name);
+        .map(|c| c.name)
+        .or_else(|| {
+            post.extra
+                .get("creator_name")
+                .or_else(|| post.extra.get("username"))
+                .or_else(|| post.extra.get("author"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        });
 
     let index = {
         let mut idx = 1;
@@ -2324,24 +2444,63 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJo
             Ok(Some(p)) => p,
             _ => continue,
         };
-        let path = post
-            .file
-            .as_ref()
-            .filter(|file| file.path.is_some())
-            .or_else(|| {
-                post.attachments
-                    .as_ref()
-                    .and_then(|items| items.iter().find(|file| file.path.is_some()))
-            })
-            .and_then(|file| file.path.as_deref());
-        if let Some(path) = path {
-            let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
-            job.post_preview_url = Some(
-                state
-                    .provider_manager
-                    .resolve_thumbnail_url(&job.service, path, prov_id)
-                    .await,
-            );
+        let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
+
+        // 1. If file_preview_url is missing, resolve it specifically for THIS file:
+        if job.file_preview_url.is_none() {
+            let target_media_path = if !job.media_id.is_empty() && job.media_id.starts_with('/') {
+                Some(job.media_id.as_str())
+            } else if let Some(att) = post.attachments.as_ref().and_then(|items| {
+                items.iter().find(|a| {
+                    a.path.as_deref() == Some(&job.media_id)
+                        || a.name.as_deref() == Some(&job.filename)
+                        || a.url.as_deref() == Some(&job.url)
+                })
+            }) {
+                att.path.as_deref()
+            } else if let Some(f) = post.file.as_ref() {
+                if f.path.as_deref() == Some(&job.media_id)
+                    || f.name.as_deref() == Some(&job.filename)
+                    || f.url.as_deref() == Some(&job.url)
+                {
+                    f.path.as_deref()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(p) = target_media_path {
+                job.file_preview_url = Some(
+                    state
+                        .provider_manager
+                        .resolve_thumbnail_url(&job.service, p, prov_id)
+                        .await,
+                );
+            }
+        }
+
+        // 2. If post_preview_url is missing, resolve it for the post cover:
+        if job.post_preview_url.is_none() {
+            let post_cover_path = post
+                .file
+                .as_ref()
+                .filter(|file| file.path.is_some())
+                .or_else(|| {
+                    post.attachments
+                        .as_ref()
+                        .and_then(|items| items.iter().find(|file| file.path.is_some()))
+                })
+                .and_then(|file| file.path.as_deref());
+            if let Some(path) = post_cover_path {
+                job.post_preview_url = Some(
+                    state
+                        .provider_manager
+                        .resolve_thumbnail_url(&job.service, path, prov_id)
+                        .await,
+                );
+            }
         }
     }
     Ok(jobs)

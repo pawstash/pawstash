@@ -2,6 +2,7 @@
   import { onMount, onDestroy, tick, getContext } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
+  import { contentState, postCacheKey } from '$lib/state/contentState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -200,6 +201,34 @@
     }
     return sortPosts(filtered, postSort);
   });
+
+  const enrichingPostKeys = new Set<string>();
+  $effect(() => {
+    if (activeTab !== 'posts' || loading) return;
+    const candidates = filteredPosts.filter((p) => {
+      if (!p.id || !p.service || !p.user) return false;
+      const key = `${p.service}:${p.user}:${p.id}`;
+      if (enrichingPostKeys.has(key)) return false;
+      const hasMedia = Boolean(
+        p.file ||
+        (p.attachments && p.attachments.length > 0) ||
+        p.thumbnail_url ||
+        p.media_url ||
+        p.preview_path ||
+        (p.extra as any)?.local_preview_path
+      );
+      return !hasMedia;
+    });
+
+    if (candidates.length === 0) return;
+
+    const batch = candidates.slice(0, 6);
+    for (const post of batch) {
+      const key = `${post.service}:${post.user}:${post.id}`;
+      enrichingPostKeys.add(key);
+      void contentState.loadPost(post.service, post.user, post.id);
+    }
+  });
   let filteredCreators = $derived.by(() => {
     let filtered = normalizedQuery
       ? creators.filter((creator) => `${creator.name} ${creator.service} ${creator.id}`.toLowerCase().includes(normalizedQuery))
@@ -299,20 +328,36 @@
   const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 
   function mapFavoritePost(favorite: Favorite, index = 0): Post {
+    const rawExtra = (favorite.extra || {}) as any;
+    const srv = String(favorite.service ?? rawExtra.service ?? '');
+    const user = String(favorite.user ?? favorite.user_id ?? rawExtra.user ?? rawExtra.user_id ?? '');
+    const id = String(favorite.id ?? rawExtra.id ?? '');
+
+    const key = postCacheKey(srv, user, id);
+    const cached = contentState.posts[key]?.post;
+
     return {
       ...favorite,
-      id: String(favorite.id ?? ''),
-      user: String(favorite.user ?? favorite.user_id ?? ''),
-      service: String(favorite.service ?? ''),
-      title: String(favorite.title ?? favorite.name ?? ''),
-      content: String(favorite.content ?? ''),
-      file: favorite.file as Post['file'],
-      attachments: favorite.attachments as Post['attachments'],
-      added: String(favorite.added ?? favorite.indexed ?? ''),
-      published: String(favorite.published ?? favorite.updated ?? ''),
-      favorite_count: Number(favorite.favorite_count ?? 0),
+      id,
+      user: cached?.user || user,
+      service: cached?.service || srv,
+      title: cached?.title || String(favorite.title ?? favorite.name ?? rawExtra.title ?? ''),
+      content: cached?.content || String(favorite.content ?? rawExtra.content ?? ''),
+      file: cached?.file || (favorite.file ?? rawExtra.file) as Post['file'],
+      attachments: cached?.attachments || (favorite.attachments ?? rawExtra.attachments) as Post['attachments'],
+      thumbnail_url: cached?.thumbnail_url || favorite.thumbnail_url || rawExtra.thumbnail_url,
+      media_url: cached?.media_url || favorite.media_url || rawExtra.media_url,
+      preview_path: cached?.preview_path || favorite.preview_path || rawExtra.preview_path,
+      added: cached?.added || String(favorite.added ?? favorite.indexed ?? rawExtra.added ?? ''),
+      published: cached?.published || String(favorite.published ?? favorite.updated ?? rawExtra.published ?? ''),
+      favorite_count: cached?.favorite_count ?? Number(favorite.favorite_count ?? rawExtra.favorite_count ?? 0),
       faved_seq: typeof favorite.faved_seq === 'number' ? favorite.faved_seq : undefined,
-      faved_at: String(favorite.faved_at ?? (favorite.extra as any)?.faved_at ?? favorite.created_at ?? '') || undefined
+      faved_at: String(favorite.faved_at ?? rawExtra.faved_at ?? favorite.created_at ?? '') || undefined,
+      extra: {
+        ...rawExtra,
+        ...(cached?.extra || {}),
+        ...(rawExtra.local_preview_path ? { local_preview_path: rawExtra.local_preview_path } : {})
+      }
     };
   }
 

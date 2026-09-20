@@ -15,9 +15,10 @@
   import IconDelete from '~icons/fluent/delete-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-20-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
+  import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
-  import { getVideoThumbnail } from '$lib/utils/videoThumbnail';
+  import { getMediaThumbnail } from '$lib/utils/mediaThumbnail';
 
   interface Props {
     items: DownloadItem[];
@@ -36,7 +37,7 @@
   let thumbnailFailed = $state(false);
   let previewFailed = $state(false);
   let generatedThumbnail = $state<string | undefined>(undefined);
-  let effectiveThumbnail = $derived(!thumbnailFailed && thumbnailUrl ? thumbnailUrl : generatedThumbnail);
+  let effectiveThumbnail = $derived(generatedThumbnail || (!thumbnailFailed && thumbnailUrl ? thumbnailUrl : undefined));
   let isHovered = $state(false);
   let showVideo = $state(false);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
@@ -82,11 +83,11 @@
     }
   }
 
-  function requestVideoThumbnail() {
-    if (!isVideo || generatedThumbnail || !previewUrl) return;
+  function requestMediaThumbnail() {
+    if ((!isVideo && !isImage) || generatedThumbnail || !previewUrl) return;
     const key = representative?.media_id || representative?.id || representative?.filename;
     if (key) {
-      getVideoThumbnail(key, previewUrl).then((thumb) => {
+      getMediaThumbnail(key, previewUrl, isVideo ? 'video' : 'image').then((thumb) => {
         if (thumb) {
           generatedThumbnail = thumb;
         }
@@ -99,11 +100,10 @@
       lastThumbnailUrl = thumbnailUrl;
       thumbnailFailed = false;
     }
-    if (!thumbnailUrl && isVideo) {
-      requestVideoThumbnail();
-    }
-    if (previewUrl && isVideo && (!thumbnailUrl || thumbnailFailed)) {
-      requestVideoThumbnail();
+    if (previewUrl && (isVideo || isImage)) {
+      if (!generatedThumbnail && (!thumbnailUrl || thumbnailFailed)) {
+        requestMediaThumbnail();
+      }
     }
   });
 
@@ -134,14 +134,12 @@
       onerror={() => {
         if (!thumbnailFailed && effectiveThumbnail === thumbnailUrl) {
           thumbnailFailed = true;
-          requestVideoThumbnail();
+          requestMediaThumbnail();
         }
       }}
     />
-  {:else if previewUrl && !previewFailed && isImage}
-    <img class="grid-tile-media" src={previewUrl} alt="" loading="lazy" decoding="async" onerror={() => previewFailed = true} />
   {:else}
-    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else}<IconDocument />{/if}</div>
+    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else if isImage}<IconImage />{:else}<IconDocument />{/if}</div>
   {/if}
 
   {#if showVideo && isVideo && previewUrl && !previewFailed}
