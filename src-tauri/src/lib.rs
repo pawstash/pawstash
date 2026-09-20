@@ -331,6 +331,7 @@ pub fn run() {
             unlock_sync,
             lock_sync,
             disconnect_sync,
+            test_sync_connection,
             change_sync_password,
             list_sync_devices,
             revoke_sync_device,

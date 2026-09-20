@@ -2734,6 +2734,16 @@ pub fn disconnect_sync(state: State<'_, AppState>) -> Result<SyncStatus, String>
 }
 
 #[tauri::command]
+pub async fn test_sync_connection(
+    server_url: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let settings = state.config_manager.load()?;
+    let client = crate::sync::client::SyncHttpClient::new(&server_url, &settings)?;
+    client.ping().await.map(|_| true)
+}
+
+#[tauri::command]
 pub async fn change_sync_password(
     current_password: String,
     new_password: String,

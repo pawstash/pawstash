@@ -13,7 +13,8 @@ pub struct CreateAccountRequest<'a> {
 }
 #[derive(Debug, Deserialize)]
 pub struct BundleResponse {
-    pub account_id: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
     pub kdf: serde_json::Value,
     pub encrypted_key_bundle: String,
     pub nonce: String,
@@ -167,18 +168,27 @@ impl SyncHttpClient {
         account: &str,
         value: &ReplaceBundleRequest<'_>,
     ) -> Result<(), String> {
-        self.send_empty(
-            self.client
-                .put(format!(
-                    "{}/accounts/{}/bundle",
-                    self.base,
-                    urlencoding::encode(account)
-                ))
-                .bearer_auth(token)
-                .json(value),
-            StatusCode::NO_CONTENT,
-        )
-        .await
+        let response = self
+            .client
+            .put(format!(
+                "{}/accounts/{}/bundle",
+                self.base,
+                urlencoding::encode(account)
+            ))
+            .bearer_auth(token)
+            .json(value)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!("Sync replace_bundle request failed: {e}");
+                e.to_string()
+            })?;
+        if response.status() != StatusCode::OK && response.status() != StatusCode::NO_CONTENT {
+            let err = Self::error(response).await;
+            tracing::error!("Sync replace_bundle error: {err}");
+            return Err(err);
+        }
+        Ok(())
     }
     pub async fn session(
         &self,
@@ -276,14 +286,37 @@ impl SyncHttpClient {
         )
         .await
     }
+
+    pub async fn ping(&self) -> Result<(), String> {
+        let url = format!("{}/health", self.base);
+        tracing::debug!("Pinging sync server at {url}");
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            tracing::warn!("Sync server health ping failed: {e}");
+            format!("Connection failed: {e}")
+        })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            tracing::warn!("Sync server health ping returned HTTP {status}: {body}");
+            return Err(format!("Server returned HTTP {status}: {}", body.trim()));
+        }
+        tracing::info!("Sync server health ping succeeded: HTTP 200");
+        Ok(())
+    }
+
     async fn send_empty(
         &self,
         builder: reqwest::RequestBuilder,
         expected: StatusCode,
     ) -> Result<(), String> {
-        let response = builder.send().await.map_err(|e| e.to_string())?;
+        let response = builder.send().await.map_err(|e| {
+            tracing::error!("Sync HTTP request failed: {e}");
+            e.to_string()
+        })?;
         if response.status() != expected {
-            return Err(Self::error(response).await);
+            let err = Self::error(response).await;
+            tracing::error!("Sync HTTP error: {err}");
+            return Err(err);
         }
         Ok(())
     }
@@ -292,11 +325,23 @@ impl SyncHttpClient {
         builder: reqwest::RequestBuilder,
         expected: StatusCode,
     ) -> Result<T, String> {
-        let response = builder.send().await.map_err(|e| e.to_string())?;
+        let response = builder.send().await.map_err(|e| {
+            tracing::error!("Sync HTTP request network error: {e}");
+            format!("Network error: {e}")
+        })?;
         if response.status() != expected {
-            return Err(Self::error(response).await);
+            let err = Self::error(response).await;
+            tracing::error!("Sync HTTP error: {err}");
+            return Err(err);
         }
-        response.json().await.map_err(|e| e.to_string())
+        let text = response.text().await.map_err(|e| {
+            tracing::error!("Sync HTTP read body error: {e}");
+            format!("Failed to read response body: {e}")
+        })?;
+        serde_json::from_str::<T>(&text).map_err(|e| {
+            tracing::error!("Sync HTTP JSON deserialize error: {e}, payload: {text}");
+            format!("Failed to decode server response ({e}): {text}")
+        })
     }
     async fn error(response: reqwest::Response) -> String {
         let status = response.status();

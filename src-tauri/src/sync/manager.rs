@@ -101,7 +101,10 @@ impl SyncManager {
                                 .is_some()
                                 && manager.repository.conflict().ok().flatten().is_none()
                             {
-                                let _ = manager.sync(app.clone()).await;
+                                tracing::debug!("Triggering background auto-sync");
+                                if let Err(e) = manager.sync(app.clone()).await {
+                                    tracing::warn!(error = %e, "Background auto-sync failed");
+                                }
                             }
                         }
                     }
@@ -111,7 +114,10 @@ impl SyncManager {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(interval_secs)) => {},
                     _ = manager.on_change_notify.notified() => {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let _ = manager.sync(app.clone()).await;
+                        tracing::debug!("Triggering sync-on-change");
+                        if let Err(e) = manager.sync(app.clone()).await {
+                            tracing::warn!(error = %e, "Sync-on-change failed");
+                        }
                     }
                 }
             }
@@ -122,20 +128,29 @@ impl SyncManager {
         let syncing = *self.syncing.lock().map_err(|e| e.to_string())?;
         let settings = self.config.load().unwrap_or_default();
         match state {
-            Some(v) => Ok(SyncStatus {
-                configured: true,
-                enabled: settings.sync_enabled,
-                unlocked: SecretStore::load_vault(&v.account_id)?.is_some(),
-                syncing,
-                account_id: Some(v.account_id),
-                server_url: Some(v.server_url),
-                device_id: Some(v.device_id),
-                revision: v.revision,
-                cursor: v.cursor,
-                conflict: self.repository.conflict()?.is_some(),
-                last_synced_at: v.last_synced_at,
-                last_error: v.last_error,
-            }),
+            Some(v) => {
+                let unlocked = match SecretStore::load_vault(&v.account_id) {
+                    Ok(vault) => vault.is_some(),
+                    Err(e) => {
+                        tracing::warn!(account_id = %v.account_id, error = %e, "Failed to load vault secrets during status check");
+                        false
+                    }
+                };
+                Ok(SyncStatus {
+                    configured: true,
+                    enabled: settings.sync_enabled,
+                    unlocked,
+                    syncing,
+                    account_id: Some(v.account_id),
+                    server_url: Some(v.server_url),
+                    device_id: Some(v.device_id),
+                    revision: v.revision,
+                    cursor: v.cursor,
+                    conflict: self.repository.conflict().unwrap_or(None).is_some(),
+                    last_synced_at: v.last_synced_at,
+                    last_error: v.last_error,
+                })
+            }
             None => Ok(SyncStatus {
                 configured: false,
                 enabled: false,
@@ -190,8 +205,14 @@ impl SyncManager {
         device_name: String,
         app: tauri::AppHandle,
     ) -> Result<SyncStatus, String> {
-        if self.repository.state()?.is_some() {
-            return Err("Disconnect the current sync account first".to_string());
+        tracing::info!(account_id = %account_id, server_url = %server_url, "Creating new sync account...");
+        if let Some(existing) = self.repository.state()? {
+            tracing::warn!(
+                existing_account = %existing.account_id,
+                "Overwriting prior sync state with newly created account"
+            );
+            let _ = SecretStore::delete_vault(&existing.account_id);
+            self.repository.clear()?;
         }
         if password.chars().count() < 12 {
             return Err("Master password must contain at least 12 characters".to_string());
@@ -234,6 +255,7 @@ impl SyncManager {
             last_synced_at: None,
             last_error: None,
         })?;
+        tracing::info!("Account created successfully. Initiating initial sync.");
         self.sync(app).await
     }
     pub async fn connect(
@@ -244,13 +266,22 @@ impl SyncManager {
         device_name: String,
         app: tauri::AppHandle,
     ) -> Result<SyncStatus, String> {
-        if self.repository.state()?.is_some() {
-            return Err("Disconnect the current sync account first".to_string());
+        tracing::info!(account_id = %account_id, server_url = %server_url, "Connecting sync account...");
+        if let Some(existing) = self.repository.state()? {
+            tracing::warn!(
+                existing_account = %existing.account_id,
+                new_account = %account_id,
+                "Overwriting prior sync state with newly connected account"
+            );
+            let _ = SecretStore::delete_vault(&existing.account_id);
+            self.repository.clear()?;
         }
         let client = SyncHttpClient::new(&server_url, &self.config.load()?)?;
         let bundle = client.bundle(&account_id).await?;
-        if bundle.account_id != account_id {
-            return Err("Sync server returned the wrong account envelope".to_string());
+        if let Some(ref bundle_acc) = bundle.account_id {
+            if bundle_acc != &account_id {
+                return Err("Sync server returned the wrong account envelope".to_string());
+            }
         }
         let kdf: KdfEnvelope = serde_json::from_value(bundle.kdf).map_err(|e| e.to_string())?;
         let secrets = unwrap_vault(&password, &kdf, &bundle.encrypted_key_bundle, &bundle.nonce)?;
@@ -277,6 +308,9 @@ impl SyncManager {
             last_synced_at: None,
             last_error: None,
         })?;
+        tracing::info!(
+            "Sync account credentials verified and state saved. Initiating initial sync."
+        );
         self.sync(app).await
     }
     pub fn unlock(&self, password: &str) -> Result<SyncStatus, String> {
@@ -329,8 +363,14 @@ impl SyncManager {
         device_name: &str,
         app: tauri::AppHandle,
     ) -> Result<SyncStatus, String> {
-        if self.repository.state()?.is_some() {
-            return Err("Disconnect the current sync account first".to_string());
+        tracing::info!("Recovering sync account from recovery kit...");
+        if let Some(existing) = self.repository.state()? {
+            tracing::warn!(
+                existing_account = %existing.account_id,
+                "Overwriting prior sync state during recovery"
+            );
+            let _ = SecretStore::delete_vault(&existing.account_id);
+            self.repository.clear()?;
         }
         if new_password.chars().count() < 12 {
             return Err("New master password must contain at least 12 characters".to_string());
@@ -505,7 +545,10 @@ impl SyncManager {
         };
 
         if let Err(error) = &result {
+            tracing::error!(error = %error, "Sync failed");
             let _ = self.repository.set_error(Some(error));
+        } else {
+            tracing::info!("Sync completed successfully");
         }
         let status = self.status()?;
         let _ = app.emit("sync-status-updated", &status);
@@ -521,6 +564,7 @@ impl SyncManager {
         let key = secrets.vault_key_bytes()?;
         let client = SyncHttpClient::new(&state.server_url, &self.config.load()?)?;
 
+        tracing::info!(account_id = %state.account_id, server = %state.server_url, "Sync: starting session check...");
         emit_sync_progress(
             app,
             "connecting",
@@ -536,8 +580,8 @@ impl SyncManager {
                 Some(&state.device_id),
             )
             .await?;
+        tracing::debug!("Sync: session authenticated successfully");
 
-        // 1. Pull Phase: fetch and apply remote changes in a loop until all records are caught up
         let mut current_cursor = state.cursor;
         loop {
             emit_sync_progress(
@@ -548,8 +592,14 @@ impl SyncManager {
                 None,
                 Some("Fetching changes..."),
             );
+            tracing::debug!(cursor = current_cursor, "Sync: pulling changes...");
             let pull = client.pull(&session.token, current_cursor).await?;
             let change_count = pull.changes.len();
+            tracing::info!(
+                count = change_count,
+                cursor = pull.cursor,
+                "Sync: received changes from server"
+            );
             for (idx, change) in pull.changes.iter().enumerate() {
                 if change_count > 0 {
                     let prog = (idx + 1) as f32 / change_count as f32;
@@ -572,13 +622,21 @@ impl SyncManager {
                         &change.nonce,
                     )?)
                 };
-                self.repository.apply_remote_change(
+                if let Err(e) = self.repository.apply_remote_change(
                     &change.record_id,
                     &change.kind,
                     change.revision,
                     plain.as_deref(),
                     change.tombstone,
-                )?;
+                ) {
+                    tracing::error!(
+                        record_id = %change.record_id,
+                        kind = %change.kind,
+                        error = %e,
+                        "Sync: failed to apply remote change"
+                    );
+                    return Err(e);
+                }
             }
             if pull.cursor > current_cursor {
                 current_cursor = pull.cursor;
@@ -589,13 +647,14 @@ impl SyncManager {
             }
         }
 
-        // 2. Outbox Phase: detect local changes and push dirty records in bounded batches
         for _ in 0..5 {
             let dirty_records = self.repository.detect_and_get_dirty_records()?;
             if dirty_records.is_empty() {
+                tracing::debug!("Sync: no dirty local records to push");
                 break;
             }
             let total_dirty = dirty_records.len();
+            tracing::info!(count = total_dirty, "Sync: pushing dirty records to server");
             let mut pushed_count = 0;
 
             let mut had_conflict = false;
@@ -650,6 +709,11 @@ impl SyncManager {
                             self.repository.update_cursor(push_response.cursor)?;
                         }
                         pushed_count += chunk.len();
+                        tracing::debug!(
+                            pushed = pushed_count,
+                            total = total_dirty,
+                            "Sync: push batch accepted"
+                        );
                         emit_sync_progress(
                             app,
                             "pushing",
@@ -660,6 +724,9 @@ impl SyncManager {
                         );
                     }
                     Err(e) if e.contains("409") || e.contains("conflict") => {
+                        tracing::warn!(
+                            "Sync: push conflict detected, pulling latest changes to resolve"
+                        );
                         emit_sync_progress(
                             app,
                             "pulling",
@@ -695,7 +762,10 @@ impl SyncManager {
                         had_conflict = true;
                         break;
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Sync: push request failed");
+                        return Err(e);
+                    }
                 }
             }
 

@@ -164,14 +164,20 @@ pub struct SyncRepository {
 
 impl SyncRepository {
     pub fn new() -> Result<Self, String> {
+        let conn = open_database()?;
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")
+            .map_err(|e| format!("Failed to disable foreign keys for sync connection: {e}"))?;
         Ok(Self {
-            connection: Mutex::new(open_database()?),
+            connection: Mutex::new(conn),
         })
     }
     #[cfg(test)]
     pub fn in_memory() -> Self {
         let mut connection = Connection::open_in_memory().unwrap();
         prepare_connection(&mut connection).unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = OFF;")
+            .unwrap();
         Self {
             connection: Mutex::new(connection),
         }
@@ -912,10 +918,30 @@ impl SyncRepository {
                 "collection" => {
                     let id = record_id.strip_prefix("col:").unwrap_or(record_id);
                     tx.execute(
+                        "DELETE FROM collection_posts WHERE collection_id=?1",
+                        params![id],
+                    )
+                    .map_err(|e| {
+                        format!(
+                            "Failed to clean up collection posts for tombstone ({record_id}): {e}"
+                        )
+                    })?;
+                    tx.execute(
+                        "UPDATE collections SET parent_id=NULL WHERE parent_id=?1",
+                        params![id],
+                    )
+                    .map_err(|e| {
+                        format!(
+                            "Failed to detach child collections for tombstone ({record_id}): {e}"
+                        )
+                    })?;
+                    tx.execute(
                         "DELETE FROM collections WHERE id=?1 AND is_system=0",
                         params![id],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        format!("Failed to delete collection for tombstone ({record_id}): {e}")
+                    })?;
                 }
                 "membership" => {
                     let raw = record_id.strip_prefix("mem:").unwrap_or(record_id);
@@ -925,7 +951,7 @@ impl SyncRepository {
                             "DELETE FROM collection_posts WHERE collection_id=?1 AND service=?2 AND creator_id=?3 AND post_id=?4",
                             params![parts[0], parts[1], parts[2], parts[3]],
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("Failed to delete membership for tombstone ({record_id}): {e}"))?;
                     } else {
                         return Err(format!("Malformed membership record ID: {record_id}"));
                     }
@@ -933,7 +959,11 @@ impl SyncRepository {
                 "subscription" => {
                     let id = record_id.strip_prefix("sub:").unwrap_or(record_id);
                     tx.execute("DELETE FROM subscriptions WHERE id=?1", params![id])
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| {
+                            format!(
+                                "Failed to delete subscription for tombstone ({record_id}): {e}"
+                            )
+                        })?;
                 }
                 "fav_post" => {
                     let raw = record_id.strip_prefix("fav:post:").unwrap_or(record_id);
@@ -943,7 +973,7 @@ impl SyncRepository {
                             "DELETE FROM content_pins WHERE entity_kind='post' AND reason='favorite' AND service=?1 AND creator_id=?2 AND post_id=?3",
                             params![parts[0], parts[1], parts[2]],
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("Failed to delete favorite post for tombstone ({record_id}): {e}"))?;
                     } else {
                         return Err(format!("Malformed favorite post record ID: {record_id}"));
                     }
@@ -956,7 +986,7 @@ impl SyncRepository {
                             "DELETE FROM content_pins WHERE entity_kind='creator' AND reason='favorite' AND service=?1 AND creator_id=?2",
                             params![parts[0], parts[1]],
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("Failed to delete favorite creator for tombstone ({record_id}): {e}"))?;
                     } else {
                         return Err(format!("Malformed favorite creator record ID: {record_id}"));
                     }
@@ -975,8 +1005,9 @@ impl SyncRepository {
                  ON CONFLICT(record_id) DO UPDATE SET revision=max(revision,?3), content_hash=NULL, dirty=0, tombstone=1, updated_at=CURRENT_TIMESTAMP",
                 params![record_id, kind, revision],
             )
-            .map_err(|e| e.to_string())?;
-            tx.commit().map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Failed to update tombstone sync_records ({record_id}): {e}"))?;
+            tx.commit()
+                .map_err(|e| format!("Failed to commit tombstone ({record_id}): {e}"))?;
             return Ok(());
         }
 
@@ -986,31 +1017,42 @@ impl SyncRepository {
 
         match kind {
             "collection" => {
-                let rec: CollectionRecord =
-                    serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: CollectionRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize collection record ({record_id}): {e}")
+                })?;
+                if let Some(ref pid) = rec.parent_id {
+                    tx.execute(
+                        "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at)
+                         VALUES(?1,'folder',NULL,'Folder',0,0,'1970-01-01T00:00:00Z','1970-01-01T00:00:00Z')
+                         ON CONFLICT(id) DO NOTHING",
+                        params![pid],
+                    )
+                    .map_err(|e| format!("Failed to ensure placeholder parent collection {pid} ({record_id}): {e}"))?;
+                }
                 tx.execute(
                     "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at,color)
                      VALUES(?1,?2,?3,?4,?5,0,?6,?7,?8)
                      ON CONFLICT(id) DO UPDATE SET
                        kind=excluded.kind, parent_id=excluded.parent_id, name=excluded.name,
                        position=excluded.position, updated_at=excluded.updated_at, color=excluded.color
-                       WHERE collections.updated_at <= excluded.updated_at",
+                       WHERE collections.updated_at <= excluded.updated_at OR collections.updated_at = '1970-01-01T00:00:00Z'",
                     params![rec.id, rec.kind, rec.parent_id, rec.name, rec.position, rec.created_at, rec.updated_at, rec.color],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to insert/update collection ({record_id}): {e}"))?;
             }
             "post" => {
-                let rec: PostRecord = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: PostRecord = serde_json::from_slice(bytes)
+                    .map_err(|e| format!("Failed to deserialize post record ({record_id}): {e}"))?;
                 let post: crate::api::models::Post =
                     crate::api::models::Post::from_json_str(&rec.snapshot_json)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("Failed to parse post snapshot ({record_id}): {e}"))?;
                 tx.execute(
                     "INSERT INTO creators(service,creator_id,name,snapshot_json)
                      VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))
                      ON CONFLICT(service,creator_id) DO NOTHING",
                     params![rec.service, rec.creator_id],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to ensure creator for post ({record_id}): {e}"))?;
                 tx.execute(
                     "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
                      VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
@@ -1034,11 +1076,35 @@ impl SyncRepository {
                         rec.cached_at
                     ],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to insert/update post ({record_id}): {e}"))?;
             }
             "membership" => {
-                let rec: MembershipRecord =
-                    serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: MembershipRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize membership record ({record_id}): {e}")
+                })?;
+                tx.execute(
+                    "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at)
+                     VALUES(?1,'folder',NULL,'Folder',0,0,'1970-01-01T00:00:00Z','1970-01-01T00:00:00Z')
+                     ON CONFLICT(id) DO NOTHING",
+                    params![rec.collection_id],
+                )
+                .map_err(|e| format!("Failed to ensure collection for membership ({record_id}): {e}"))?;
+                tx.execute(
+                    "INSERT INTO creators(service,creator_id,name,snapshot_json)
+                     VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))
+                     ON CONFLICT(service,creator_id) DO NOTHING",
+                    params![rec.service, rec.creator_id],
+                )
+                .map_err(|e| {
+                    format!("Failed to ensure creator for membership ({record_id}): {e}")
+                })?;
+                tx.execute(
+                    "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
+                     VALUES(?1,?2,?3,'','',NULL,'{}','1970-01-01T00:00:00Z')
+                     ON CONFLICT(service,creator_id,post_id) DO NOTHING",
+                    params![rec.service, rec.creator_id, rec.post_id],
+                )
+                .map_err(|e| format!("Failed to ensure post for membership ({record_id}): {e}"))?;
                 tx.execute(
                     "INSERT INTO collection_posts(collection_id,service,creator_id,post_id,position,operation_id,added_at)
                      VALUES(?1,?2,?3,?4,?5,?6,?7)
@@ -1054,11 +1120,19 @@ impl SyncRepository {
                         rec.added_at
                     ],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to insert/update collection_posts ({record_id}): {e}"))?;
             }
             "subscription" => {
-                let rec: SubscriptionRecord =
-                    serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: SubscriptionRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize subscription record ({record_id}): {e}")
+                })?;
+                tx.execute(
+                    "INSERT INTO collections(id,kind,parent_id,name,position,is_system,created_at,updated_at)
+                     VALUES(?1,'folder',NULL,'Folder',0,0,'1970-01-01T00:00:00Z','1970-01-01T00:00:00Z')
+                     ON CONFLICT(id) DO NOTHING",
+                    params![rec.destination_collection_id],
+                )
+                .map_err(|e| format!("Failed to ensure collection for subscription ({record_id}): {e}"))?;
                 tx.execute(
                     "INSERT INTO subscriptions(id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,next_check_at,created_at,updated_at)
                      VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,CURRENT_TIMESTAMP,?11,?12)
@@ -1083,7 +1157,7 @@ impl SyncRepository {
                         rec.updated_at
                     ],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to insert/update subscription ({record_id}): {e}"))?;
             }
             "session" => {
                 let config_mgr = crate::config::settings::ConfigManager::new()
@@ -1111,8 +1185,9 @@ impl SyncRepository {
                 }
             }
             "fav_post" => {
-                let rec: FavoritePostRecord =
-                    serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: FavoritePostRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize fav_post record ({record_id}): {e}")
+                })?;
                 if let Ok(post) = crate::api::models::Post::from_json_str(&rec.snapshot_json) {
                     tx.execute(
                         "INSERT INTO creators(service,creator_id,name,snapshot_json)
@@ -1120,7 +1195,9 @@ impl SyncRepository {
                          ON CONFLICT(service,creator_id) DO NOTHING",
                         params![rec.service, rec.creator_id],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        format!("Failed to ensure creator for fav_post ({record_id}): {e}")
+                    })?;
                     tx.execute(
                         "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
                          VALUES(?1,?2,?3,?4,?5,?6,?7,CURRENT_TIMESTAMP)
@@ -1139,18 +1216,19 @@ impl SyncRepository {
                             rec.snapshot_json
                         ],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("Failed to insert/update post for fav_post ({record_id}): {e}"))?;
                     tx.execute(
                         "INSERT OR IGNORE INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id,created_at)
                          VALUES('post',?1,?2,?3,'favorite','',?4)",
                         params![rec.service, rec.creator_id, rec.post_id, rec.created_at],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("Failed to insert content_pins for fav_post ({record_id}): {e}"))?;
                 }
             }
             "fav_creator" => {
-                let rec: FavoriteCreatorRecord =
-                    serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                let rec: FavoriteCreatorRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize fav_creator record ({record_id}): {e}")
+                })?;
                 tx.execute(
                     "INSERT INTO creators(service,creator_id,name,snapshot_json,cached_at)
                      VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
@@ -1159,13 +1237,15 @@ impl SyncRepository {
                        snapshot_json=excluded.snapshot_json",
                     params![rec.service, rec.creator_id, rec.name, rec.snapshot_json],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    format!("Failed to insert/update creator for fav_creator ({record_id}): {e}")
+                })?;
                 tx.execute(
                     "INSERT OR IGNORE INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id,created_at)
                      VALUES('creator',?1,?2,'','favorite','',?3)",
                     params![rec.service, rec.creator_id, rec.created_at],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to insert content_pins for fav_creator ({record_id}): {e}"))?;
             }
             unknown => {
                 tracing::warn!(
@@ -1183,9 +1263,10 @@ impl SyncRepository {
              ON CONFLICT(record_id) DO UPDATE SET revision=?3, content_hash=?4, dirty=0, tombstone=0, updated_at=CURRENT_TIMESTAMP",
             params![record_id, kind, revision, hash],
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to update sync_records ({record_id}): {e}"))?;
 
-        tx.commit().map_err(|e| e.to_string())?;
+        tx.commit()
+            .map_err(|e| format!("Failed to commit sync change ({record_id}): {e}"))?;
         Ok(())
     }
 }
@@ -1428,6 +1509,123 @@ mod tests {
         // Device B has no local dirty records
         let dirty_b = repo_b.detect_and_get_dirty_records().unwrap();
         assert!(dirty_b.is_empty());
+    }
+
+    #[test]
+    fn apply_out_of_order_remote_changes_succeeds() {
+        let repo = SyncRepository::in_memory();
+
+        let mem = MembershipRecord {
+            collection_id: "col_future".into(),
+            service: "kemono".into(),
+            creator_id: "creator_future".into(),
+            post_id: "post_future".into(),
+            position: 0,
+            operation_id: "op_01".into(),
+            added_at: "2026-08-15T00:00:00Z".into(),
+        };
+        let mem_bytes = serde_json::to_vec(&mem).unwrap();
+        repo.apply_remote_change(
+            "mem:col_future:kemono:creator_future:post_future",
+            "membership",
+            1,
+            Some(&mem_bytes),
+            false,
+        )
+        .unwrap();
+
+        let child_col = CollectionRecord {
+            id: "child_col".into(),
+            kind: "folder".into(),
+            parent_id: Some("parent_col".into()),
+            name: "Child Folder".into(),
+            position: 0,
+            created_at: "2026-08-15T00:00:00Z".into(),
+            updated_at: "2026-08-15T00:00:00Z".into(),
+            color: None,
+        };
+        let child_bytes = serde_json::to_vec(&child_col).unwrap();
+        repo.apply_remote_change("col:child_col", "collection", 2, Some(&child_bytes), false)
+            .unwrap();
+
+        let sub = SubscriptionRecord {
+            id: "sub_future".into(),
+            service: "kemono".into(),
+            creator_id: "creator_future".into(),
+            creator_name: "Future Creator".into(),
+            destination_collection_id: "col_sub_dest".into(),
+            enabled: true,
+            initial_import: "none".into(),
+            auto_download: false,
+            download_scope: "primary".into(),
+            poll_interval_minutes: 30,
+            created_at: "2026-08-15T00:00:00Z".into(),
+            updated_at: "2026-08-15T00:00:00Z".into(),
+        };
+        let sub_bytes = serde_json::to_vec(&sub).unwrap();
+        repo.apply_remote_change("sub:sub_future", "subscription", 3, Some(&sub_bytes), false)
+            .unwrap();
+
+        let post = PostRecord {
+            service: "kemono".into(),
+            creator_id: "creator_future".into(),
+            post_id: "post_future".into(),
+            title: "Future Post".into(),
+            published_at: None,
+            snapshot_json: "{\"id\":\"post_future\",\"title\":\"Future Post\",\"user\":\"creator_future\",\"service\":\"kemono\"}".into(),
+            cached_at: "2026-08-15T00:00:00Z".into(),
+        };
+        let post_bytes = serde_json::to_vec(&post).unwrap();
+        repo.apply_remote_change(
+            "post:kemono:creator_future:post_future",
+            "post",
+            4,
+            Some(&post_bytes),
+            false,
+        )
+        .unwrap();
+
+        let col = CollectionRecord {
+            id: "col_future".into(),
+            kind: "stash".into(),
+            parent_id: None,
+            name: "Future Stash".into(),
+            position: 1,
+            created_at: "2026-08-15T00:00:00Z".into(),
+            updated_at: "2026-08-15T00:00:00Z".into(),
+            color: None,
+        };
+        let col_bytes = serde_json::to_vec(&col).unwrap();
+        repo.apply_remote_change("col:col_future", "collection", 5, Some(&col_bytes), false)
+            .unwrap();
+
+        let conn = repo.connection.lock().unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM collections WHERE id='col_future'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Future Stash");
+
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM posts WHERE service='kemono' AND creator_id='creator_future' AND post_id='post_future'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Future Post");
+
+        let mem_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM collection_posts WHERE collection_id='col_future' AND post_id='post_future'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mem_count, 1);
     }
 
     #[test]

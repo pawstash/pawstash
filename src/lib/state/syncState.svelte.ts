@@ -3,6 +3,8 @@ import type { SyncDevice, SyncPhase, SyncProgress, SyncStatus } from '$lib/types
 import { libraryState } from './libraryState.svelte';
 import { subscriptionState } from './subscriptionState.svelte';
 import { accountState } from './accountState.svelte';
+import { notify } from '$lib/utils/toast';
+import { i18n } from '$lib/i18n';
 import {
   apiConnectSyncAccount, apiCreateSyncAccount, apiDisconnectSync, apiGetSyncStatus,
   apiChangeSyncPassword, apiCopySyncRecoveryKit, apiGetSyncRecoveryKit, apiListSyncDevices, apiLockSync,
@@ -34,41 +36,61 @@ class SyncState {
     if (this.initialized) return;
     this.initialized = true;
 
-    this.unlistenStatus = await listen<SyncStatus>('sync-status-updated', ({ payload }) => {
-      this.status = payload;
-      if (!payload.syncing) {
-        this.phase = 'idle';
-        this.progress = null;
-        this.progressMessage = null;
-      }
-      void this.refreshLibrary();
-    });
+    try {
+      this.unlistenStatus = await listen<SyncStatus>('sync-status-updated', ({ payload }) => {
+        const prevError = this.status.last_error;
+        this.status = payload;
+        if (!payload.syncing) {
+          this.phase = 'idle';
+          this.progress = null;
+          this.progressMessage = null;
+        }
+        if (payload.last_error && payload.last_error !== prevError) {
+          notify.error(i18n.t('sync.sync_failed') || 'Sync failed', payload.last_error, {
+            action: {
+              label: i18n.t('common.copy') || 'Copy',
+              onclick: () => {
+                void navigator.clipboard?.writeText(payload.last_error || '');
+                notify.success(i18n.t('common.copied') || 'Copied');
+              }
+            }
+          });
+        }
+        void this.refreshLibrary();
+      });
 
-    this.unlistenProgress = await listen<SyncProgress>('sync-progress', ({ payload }) => {
-      this.phase = payload.phase;
-      this.progress = payload.progress ?? null;
-      this.progressMessage = payload.message ?? null;
-      this.currentCount = payload.current ?? null;
-      this.totalCount = payload.total ?? null;
+      this.unlistenProgress = await listen<SyncProgress>('sync-progress', ({ payload }) => {
+        this.phase = payload.phase;
+        this.progress = payload.progress ?? null;
+        this.progressMessage = payload.message ?? null;
+        this.currentCount = payload.current ?? null;
+        this.totalCount = payload.total ?? null;
 
-      if (payload.phase === 'idle') {
-        this.progress = null;
-        this.progressMessage = null;
-        this.currentCount = null;
-        this.totalCount = null;
-        this.status.syncing = false;
-      }
-    });
+        if (payload.phase === 'idle') {
+          this.progress = null;
+          this.progressMessage = null;
+          this.currentCount = null;
+          this.totalCount = null;
+          this.status.syncing = false;
+        }
+      });
 
-    await this.refresh();
+      await this.refresh();
+    } catch (e) {
+      console.warn('Failed to initialize sync state:', e);
+    }
   }
 
   async refresh() {
-    const st = await apiGetSyncStatus();
-    this.status = st;
-    if (!st.syncing) {
-      this.phase = 'idle';
-      this.progress = null;
+    try {
+      const st = await apiGetSyncStatus();
+      this.status = st;
+      if (!st.syncing) {
+        this.phase = 'idle';
+        this.progress = null;
+      }
+    } catch (e) {
+      console.warn('Failed to refresh sync status:', e);
     }
   }
 
@@ -167,15 +189,19 @@ class SyncState {
   }
 
   private async refreshLibrary() {
-    await Promise.all([
-      libraryState.refreshCollections(),
-      libraryState.refreshSavedKeys(),
-      libraryState.refresh(),
-      subscriptionState.reload(),
-      accountState.refresh(),
-      accountState.fetchFavorites('post', true),
-      accountState.fetchFavorites('creator', true)
-    ]);
+    try {
+      await Promise.allSettled([
+        libraryState.refreshCollections(),
+        libraryState.refreshSavedKeys(),
+        libraryState.refresh(),
+        subscriptionState.reload(),
+        accountState.refresh(),
+        accountState.fetchFavorites('post', true),
+        accountState.fetchFavorites('creator', true)
+      ]);
+    } catch (e) {
+      console.warn('Failed to refresh library after sync:', e);
+    }
   }
 }
 

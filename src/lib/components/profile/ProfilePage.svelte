@@ -24,6 +24,7 @@
   import IconOpen from '~icons/fluent/open-24-regular';
   import { invoke } from '@tauri-apps/api/core';
   import { notify } from '$lib/utils/toast';
+  import { apiTestSyncConnection, apiReadRecentLogs } from '$lib/utils/ipc';
 
   type SubView =
     | 'menu'
@@ -46,6 +47,9 @@
   let currentPassword = $state('');
   let newPassword = $state('');
   let recoveryKitText = $state('');
+
+  let testingConnection = $state(false);
+  let copyingLogs = $state(false);
 
   async function openExternalUrl(url: string) {
     try {
@@ -76,17 +80,118 @@
     } catch (error: any) {
       const errStr = String(error?.message || error);
       if (!syncState.status.configured && activeView === 'create' && errStr.toLowerCase().includes('account already exists')) {
-        notify.error(i18n.t('sync.account_taken'));
+        notify.error(i18n.t('sync.account_taken'), undefined, {
+          action: {
+            label: i18n.t('sync.generate_new_id') || 'New ID',
+            onclick: () => {
+              syncAccount = generateRandomId();
+            }
+          }
+        });
         syncAccount = generateRandomId();
+      } else if (errStr.toLowerCase().includes('disconnect the current sync account first') || errStr.toLowerCase().includes('already configured')) {
+        notify.error(i18n.t('sync.error'), errStr, {
+          action: {
+            label: i18n.t('sync.disconnect') || 'Disconnect',
+            onclick: async () => {
+              try {
+                await syncState.disconnect();
+                notify.success(i18n.t('sync.disconnected') || 'Account disconnected');
+              } catch (e) {
+                notify.error(i18n.t('sync.error'), e);
+              }
+            }
+          }
+        });
       } else {
-        notify.error(i18n.t('sync.error'), errStr);
+        notify.error(i18n.t('sync.error'), errStr, {
+          action: {
+            label: i18n.t('common.copy') || 'Copy',
+            onclick: () => {
+              void navigator.clipboard?.writeText(errStr);
+              notify.success(i18n.t('common.copied') || 'Copied');
+            }
+          }
+        });
       }
     } finally {
       syncPassword = '';
     }
   }
 
+  async function handleTestConnection() {
+    if (testingConnection || !syncServer.trim()) return;
+    testingConnection = true;
+    try {
+      await apiTestSyncConnection(syncServer.trim());
+      notify.success(
+        i18n.t('sync.test_connection_success_title'),
+        i18n.t('sync.test_connection_success_desc')
+      );
+    } catch (e) {
+      const err = String((e as any)?.message || e);
+      notify.error(
+        i18n.t('sync.test_connection_failed_title'),
+        err,
+        {
+          action: {
+            label: i18n.t('common.copy') || 'Copy',
+            onclick: () => {
+              void navigator.clipboard?.writeText(err);
+              notify.success(i18n.t('common.copied') || 'Copied');
+            }
+          }
+        }
+      );
+    } finally {
+      testingConnection = false;
+    }
+  }
+
+  async function handleCopySyncLogs() {
+    if (copyingLogs) return;
+    copyingLogs = true;
+    try {
+      const raw = await apiReadRecentLogs(400);
+      if (!raw || !raw.trim()) {
+        notify.info(i18n.t('sync.no_logs'));
+        return;
+      }
+      const lines = raw.split('\n');
+      const syncLines = lines.filter((l) => /sync|vault|pwsec|pawstash.*sync/i.test(l));
+      const payload = syncLines.length > 0 ? syncLines.join('\n') : lines.slice(-100).join('\n');
+      await navigator.clipboard.writeText(payload);
+      notify.success(
+        i18n.t('sync.logs_copied_title'),
+        i18n.t('sync.logs_copied_desc', { count: syncLines.length || 100 })
+      );
+    } catch (e) {
+      notify.error(i18n.t('sync.copy_logs_failed'), e);
+    } finally {
+      copyingLogs = false;
+    }
+  }
+
   async function handleSyncSubmit() {
+    if (activeView === 'create' || activeView === 'connect') {
+      const trimmedAccount = syncAccount.trim();
+      if (trimmedAccount.length < 8) {
+        notify.error(
+          i18n.t('sync.account_id_too_short_title'),
+          i18n.t('sync.account_id_too_short_desc')
+        );
+        return;
+      }
+      const validIdRegex = /^[A-Za-z0-9_-]{8,128}$/;
+      if (!validIdRegex.test(trimmedAccount)) {
+        notify.error(
+          i18n.t('sync.account_id_invalid_title'),
+          i18n.t('sync.account_id_invalid_desc')
+        );
+        return;
+      }
+    }
+
     if (activeView === 'create') {
       await runSyncAction(async () => {
         await syncState.create(syncServer, syncAccount, syncPassword, syncDevice);
@@ -196,6 +301,29 @@
                   ? i18n.t('sync.revision', { revision: syncState.status.revision, cursor: syncState.status.cursor })
                   : i18n.t('sync.locked')}
               </span>
+
+              {#if syncState.status.last_error}
+                <div class="flex items-center gap-2 px-3 py-2 mt-1 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 text-left w-full">
+                  <span class="truncate flex-1 font-mono text-[11px]">{syncState.status.last_error}</span>
+                  <button
+                    type="button"
+                    class="shrink-0 text-red-300 hover:text-white underline text-[11px] cursor-pointer"
+                    onclick={() => {
+                      notify.error(i18n.t('sync.sync_failed'), syncState.status.last_error, {
+                        action: {
+                          label: i18n.t('common.copy') || 'Copy',
+                          onclick: () => {
+                            void navigator.clipboard?.writeText(syncState.status.last_error || '');
+                            notify.success(i18n.t('common.copied') || 'Copied');
+                          }
+                        }
+                      });
+                    }}
+                  >
+                    {i18n.t('sync.details')}
+                  </button>
+                </div>
+              {/if}
             </div>
 
             <div class="flex flex-col gap-2.5 pt-1">
@@ -248,6 +376,20 @@
               >
                 <IconSignOut class="w-4 h-4 mr-1.5" />
                 <span>{i18n.t('sync.disconnect')}</span>
+              </Button>
+
+              <Button
+                variant="ghost"
+                class="w-full text-xs text-ink/50"
+                disabled={copyingLogs}
+                onclick={() => void handleCopySyncLogs()}
+              >
+                {#if copyingLogs}
+                  <IconLoading class="w-3.5 h-3.5 mr-1.5" />
+                {:else}
+                  <IconCopy class="w-3.5 h-3.5 mr-1.5" />
+                {/if}
+                <span>{i18n.t('sync.copy_logs')}</span>
               </Button>
             </div>
           </div>
@@ -303,6 +445,20 @@
               <IconKey class="w-5 h-5 mr-2 text-ink/50" />
               <span>{i18n.t('sync.mode_recover')}</span>
             </Button>
+
+            <Button
+              variant="ghost"
+              class="w-full text-xs text-ink/40 mt-1"
+              disabled={copyingLogs}
+              onclick={() => void handleCopySyncLogs()}
+            >
+              {#if copyingLogs}
+                <IconLoading class="w-3.5 h-3.5 mr-1.5" />
+              {:else}
+                <IconCopy class="w-3.5 h-3.5 mr-1.5" />
+              {/if}
+              <span>{i18n.t('sync.copy_logs')}</span>
+            </Button>
           </div>
         {/if}
 
@@ -321,7 +477,20 @@
           onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
         >
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
+              <button
+                type="button"
+                class="text-[11px] text-accent hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                disabled={testingConnection || !syncServer.trim()}
+                onclick={() => void handleTestConnection()}
+              >
+                {#if testingConnection}
+                  <IconLoading class="w-3.5 h-3.5" />
+                {/if}
+                {i18n.t('sync.test_connection')}
+              </button>
+            </div>
             <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
@@ -374,7 +543,20 @@
           onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
         >
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
+              <button
+                type="button"
+                class="text-[11px] text-accent hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                disabled={testingConnection || !syncServer.trim()}
+                onclick={() => void handleTestConnection()}
+              >
+                {#if testingConnection}
+                  <IconLoading class="w-3.5 h-3.5" />
+                {/if}
+                {i18n.t('sync.test_connection')}
+              </button>
+            </div>
             <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
           </div>
 
@@ -386,7 +568,7 @@
               bind:value={syncAccount}
               placeholder="account-id"
               actionIcon={IconDice}
-              actionTooltip="Generate random ID"
+              actionTooltip={i18n.t('sync.generate_id')}
               onAction={() => (syncAccount = generateRandomId())}
             />
           </div>

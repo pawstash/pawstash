@@ -323,6 +323,10 @@ export const apiConnectSyncAccount = (serverUrl: string, accountId: string, mast
 export const apiUnlockSync = (masterPassword: string) => invoke<SyncStatus>('unlock_sync', { masterPassword });
 export const apiLockSync = () => invoke<SyncStatus>('lock_sync');
 export const apiDisconnectSync = () => invoke<SyncStatus>('disconnect_sync');
+export const apiTestSyncConnection = (serverUrl: string) =>
+  invoke<boolean>('test_sync_connection', { serverUrl });
+export const apiReadRecentLogs = (lines?: number) =>
+  invoke<string>('read_recent_logs', { lines });
 export const apiChangeSyncPassword = (currentPassword: string, newPassword: string) =>
   invoke<SyncStatus>('change_sync_password', { currentPassword, newPassword });
 export const apiListSyncDevices = () => invoke<SyncDevice[]>('list_sync_devices');

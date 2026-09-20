@@ -95,7 +95,13 @@ impl SecretStore {
             }
             return Ok(Some(raw));
         }
-        let decrypted = android_vault::decrypt(&raw)?;
+        let decrypted = match android_vault::decrypt(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("Android vault entry at {:?} failed to decrypt: {e}", path);
+                return Err(e);
+            }
+        };
         Ok(Some(decrypted))
     }
 
@@ -166,8 +172,13 @@ mod android_vault {
             if bytes.len() == 32 {
                 let mut key = [0u8; 32];
                 key.copy_from_slice(&bytes);
+                tracing::debug!("Loaded Android vault device key");
                 return Ok(key);
             }
+            tracing::warn!(
+                "Android vault device key was invalid length ({}), generating new one",
+                bytes.len()
+            );
         }
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
@@ -177,6 +188,7 @@ mod android_vault {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
         }
+        tracing::info!("Generated new Android vault device key");
         Ok(key)
     }
 
@@ -207,6 +219,7 @@ mod android_vault {
             let key = get_or_create_device_key()?;
             let header_len = MAGIC_HEADER.len();
             if envelope.len() < header_len + 24 {
+                tracing::warn!("Corrupted vault entry (too short, len={})", envelope.len());
                 return Err("Corrupted vault entry (too short)".to_string());
             }
             let nonce = &envelope[header_len..header_len + 24];
@@ -220,7 +233,11 @@ mod android_vault {
                         aad: b"pawstash:android:vault:v2",
                     },
                 )
-                .map_err(|e| format!("Decryption error: {e}"))
+                .map_err(|e| {
+                    let err = format!("Decryption error: {e}");
+                    tracing::warn!("Android vault secret decrypt failed: {err}");
+                    err
+                })
         } else {
             // Unencrypted legacy fallback
             Ok(envelope.to_vec())
