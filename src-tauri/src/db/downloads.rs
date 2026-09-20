@@ -1,6 +1,6 @@
-use crate::db::storage::{content_cache_path, open_database, sanitize_cache_key};
 #[cfg(test)]
 use crate::db::storage::prepare_connection;
+use crate::db::storage::{content_cache_path, open_database, sanitize_cache_key};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -592,7 +592,6 @@ impl DownloadRepository {
 
         let mut file_preview_path: Option<String> = None;
 
-        // 1. Look for a file-specific thumbnail on disk:
         for candidate in [&s_mid, &s_mid_trimmed, &s_id, &s_fn, &s_fp] {
             if candidate.is_empty() {
                 continue;
@@ -609,38 +608,62 @@ impl DownloadRepository {
             }
         }
 
-        // 2. Parse snapshot_json for attachment-specific thumbnail_url and post-level thumbnail_url:
         let mut file_preview_url: Option<String> = None;
         let mut post_preview_url: Option<String> = None;
 
         if let Some(json_str) = snapshot_json.as_deref() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                post_preview_url = v.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+                post_preview_url = v
+                    .get("thumbnail_url")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string());
 
                 let main_file = v.get("file").and_then(|f| f.as_object());
                 let attachments = v.get("attachments").and_then(|a| a.as_array());
 
-                // Check if this job matches the main file:
                 if let Some(f) = main_file {
-                    let path_match = f.get("path").and_then(|p| p.as_str()).map_or(false, |p| p == media_id);
-                    let name_match = f.get("name").and_then(|n| n.as_str()).map_or(false, |n| n == filename);
-                    let url_match = f.get("url").and_then(|u| u.as_str()).map_or(false, |u| u == url);
+                    let path_match = f
+                        .get("path")
+                        .and_then(|p| p.as_str())
+                        .is_some_and(|p| p == media_id);
+                    let name_match = f
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .is_some_and(|n| n == filename);
+                    let url_match = f
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .is_some_and(|u| u == url);
 
                     if path_match || name_match || url_match {
-                        file_preview_url = f.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+                        file_preview_url = f
+                            .get("thumbnail_url")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string());
                     }
                 }
 
-                // If not matched to main file, check attachments:
                 if file_preview_url.is_none() {
                     if let Some(atts) = attachments {
                         for att in atts {
-                            let path_match = att.get("path").and_then(|p| p.as_str()).map_or(false, |p| p == media_id);
-                            let name_match = att.get("name").and_then(|n| n.as_str()).map_or(false, |n| n == filename);
-                            let url_match = att.get("url").and_then(|u| u.as_str()).map_or(false, |u| u == url);
+                            let path_match = att
+                                .get("path")
+                                .and_then(|p| p.as_str())
+                                .is_some_and(|p| p == media_id);
+                            let name_match = att
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .is_some_and(|n| n == filename);
+                            let url_match = att
+                                .get("url")
+                                .and_then(|u| u.as_str())
+                                .is_some_and(|u| u == url);
 
                             if path_match || name_match || url_match {
-                                file_preview_url = att.get("thumbnail_url").and_then(|t| t.as_str()).map(|s| s.to_string());
+                                file_preview_url = att
+                                    .get("thumbnail_url")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| s.to_string());
                                 break;
                             }
                         }
@@ -648,12 +671,14 @@ impl DownloadRepository {
                 }
 
                 if post_preview_url.is_none() {
-                    post_preview_url = main_file.and_then(|f| f.get("thumbnail_url")).and_then(|t| t.as_str()).map(|s| s.to_string());
+                    post_preview_url = main_file
+                        .and_then(|f| f.get("thumbnail_url"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string());
                 }
             }
         }
 
-        // 3. Post-level cover on disk (strictly for group view / post-level representation):
         let mut post_preview_path: Option<String> = None;
         if let Some(ref p) = raw_preview_path {
             if std::path::Path::new(p).is_file() {

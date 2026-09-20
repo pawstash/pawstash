@@ -252,7 +252,9 @@ export function isSameAttachment(a: Attachment | null | undefined, b: Attachment
   if (aNode && b.path && (b.path === aNode || b.path.endsWith(aNode))) return true;
   if (bNode && a.path && (a.path === bNode || a.path.endsWith(bNode))) return true;
 
-  if (a.path && b.path && a.path === b.path) return true;
+  if (a.path && b.path) {
+    return a.path === b.path;
+  }
 
   const aIsCloud = (a as any).is_cloud === true;
   const bIsCloud = (b as any).is_cloud === true;
@@ -299,7 +301,7 @@ export function attachmentThumbnailUrl(file: Attachment, _service?: string, post
         if (matchExtra?.thumbnail_url) return matchExtra.thumbnail_url as string;
       }
     }
-    if ((!post.attachments || post.attachments.length <= 1) && (!post.file || isSameAttachment(post.file, file))) {
+    if (!post.file && post.attachments && post.attachments.length === 1 && isSameAttachment(post.attachments[0], file)) {
       if (post.thumbnail_url) return post.thumbnail_url;
       if (post.preview_path && !post.preview_path.includes('/previews/') && !post.preview_path.includes('\\previews\\')) {
         const local = resolveLocalMediaUrl(post.preview_path);

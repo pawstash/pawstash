@@ -1537,10 +1537,10 @@ pub async fn fetch_account_favorites(
                         });
 
                         if let Some(post) = cached_post {
-                            if item.name.is_none() || item.name.as_deref() == Some(&item.id) {
-                                if !post.title.is_empty() {
-                                    item.name = Some(post.title.clone());
-                                }
+                            if (item.name.is_none() || item.name.as_deref() == Some(&item.id))
+                                && !post.title.is_empty()
+                            {
+                                item.name = Some(post.title.clone());
                             }
                             if let Some(file) = &post.file {
                                 if let Ok(v) = serde_json::to_value(file) {

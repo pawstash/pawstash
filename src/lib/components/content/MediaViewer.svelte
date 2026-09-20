@@ -69,8 +69,8 @@
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
-  let index = $state(0);
-  let lastPropIndex = $state<number | null>(null);
+  let index = $state(initialIndex);
+  let lastPropIndex = $state(initialIndex);
 
   $effect(() => {
     if (initialIndex !== lastPropIndex) {
@@ -117,19 +117,10 @@
   let videoElement = $state<HTMLVideoElement>();
   let loadedWidth = $state(0);
   let loadedHeight = $state(0);
-  let fullImageLoaded = $state(false);
-  let fullImageError = $state(false);
-
-  $effect(() => {
-    const _ = index;
-    fullImageLoaded = false;
-    fullImageError = false;
-  });
 
   $effect(() => {
     if (mediaElement && mediaElement.complete && mediaElement.naturalWidth > 0) {
-      if (!fullImageLoaded) {
-        fullImageLoaded = true;
+      if (loadedWidth !== mediaElement.naturalWidth || loadedHeight !== mediaElement.naturalHeight) {
         loadedWidth = mediaElement.naturalWidth;
         loadedHeight = mediaElement.naturalHeight;
       }
@@ -524,19 +515,11 @@
     loadedHeight = image.naturalHeight;
   }
 
-  function handleFullImageLoad(event: Event) {
-    fullImageLoaded = true;
-    fullImageError = false;
-    handleImageLoad(event);
-  }
-
-  function handleFullImageError(event: Event) {
+  function handleImageError(event: Event) {
     const target = event.currentTarget as HTMLImageElement;
     logMediaError('image', target.src, current?.name || 'image');
-    fullImageError = true;
     if (current?.poster && target.src !== current.poster) {
       target.src = current.poster;
-      fullImageLoaded = true;
     }
   }
 
@@ -807,6 +790,7 @@
   }
 
   $effect(() => {
+    const _ = index;
     currentId;
     resetTransform();
     loadedWidth = 0;
@@ -941,27 +925,19 @@
         style:opacity={isDismissing ? dismissOpacity : swipeOpacity}
       >
         {#if current.kind === 'image'}
-          {#if current.poster && current.url && current.poster !== current.url && !fullImageLoaded}
+          {#key current?.id || index}
             <img
-              class="media-viewer-media image-media is-poster-underlay"
-              src={current.poster}
-              alt=""
+              bind:this={mediaElement}
+              class="media-viewer-media image-media"
+              class:zoomed={scale > MIN_SCALE}
+              src={current.url || current.poster}
+              alt={current.name}
               draggable="false"
               style:transform
+              onload={handleImageLoad}
+              onerror={handleImageError}
             />
-          {/if}
-          <img
-            bind:this={mediaElement}
-            class="media-viewer-media image-media"
-            class:zoomed={scale > MIN_SCALE}
-            class:is-loading={!fullImageLoaded && Boolean(current.poster && current.url && current.poster !== current.url)}
-            src={current.url || current.poster}
-            alt={current.name}
-            draggable="false"
-            style:transform
-            onload={handleFullImageLoad}
-            onerror={handleFullImageError}
-          />
+          {/key}
         {:else if current.html}
           <div
             class="viewer-embed-state"
@@ -1462,24 +1438,13 @@
     transition: transform 150ms var(--ease-expo, ease-out);
   }
 
-  .is-poster-underlay {
-    grid-area: 1 / 1;
-    place-self: center;
-    pointer-events: none;
-    z-index: 1;
-  }
-
   .image-media {
     grid-area: 1 / 1;
     place-self: center;
     position: relative;
     z-index: 2;
     will-change: transform;
-    transition: transform 150ms var(--ease-expo, ease-out), opacity 180ms ease-out;
-  }
-
-  .image-media.is-loading {
-    opacity: 0;
+    transition: transform 150ms var(--ease-expo, ease-out);
   }
 
   .image-media.zoomed {

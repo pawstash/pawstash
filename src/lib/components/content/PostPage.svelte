@@ -1170,12 +1170,13 @@
     const mediaIndex = media.findIndex((m) => isSameAttachment(m, file));
     const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
     const key = job?.media_id || job?.id || job?.filename || file.path || file.name || `vid_${itemIndex}`;
+    const kind = isEmbed ? 'video' : mediaViewerKind(file, url);
     return {
       id: key,
       url,
       poster: cachedVideoThumb || attachmentThumbnailUrl(file, service, post),
       name: file.name || i18n.t('post.file'),
-      kind: isEmbed ? 'video' : mediaViewerKind(file, url),
+      kind,
       size: getEffectiveFileSize(file) || file.size,
       width,
       height,
