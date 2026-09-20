@@ -137,64 +137,88 @@ export function resolveLocalMediaUrl(path?: string | null): string | undefined {
   }
 }
 
-export function creatorAvatarUrl(_service: string, _creatorId: string, _thumbhash?: string | null, _explicitProviderId?: string): string {
-  return '';
+function getProviderBaseUrl(service?: string, explicitProviderId?: string, preferImage = false): string {
+  const prov = (explicitProviderId ? providerState.getProviderById(explicitProviderId) : undefined)
+    || providerState.getProviderForService(service)
+    || providerState.providers.find((p) => p.enabled)
+    || providerState.providers[0];
+  const baseUrl = (preferImage ? prov?.image_url : undefined)
+    || prov?.image_url
+    || prov?.api_url
+    || (configState.settings.api_domain ? `https://${configState.settings.api_domain}` : 'https://pawchive.pw');
+  return baseUrl.trim().replace(/\/+$/, '');
+}
+
+export function creatorAvatarUrl(service?: string, creatorId?: string, _thumbhash?: string | null, explicitProviderId?: string): string {
+  if (!service || !creatorId) return '';
+  const base = getProviderBaseUrl(service, explicitProviderId, true);
+  return `${base}/icons/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
 }
 
 export function creatorAvatarSrc(creator?: Creator | CreatorProfile | null): string {
   if (!creator) return '';
-  const c = creator as any;
-  const avatarPath = typeof c.avatar_path === 'string' ? c.avatar_path : undefined;
+  const avatarPath = typeof creator.avatar_path === 'string' ? creator.avatar_path : undefined;
   if (avatarPath) {
     const local = resolveLocalMediaUrl(avatarPath);
     if (local) return local;
   }
-  const avatarUrl = typeof c.avatar_url === 'string' ? c.avatar_url : undefined;
+  const avatarUrl = typeof creator.avatar_url === 'string' ? creator.avatar_url : undefined;
   if (avatarUrl) {
     return avatarUrl;
+  }
+  const service = typeof creator.service === 'string' ? creator.service : undefined;
+  const id = typeof creator.id === 'string' ? creator.id : undefined;
+  if (service && id) {
+    return creatorAvatarUrl(service, id);
   }
   return '';
 }
 
 export function creatorPlaceholderUrl(creator?: Creator | CreatorProfile | null): string | undefined {
   if (!creator || configState.settings.disable_blur_placeholders) return undefined;
-  const thumb = (creator as any).avatar_thumbhash || (creator.extra as any)?.avatar_thumbhash;
-  if (thumb && typeof thumb === 'string') {
-    return thumbHashToUrl(thumb) || undefined;
-  }
-  return undefined;
+  const thumb = typeof creator.avatar_thumbhash === 'string'
+    ? creator.avatar_thumbhash
+    : (typeof creator.extra?.avatar_thumbhash === 'string' ? creator.extra.avatar_thumbhash : undefined);
+  return thumb ? (thumbHashToUrl(thumb) || undefined) : undefined;
 }
 
-export function creatorBannerUrl(_service: string, _creatorId: string, _thumbhash?: string | null, _explicitProviderId?: string): string {
-  return '';
+export function creatorBannerUrl(service?: string, creatorId?: string, _thumbhash?: string | null, explicitProviderId?: string): string {
+  if (!service || !creatorId) return '';
+  const base = getProviderBaseUrl(service, explicitProviderId, true);
+  return `${base}/banners/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
 }
 
 export function creatorBannerSrc(creator?: Creator | CreatorProfile | null): string {
   if (!creator) return '';
-  const c = creator as any;
-  const bannerPath = typeof c.banner_path === 'string' ? c.banner_path : undefined;
+  const bannerPath = typeof creator.banner_path === 'string' ? creator.banner_path : undefined;
   if (bannerPath) {
     const local = resolveLocalMediaUrl(bannerPath);
     if (local) return local;
   }
-  const bannerUrl = typeof c.banner_url === 'string' ? c.banner_url : undefined;
+  const bannerUrl = typeof creator.banner_url === 'string' ? creator.banner_url : undefined;
   if (bannerUrl) {
     return bannerUrl;
+  }
+  const service = typeof creator.service === 'string' ? creator.service : undefined;
+  const id = typeof creator.id === 'string' ? creator.id : undefined;
+  if (service && id) {
+    return creatorBannerUrl(service, id);
   }
   return '';
 }
 
 export function creatorBannerPlaceholderUrl(creator?: Creator | CreatorProfile | null): string | undefined {
   if (!creator || configState.settings.disable_blur_placeholders) return undefined;
-  const thumb = (creator as any).banner_thumbhash || (creator.extra as any)?.banner_thumbhash;
-  if (thumb && typeof thumb === 'string') {
-    return thumbHashToUrl(thumb) || undefined;
-  }
-  return undefined;
+  const thumb = typeof creator.banner_thumbhash === 'string'
+    ? creator.banner_thumbhash
+    : (typeof creator.extra?.banner_thumbhash === 'string' ? creator.extra.banner_thumbhash : undefined);
+  return thumb ? (thumbHashToUrl(thumb) || undefined) : undefined;
 }
 
-export function creatorPageUrl(_service: string, _creatorId: string, _explicitProviderId?: string): string {
-  return '';
+export function creatorPageUrl(service?: string, creatorId?: string, explicitProviderId?: string): string {
+  if (!service || !creatorId) return '';
+  const base = getProviderBaseUrl(service, explicitProviderId, false);
+  return `${base}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}`;
 }
 
 export function postPageUrl(_service: string, _creatorId: string, _postId: string, _explicitProviderId?: string): string {

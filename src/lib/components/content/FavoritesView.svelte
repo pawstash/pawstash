@@ -229,6 +229,26 @@
       void contentState.loadPost(post.service, post.user, post.id);
     }
   });
+
+  const resolvingCreatorKeys = new Set<string>();
+  $effect(() => {
+    if (activeTab !== 'creators' || loading) return;
+    const candidates = filteredCreators.filter((c) => {
+      if (!c.id || !c.service) return false;
+      const key = `${c.service.toLowerCase()}:${c.id.toLowerCase()}`;
+      if (resolvingCreatorKeys.has(key)) return false;
+      return c.name === c.id;
+    });
+
+    if (candidates.length === 0) return;
+
+    const batch = candidates.slice(0, 10);
+    for (const creator of batch) {
+      const key = `${creator.service.toLowerCase()}:${creator.id.toLowerCase()}`;
+      resolvingCreatorKeys.add(key);
+      void creatorsState.resolveName(creator.service, creator.id);
+    }
+  });
   let filteredCreators = $derived.by(() => {
     let filtered = normalizedQuery
       ? creators.filter((creator) => `${creator.name} ${creator.service} ${creator.id}`.toLowerCase().includes(normalizedQuery))
@@ -370,22 +390,33 @@
   }
 
   function mapFavoriteCreator(favorite: Favorite): Creator {
-    const favId = String(favorite.id ?? favorite.user ?? favorite.user_id ?? '');
-    const favService = String(favorite.service ?? '');
+    const extra = (favorite.extra || {}) as Record<string, unknown>;
+    const asStr = (val: unknown) => (typeof val === 'string' && val ? val : undefined);
+
+    const favId = String(favorite.id ?? favorite.user ?? favorite.user_id ?? extra.id ?? '');
+    const favService = String(favorite.service ?? extra.service ?? '');
     const cachedName = creatorsState.creatorsMap.get(`${favService.toLowerCase()}:${favId.toLowerCase()}`);
-    const rawName = String(favorite.name ?? '');
-    const name = (rawName && rawName !== favId) ? rawName : (cachedName || favId);
+    const rawName = String(favorite.name ?? extra.name ?? '');
+    const name = rawName && rawName !== favId ? rawName : (cachedName || favId);
+
     return {
       id: favId,
       name,
       service: favService,
       public_id: favorite.public_id == null ? undefined : String(favorite.public_id),
       relation_id: favorite.relation_id == null ? undefined : String(favorite.relation_id),
-      updated: timestampSeconds(favorite.updated),
-      indexed: timestampSeconds(favorite.indexed),
-      favorited: Number(favorite.favorited ?? favorite.favorite_count ?? 0) || undefined,
+      updated: timestampSeconds(favorite.updated ?? extra.updated),
+      indexed: timestampSeconds(favorite.indexed ?? extra.indexed),
+      favorited: Number(favorite.favorited ?? favorite.favorite_count ?? extra.favorited ?? extra.favorite_count ?? 0) || undefined,
       faved_seq: favorite.faved_seq,
-      faved_at: String(favorite.faved_at ?? (favorite.extra as any)?.faved_at ?? favorite.created_at ?? '') || undefined
+      faved_at: asStr(favorite.faved_at ?? extra.faved_at ?? favorite.created_at),
+      avatar_url: asStr(favorite.avatar_url ?? extra.avatar_url),
+      avatar_path: asStr(favorite.avatar_path ?? extra.avatar_path),
+      banner_url: asStr(favorite.banner_url ?? extra.banner_url),
+      banner_path: asStr(favorite.banner_path ?? extra.banner_path),
+      avatar_thumbhash: asStr(favorite.avatar_thumbhash ?? extra.avatar_thumbhash),
+      banner_thumbhash: asStr(favorite.banner_thumbhash ?? extra.banner_thumbhash),
+      extra
     };
   }
 

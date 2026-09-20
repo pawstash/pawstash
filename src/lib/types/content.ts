@@ -51,14 +51,14 @@ export interface ResolvedPostLink {
   source: 'cache' | 'remote';
 }
 
-export interface Creator {
+export interface BaseCreator<TDate = number> {
   id: string;
   name: string;
   service: string;
   public_id?: string;
   relation_id?: string;
-  updated?: number;
-  indexed?: number;
+  updated?: TDate;
+  indexed?: TDate;
   favorited?: number;
   ever_imported?: boolean;
   avatar_url?: string;
@@ -66,16 +66,14 @@ export interface Creator {
   banner_url?: string;
   banner_path?: string;
   page_url?: string;
+  avatar_thumbhash?: string;
+  banner_thumbhash?: string;
   extra?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
-export interface CreatorProfile extends Omit<Creator, 'updated' | 'indexed'> {
-  updated?: string;
-  indexed?: string;
-  page_url?: string;
-  extra?: Record<string, unknown>;
-}
+export type Creator = BaseCreator<number>;
+export type CreatorProfile = BaseCreator<string>;
 
 export interface Announcement {
   service: string;
@@ -110,6 +108,13 @@ export interface Favorite {
   indexed?: string;
   last_imported?: string;
   updated?: string;
+  avatar_url?: string;
+  avatar_path?: string;
+  banner_url?: string;
+  banner_path?: string;
+  avatar_thumbhash?: string;
+  banner_thumbhash?: string;
+  extra?: Record<string, unknown>;
   [key: string]: unknown;
 }
 

@@ -69,7 +69,9 @@
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
+  // svelte-ignore state_referenced_locally
   let index = $state(initialIndex);
+  // svelte-ignore state_referenced_locally
   let lastPropIndex = $state(initialIndex);
 
   $effect(() => {

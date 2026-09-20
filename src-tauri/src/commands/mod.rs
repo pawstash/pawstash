@@ -1292,6 +1292,69 @@ pub async fn resolve_external_post_link(
     Ok(None)
 }
 
+async fn enrich_favorite_artist(state: &State<'_, AppState>, item: &mut Favorite) {
+    let srv = item.service.as_deref().unwrap_or("").to_lowercase();
+    let id = item.id.to_lowercase();
+    if srv.is_empty() || id.is_empty() {
+        return;
+    }
+    let mut creator = Creator {
+        id: id.clone(),
+        name: item.name.clone().unwrap_or_else(|| id.clone()),
+        service: srv.clone(),
+        public_id: None,
+        relation_id: None,
+        updated: None,
+        indexed: None,
+        favorited: None,
+        ever_imported: None,
+        avatar_url: None,
+        avatar_path: None,
+        banner_url: None,
+        banner_path: None,
+        page_url: None,
+        extra: item.extra.clone(),
+    };
+    if let Ok(Some(cached)) = state.content.get_creator(&srv, &id) {
+        if !cached.name.is_empty() && cached.name != id {
+            item.name = Some(cached.name.clone());
+            creator.name = cached.name;
+        }
+        creator.avatar_url = cached.avatar_url;
+        creator.avatar_path = cached.avatar_path;
+        creator.banner_url = cached.banner_url;
+        creator.banner_path = cached.banner_path;
+        creator.page_url = cached.page_url;
+    }
+    state.provider_manager.enrich_creator(&mut creator).await;
+    if (item.name.is_none() || item.name.as_deref() == Some(&item.id))
+        && creator.name != id
+        && !creator.name.is_empty()
+    {
+        item.name = Some(creator.name);
+    }
+    if let Some(av) = creator.avatar_url {
+        item.extra
+            .insert("avatar_url".to_string(), serde_json::Value::String(av));
+    }
+    if let Some(av_path) = creator.avatar_path {
+        item.extra.insert(
+            "avatar_path".to_string(),
+            serde_json::Value::String(av_path),
+        );
+    }
+    if let Some(bn) = creator.banner_url {
+        item.extra
+            .insert("banner_url".to_string(), serde_json::Value::String(bn));
+    }
+    if let Some(bn_path) = creator.banner_path {
+        item.extra.insert(
+            "banner_path".to_string(),
+            serde_json::Value::String(bn_path),
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn fetch_account_favorites(
     favorite_type: Option<String>,
@@ -1453,8 +1516,13 @@ pub async fn fetch_account_favorites(
                             extra.remove(*k);
                         }
                         let existing = state.content.get_creator(srv, &fav.id).ok().flatten();
-                        if existing.is_none() || resolved_name.is_some() {
-                            let profile = CreatorProfile {
+                        let mut profile = if let Some(mut prev) = existing {
+                            if let Some(ref n) = resolved_name {
+                                prev.name = n.clone();
+                            }
+                            prev
+                        } else {
+                            CreatorProfile {
                                 id: fav.id.clone(),
                                 name: name_to_save,
                                 service: srv.to_string(),
@@ -1470,9 +1538,13 @@ pub async fn fetch_account_favorites(
                                 banner_path: None,
                                 page_url: None,
                                 extra,
-                            };
-                            let _ = state.content.save_creator(&profile);
-                        }
+                            }
+                        };
+                        state
+                            .provider_manager
+                            .enrich_creator_profile(&mut profile)
+                            .await;
+                        let _ = state.content.save_creator(&profile);
                         let _ = state
                             .content
                             .set_pin("creator", srv, &fav.id, None, "favorite", &account, true);
@@ -1506,14 +1578,8 @@ pub async fn fetch_account_favorites(
                             item.name = local_entry.name.clone();
                         }
                     }
-                    if kind == "artist"
-                        && (item.name.is_none() || item.name.as_deref() == Some(&item.id))
-                    {
-                        if let Ok(Some(cached)) = state.content.get_creator(&srv, &id) {
-                            if !cached.name.is_empty() && cached.name != id {
-                                item.name = Some(cached.name);
-                            }
-                        }
+                    if kind == "artist" {
+                        enrich_favorite_artist(&state, &mut item).await;
                     } else if kind == "post" {
                         let user_id = item
                             .extra
@@ -1589,7 +1655,11 @@ pub async fn fetch_account_favorites(
             if settings.persist_in_app_favorites_locally || kind == "post" {
                 for (key, loc) in &local_map {
                     if seen_keys.insert((key.0.clone(), key.1.clone())) {
-                        merged.push(loc.clone());
+                        let mut loc_item = loc.clone();
+                        if kind == "artist" {
+                            enrich_favorite_artist(&state, &mut loc_item).await;
+                        }
+                        merged.push(loc_item);
                     }
                 }
             } else {
@@ -1618,6 +1688,9 @@ pub async fn fetch_account_favorites(
     for (idx, item) in ordered_locals.iter_mut().enumerate() {
         if item.faved_seq.is_none() {
             item.faved_seq = Some(count - idx as i64);
+        }
+        if kind == "artist" {
+            enrich_favorite_artist(&state, item).await;
         }
     }
 
