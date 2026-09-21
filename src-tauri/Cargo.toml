@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.9.1-18"
+version = "26.9.1"
 description = "A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more."
 authors = ["nichind"]
 license = "GPL-3.0-or-later"
