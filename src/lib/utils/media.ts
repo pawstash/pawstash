@@ -130,6 +130,7 @@ export function resolveLocalMediaUrl(path?: string | null): string | undefined {
     const clean = norm.startsWith('/') ? norm.slice(1) : norm;
     return serverPortState.mediaUrl(`/media/${encodeURI(clean)}`);
   }
+  if (!serverPortState.settled) return undefined;
   try {
     return convertFileSrc(path);
   } catch {
@@ -544,7 +545,17 @@ export function isDocumentUrl(url: string | null): boolean {
   return /\.(epub|pdf|txt)(?:$|\?)/i.test(url);
 }
 
+const postFormatsCache = new WeakMap<Post, string[]>();
+
 export function getPostFormats(post: Post): string[] {
+  const cached = postFormatsCache.get(post);
+  if (cached) return cached;
+  const formats = computePostFormats(post);
+  postFormatsCache.set(post, formats);
+  return formats;
+}
+
+function computePostFormats(post: Post): string[] {
   const p = post;
   const allFiles: string[] = [];
   if (p.file?.path) allFiles.push(p.file.path.toLowerCase());
@@ -1043,7 +1054,6 @@ export function diagnoseVideoFailure(
           message: mediaErr.message || undefined
         };
       }
-      // Browser error 4 is ambiguous remotely, so report it as source unavailability.
       return {
         preset: 'unavailable',
         message: mediaErr.message || undefined

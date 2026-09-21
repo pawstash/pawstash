@@ -38,7 +38,7 @@ impl Aria2cManager {
 
         let mut cmd = tokio::process::Command::new(aria2_path);
         #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(0x08000000);
         let connections = task.connections.clamp(1, 32).to_string();
         let rpc_listener = std::net::TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| DownloadRunError::Failed(error.to_string()))?;

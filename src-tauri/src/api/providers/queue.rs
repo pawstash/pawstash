@@ -45,8 +45,20 @@ impl ProviderQueueConfig {
 
 #[derive(Debug)]
 struct QueueGate {
-    last_request_at: Option<Instant>,
+    tokens: f64,
+    last_refill_at: Option<Instant>,
     cooldown_until: Option<Instant>,
+}
+
+impl QueueGate {
+    fn refill(&mut self, now: Instant, rate_per_second: f64, capacity: f64) {
+        let elapsed = match self.last_refill_at {
+            Some(previous) => now.saturating_duration_since(previous).as_secs_f64(),
+            None => capacity / rate_per_second.max(f64::MIN_POSITIVE),
+        };
+        self.last_refill_at = Some(now);
+        self.tokens = (self.tokens + elapsed * rate_per_second).min(capacity);
+    }
 }
 
 pub struct ProviderRequestQueue {
@@ -54,19 +66,30 @@ pub struct ProviderRequestQueue {
     config: ProviderQueueConfig,
     semaphore: Arc<Semaphore>,
     gate: Arc<Mutex<QueueGate>>,
+    rate_per_second: f64,
+    burst_capacity: f64,
 }
 
 impl ProviderRequestQueue {
     pub fn new(provider_id: impl Into<String>, config: ProviderQueueConfig) -> Self {
         let max_concurrent = config.max_concurrent.max(1);
+        let interval = config.min_interval.as_secs_f64();
+        let rate_per_second = if interval > 0.0 {
+            1.0 / interval
+        } else {
+            f64::INFINITY
+        };
         Self {
             provider_id: provider_id.into(),
             config,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             gate: Arc::new(Mutex::new(QueueGate {
-                last_request_at: None,
+                tokens: max_concurrent as f64,
+                last_refill_at: None,
                 cooldown_until: None,
             })),
+            rate_per_second,
+            burst_capacity: max_concurrent as f64,
         }
     }
 
@@ -180,28 +203,10 @@ impl ProviderRequestQueue {
                         Some(cooldown - now)
                     } else {
                         gate.cooldown_until = None;
-                        if let Some(last) = gate.last_request_at {
-                            if now < last + self.config.min_interval {
-                                Some((last + self.config.min_interval) - now)
-                            } else {
-                                gate.last_request_at = Some(now);
-                                None
-                            }
-                        } else {
-                            gate.last_request_at = Some(now);
-                            None
-                        }
-                    }
-                } else if let Some(last) = gate.last_request_at {
-                    if now < last + self.config.min_interval {
-                        Some((last + self.config.min_interval) - now)
-                    } else {
-                        gate.last_request_at = Some(now);
-                        None
+                        self.take_token(&mut gate, now)
                     }
                 } else {
-                    gate.last_request_at = Some(now);
-                    None
+                    self.take_token(&mut gate, now)
                 }
             };
 
@@ -211,6 +216,21 @@ impl ProviderRequestQueue {
                 break;
             }
         }
+    }
+
+    fn take_token(&self, gate: &mut QueueGate, now: Instant) -> Option<Duration> {
+        if !self.rate_per_second.is_finite() {
+            return None;
+        }
+
+        gate.refill(now, self.rate_per_second, self.burst_capacity);
+        if gate.tokens >= 1.0 {
+            gate.tokens -= 1.0;
+            return None;
+        }
+
+        let deficit = 1.0 - gate.tokens;
+        Some(Duration::from_secs_f64(deficit / self.rate_per_second))
     }
 
     fn calculate_cooldown(&self, resp: &Response, attempt: usize) -> Duration {
@@ -310,6 +330,48 @@ mod tests {
         let start = Instant::now();
         q_pawchive.wait_for_slot().await;
         assert!(start.elapsed() < Duration::from_millis(20));
+    }
+
+    #[tokio::test]
+    async fn test_queue_allows_a_burst_then_throttles_to_the_configured_rate() {
+        let config = ProviderQueueConfig {
+            max_concurrent: 3,
+            min_interval: Duration::from_millis(100),
+            ..ProviderQueueConfig::default()
+        };
+        let queue = ProviderRequestQueue::new("burst", config);
+
+        let start = Instant::now();
+        for _ in 0..3 {
+            queue.wait_for_slot().await;
+        }
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "initial burst was throttled: {:?}",
+            start.elapsed()
+        );
+
+        let throttled = Instant::now();
+        queue.wait_for_slot().await;
+        assert!(
+            throttled.elapsed() >= Duration::from_millis(80),
+            "sustained rate was not enforced: {:?}",
+            throttled.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_still_blocks_before_tokens_are_spent() {
+        let queue = ProviderRequestQueue::new("cooldown", ProviderQueueConfig::default());
+        queue.set_cooldown(Duration::from_millis(120)).await;
+
+        let start = Instant::now();
+        queue.wait_for_slot().await;
+        assert!(
+            start.elapsed() >= Duration::from_millis(100),
+            "cooldown was not honoured: {:?}",
+            start.elapsed()
+        );
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ import { logger } from '$lib/utils/logger';
 import { creatorsState } from '$lib/state/creatorsState.svelte';
 
 const PAGE_SIZE = 50;
+const MAX_PREFETCH_PAGES = 3;
 
 export interface CachedPost {
   post: Post | null;
@@ -168,9 +169,7 @@ export class ContentState {
             error: null
           };
         }
-      } catch {
-        // ignore fast-path probe failure
-      }
+      } catch {}
     }
 
     const currentEntry = this.posts[key] ?? entry;
@@ -473,8 +472,9 @@ export class ContentState {
     this.creatorFetchTokens.set(key, token);
 
     let consecutiveErrors = 0;
+    let pagesFetched = 0;
 
-    while (true) {
+    while (pagesFetched < MAX_PREFETCH_PAGES) {
       if (this.creatorFetchTokens.get(key) !== token) {
         break;
       }
@@ -503,8 +503,10 @@ export class ContentState {
         }
 
         consecutiveErrors = 0;
+        pagesFetched++;
         const cur = this.creators[key] ?? curEntry;
         const hasMore = posts.length >= PAGE_SIZE;
+        const willPrefetchMore = hasMore && pagesFetched < MAX_PREFETCH_PAGES;
 
         const existingIds = new Set(cur.posts.map((p) => p.id));
         const newPosts = posts.filter((p) => !existingIds.has(p.id));
@@ -514,10 +516,10 @@ export class ContentState {
           posts: [...cur.posts, ...newPosts],
           offset: cur.offset + PAGE_SIZE,
           hasMore,
-          loadingMore: hasMore
+          loadingMore: willPrefetchMore
         };
 
-        if (!hasMore || posts.length === 0) {
+        if (!willPrefetchMore || posts.length === 0) {
           this.creators[key] = { ...this.creators[key], loadingMore: false };
           break;
         }

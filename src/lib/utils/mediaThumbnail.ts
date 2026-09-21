@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { playbackState } from '$lib/state/playbackState.svelte';
+import { serverPortState } from '$lib/state/serverPort.svelte';
 import { logger } from '$lib/utils/logger';
 
 const thumbnailMemoryCache = new Map<string, string>();
@@ -12,11 +13,14 @@ interface QueueItem {
   url: string;
   kind: 'image' | 'video';
   maxWidth: number;
+  cancelled: boolean;
   resolve: (val: string | undefined) => void;
 }
+const MAX_CONCURRENT_EXTRACTIONS = 3;
 
 const queue: QueueItem[] = [];
-let isProcessing = false;
+const queuedByKey = new Map<string, QueueItem>();
+let activeExtractions = 0;
 
 function detectKindFromUrl(url: string): 'image' | 'video' {
   const clean = url.split('?')[0].split('#')[0].toLowerCase();
@@ -25,40 +29,78 @@ function detectKindFromUrl(url: string): 'image' | 'video' {
   }
   return 'image';
 }
+function isLocalMediaUrl(url: string): boolean {
+  return url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:');
+}
+function shouldGenerate(kind: 'image' | 'video', url: string): boolean {
+  return kind === 'video' || isLocalMediaUrl(url);
+}
 
-async function processQueue() {
-  if (isProcessing || queue.length === 0) return;
-  isProcessing = true;
-
-  const item = queue.shift();
-  if (!item) {
-    isProcessing = false;
-    return;
-  }
-
-  try {
-    const dataUrl = item.kind === 'video'
-      ? await extractVideoThumbnail(item.url, item.key, item.maxWidth)
-      : await extractImageThumbnail(item.url, item.maxWidth);
-
-    if (dataUrl) {
-      thumbnailMemoryCache.set(item.key, dataUrl);
-      try {
-        await invoke('store_video_thumbnail', { key: item.key, dataUrl });
-      } catch (err) {
-        logger.warn('Failed to persist thumbnail to backend', { key: item.key, error: err });
-      }
-      item.resolve(dataUrl);
-    } else {
+function dequeueNext(): QueueItem | undefined {
+  while (queue.length > 0) {
+    const item = queue.pop()!;
+    queuedByKey.delete(item.key);
+    if (item.cancelled) {
       item.resolve(undefined);
+      continue;
     }
+    return item;
+  }
+  return undefined;
+}
+
+function pumpQueue() {
+  while (activeExtractions < MAX_CONCURRENT_EXTRACTIONS) {
+    const item = dequeueNext();
+    if (!item) return;
+
+    activeExtractions++;
+    void runExtraction(item).finally(() => {
+      activeExtractions--;
+      pumpQueue();
+    });
+  }
+}
+
+async function runExtraction(item: QueueItem) {
+  try {
+    const dataUrl =
+      item.kind === 'video'
+        ? await extractVideoThumbnail(item.url, item.key, item.maxWidth)
+        : await extractImageThumbnail(item.url, item.maxWidth);
+
+    if (!dataUrl) {
+      item.resolve(undefined);
+      return;
+    }
+
+    let resolved = dataUrl;
+    try {
+      const storedPath = await invoke<string>('store_video_thumbnail', {
+        key: item.key,
+        dataUrl
+      });
+      const served = storedPath ? mediaServerUrl(storedPath) : undefined;
+      if (served) resolved = served;
+    } catch (err) {
+      logger.warn('Failed to persist thumbnail to backend', { key: item.key, error: err });
+    }
+
+    thumbnailMemoryCache.set(item.key, resolved);
+    item.resolve(resolved);
   } catch (err) {
     logger.warn('Thumbnail extraction exception', { key: item.key, error: err });
     item.resolve(undefined);
-  } finally {
-    isProcessing = false;
-    setTimeout(processQueue, 16);
   }
+}
+
+function mediaServerUrl(path: string): string | undefined {
+  if (!path) return undefined;
+  const port = serverPortState.port || 0;
+  if (port <= 0) return undefined;
+  const normalized = path.replace(/\\/g, '/');
+  const clean = normalized.startsWith('/') ? normalized.slice(1) : normalized;
+  return serverPortState.mediaUrl(`/media/${encodeURI(clean)}`) || undefined;
 }
 
 function extractImageThumbnail(imageUrl: string, maxWidth = 360): Promise<string | undefined> {
@@ -132,7 +174,7 @@ function extractVideoThumbnail(videoUrl: string, key?: string, maxWidth = 360): 
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
-    video.preload = 'auto';
+    video.preload = 'metadata';
     video.crossOrigin = 'anonymous';
 
     let isResolved = false;
@@ -219,6 +261,10 @@ function extractVideoThumbnail(videoUrl: string, key?: string, maxWidth = 360): 
     video.src = videoUrl;
   });
 }
+export function cancelMediaThumbnail(key: string) {
+  const queued = queuedByKey.get(key);
+  if (queued) queued.cancelled = true;
+}
 
 export async function getMediaThumbnail(
   key: string,
@@ -232,32 +278,47 @@ export async function getMediaThumbnail(
     return thumbnailMemoryCache.get(key);
   }
 
+  const queued = queuedByKey.get(key);
+  if (queued) queued.cancelled = false;
+
   if (pendingRequests.has(key)) {
     return pendingRequests.get(key);
   }
 
   const promise = (async () => {
     try {
-      const cached = await invoke<string | null>('get_video_thumbnail', { key });
-      if (cached) {
-        thumbnailMemoryCache.set(key, cached);
-        return cached;
+      const cachedPath = await invoke<string | null>('get_thumbnail_path', { key });
+      const served = cachedPath ? mediaServerUrl(cachedPath) : undefined;
+      if (served) {
+        thumbnailMemoryCache.set(key, served);
+        return served;
+      }
+      if (cachedPath) {
+        const cached = await invoke<string | null>('get_video_thumbnail', { key });
+        if (cached) {
+          thumbnailMemoryCache.set(key, cached);
+          return cached;
+        }
       }
     } catch {}
 
     if (!url) return undefined;
 
     const resolvedKind = kind === 'auto' ? detectKindFromUrl(url) : kind;
+    if (!shouldGenerate(resolvedKind, url)) return undefined;
 
     return new Promise<string | undefined>((resolve) => {
-      queue.push({
+      const item: QueueItem = {
         key,
         url,
         kind: resolvedKind,
         maxWidth,
+        cancelled: false,
         resolve
-      });
-      processQueue();
+      };
+      queue.push(item);
+      queuedByKey.set(key, item);
+      pumpQueue();
     });
   })();
 

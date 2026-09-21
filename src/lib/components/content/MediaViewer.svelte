@@ -308,7 +308,6 @@
     const ratio = (item.width && item.height)
       ? (item.width / item.height)
       : (aspectRatios[itemIndex] ?? 1);
-    // Clamp between 0.4 (tall portrait) and 2.4 (panoramic landscape)
     const clamped = Math.max(0.4, Math.min(2.4, ratio));
     return `${clamped} / 1`;
   }
@@ -457,7 +456,6 @@
       index = (index + direction + items.length) % items.length;
       resetTransform();
 
-      // Instantly position incoming item at opposite edge
       isSwiping = true;
       slidePhase = 'idle';
       swipeOffset = direction === 1 ? enterDist : -enterDist;
@@ -581,7 +579,6 @@
   function handlePointerDown(event: PointerEvent) {
     if (controlsVisible) registerActivity();
     const target = event.target as HTMLElement;
-    // Don't intercept clicks on buttons or interactive media controls
     if (target.closest('button, input, select, audio, .media-viewer-controls')) return;
 
     pointers.set(event.pointerId, {
@@ -628,7 +625,6 @@
       const totalDeltaX = event.clientX - previous.startX;
       const totalDeltaY = event.clientY - previous.startY;
 
-      // Detect vertical swipe gesture to dismiss (up or down with single pointer)
       if (pointers.size === 1 && Math.abs(totalDeltaY) > 8 && Math.abs(totalDeltaY) > Math.abs(totalDeltaX) * 1.1) {
         dismissOffsetY = totalDeltaY;
         swipeOffset = 0;

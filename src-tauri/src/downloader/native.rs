@@ -4,11 +4,19 @@ use crate::downloader::{DownloadControl, DownloadRunError, DownloadTask, Interru
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_RANGE, RANGE};
 use reqwest::{Client, Response, StatusCode};
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::Emitter;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
+
+static CLIENT_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Client>>> = OnceLock::new();
+
+const PROGRESS_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const NOTIFICATION_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2500);
+const PROBE_CONCURRENCY: usize = 8;
 
 pub struct NativeDownloader;
 
@@ -40,7 +48,7 @@ impl NativeDownloader {
             if let Ok(response) = client
                 .head(&target_url)
                 .headers(headers)
-                .timeout(std::time::Duration::from_secs(4))
+                .timeout(PROBE_TIMEOUT)
                 .send()
                 .await
             {
@@ -56,7 +64,7 @@ impl NativeDownloader {
             if let Ok(response) = client
                 .get(&target_url)
                 .headers(headers)
-                .timeout(std::time::Duration::from_secs(4))
+                .timeout(PROBE_TIMEOUT)
                 .send()
                 .await
             {
@@ -85,7 +93,7 @@ impl NativeDownloader {
             if let Ok(response) = client
                 .get(&target_url)
                 .headers(headers)
-                .timeout(std::time::Duration::from_secs(4))
+                .timeout(PROBE_TIMEOUT)
                 .send()
                 .await
             {
@@ -135,7 +143,7 @@ impl NativeDownloader {
         };
 
         let session_cookie = task_template.session_cookie.clone();
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(PROBE_CONCURRENCY));
         let mut set = tokio::task::JoinSet::new();
 
         for url in urls {
@@ -222,10 +230,8 @@ impl NativeDownloader {
         let mut downloaded = existing_len;
         let mut checkpoint_bytes = existing_len;
         let mut checkpoint_time = std::time::Instant::now();
+        let mut notify_time = std::time::Instant::now();
 
-        // Publish the confirmed response size before reading the body so the UI
-        // starts at the real initial position instead of learning the total at
-        // the last checkpoint.
         if let Ok(job) = repository.update_progress(&task.id, downloaded, total_size, 0) {
             let _ = app_handle.emit("download-job-updated", job);
         }
@@ -246,21 +252,43 @@ impl NativeDownloader {
                 .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
             downloaded += chunk.len() as u64;
 
-            if checkpoint_time.elapsed() >= std::time::Duration::from_millis(100) {
+            if checkpoint_time.elapsed() >= PROGRESS_FLUSH_INTERVAL {
                 let elapsed = checkpoint_time.elapsed().as_secs_f64().max(0.001);
                 let speed = ((downloaded - checkpoint_bytes) as f64 / elapsed) as u64;
                 checkpoint_bytes = downloaded;
                 checkpoint_time = std::time::Instant::now();
-                if let Ok(job) = repository.update_progress(&task.id, downloaded, total_size, speed)
-                {
-                    let _ = app_handle.emit("download-job-updated", job);
-                    if let Ok((
+
+                let want_stats = notify_time.elapsed() >= NOTIFICATION_INTERVAL;
+                if want_stats {
+                    notify_time = std::time::Instant::now();
+                }
+
+                let repo = Arc::clone(&repository);
+                let job_id = task.id.clone();
+                let flushed = tokio::task::spawn_blocking(move || {
+                    let job = repo
+                        .update_progress(&job_id, downloaded, total_size, speed)
+                        .ok();
+                    let stats = if want_stats && job.is_some() {
+                        repo.queue_progress_stats().ok()
+                    } else {
+                        None
+                    };
+                    (job, stats)
+                })
+                .await;
+
+                if let Ok((job, stats)) = flushed {
+                    if let Some(job) = job {
+                        let _ = app_handle.emit("download-job-updated", job);
+                    }
+                    if let Some((
                         active,
                         total_queued,
                         downloaded_total,
                         expected_total,
                         speed_total,
-                    )) = repository.queue_progress_stats()
+                    )) = stats
                     {
                         crate::downloader::notifications::update_download_notification(
                             active,
@@ -297,14 +325,35 @@ impl NativeDownloader {
             || task.url.starts_with("https://127.0.0.1")
             || task.url.starts_with("https://localhost")
             || task.url.starts_with("https://[::1]");
-        let mut builder = Client::builder()
+
+        let proxied =
+            matches!(task.proxy_mode, ProxyMode::Custom) && !(task.proxy_bypass_local && is_local);
+        let cache_key = match task.proxy_mode {
+            ProxyMode::None => "none".to_string(),
+            ProxyMode::System => "system".to_string(),
+            ProxyMode::Custom if proxied => format!(
+                "custom\u{1}{}\u{1}{}\u{1}{}",
+                task.proxy_url.trim(),
+                task.proxy_username,
+                task.proxy_password
+            ),
+            ProxyMode::Custom => "custom-direct".to_string(),
+        };
+
+        let cache = CLIENT_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        if let Ok(guard) = cache.lock() {
+            if let Some(client) = guard.get(&cache_key) {
+                return Ok(client.clone());
+            }
+        }
+
+        let mut builder = crate::net::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .pool_idle_timeout(std::time::Duration::from_secs(30));
+            .redirect(reqwest::redirect::Policy::limited(10));
         match task.proxy_mode {
             ProxyMode::None => builder = builder.no_proxy(),
             ProxyMode::System => {}
-            ProxyMode::Custom if !(task.proxy_bypass_local && is_local) => {
+            ProxyMode::Custom if proxied => {
                 if task.proxy_url.trim().is_empty() {
                     return Err(DownloadRunError::Failed(
                         "Custom proxy URL is required".to_string(),
@@ -320,9 +369,22 @@ impl NativeDownloader {
             }
             ProxyMode::Custom => builder = builder.no_proxy(),
         }
-        builder
+        let client = builder
             .build()
-            .map_err(|error| DownloadRunError::Failed(error.to_string()))
+            .map_err(|error| DownloadRunError::Failed(error.to_string()))?;
+
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(cache_key, client.clone());
+        }
+        Ok(client)
+    }
+
+    pub fn reset_client_cache() {
+        if let Some(cache) = CLIENT_CACHE.get() {
+            if let Ok(mut guard) = cache.lock() {
+                guard.clear();
+            }
+        }
     }
 
     async fn request(

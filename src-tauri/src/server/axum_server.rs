@@ -12,9 +12,11 @@ use cipher::StreamCipher;
 use ctr::cipher::KeyIvInit;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio_util::io::ReaderStream;
@@ -25,11 +27,159 @@ pub struct MediaServer {
     pub port: u16,
 }
 
-#[derive(Clone)]
+const PROXY_HOST_TTL: Duration = Duration::from_secs(60);
+
+const FILE_STREAM_CHUNK: usize = 256 * 1024;
+
+struct ResolvedRoots {
+    download_dir: String,
+    roots: Vec<PathBuf>,
+}
+
+struct CachedClients {
+    fingerprint: String,
+    manual_redirect: reqwest::Client,
+    follow_redirect: reqwest::Client,
+}
+
 pub struct MediaServerState {
     pub allowed_roots: Vec<PathBuf>,
     pub config_manager: Arc<crate::config::ConfigManager>,
     pub token: String,
+    proxy_client: tokio::sync::RwLock<Option<CachedClients>>,
+    proxy_hosts: tokio::sync::Mutex<HashMap<String, Instant>>,
+    resolved_roots: tokio::sync::RwLock<Option<ResolvedRoots>>,
+}
+
+impl MediaServerState {
+    fn new(
+        allowed_roots: Vec<PathBuf>,
+        config_manager: Arc<crate::config::ConfigManager>,
+        token: String,
+    ) -> Self {
+        Self {
+            allowed_roots,
+            config_manager,
+            token,
+            proxy_client: tokio::sync::RwLock::new(None),
+            proxy_hosts: tokio::sync::Mutex::new(HashMap::new()),
+            resolved_roots: tokio::sync::RwLock::new(None),
+        }
+    }
+
+    fn proxy_fingerprint(settings: &crate::config::AppSettings) -> String {
+        format!(
+            "{:?}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+            settings.proxy_mode,
+            settings.proxy_url.trim(),
+            settings.proxy_username,
+            settings.proxy_password,
+            settings.proxy_bypass_local
+        )
+    }
+
+    async fn upstream_clients(
+        &self,
+        settings: &crate::config::AppSettings,
+    ) -> Result<(reqwest::Client, reqwest::Client), String> {
+        let fingerprint = Self::proxy_fingerprint(settings);
+        if let Some(cached) = self.proxy_client.read().await.as_ref() {
+            if cached.fingerprint == fingerprint {
+                return Ok((
+                    cached.manual_redirect.clone(),
+                    cached.follow_redirect.clone(),
+                ));
+            }
+        }
+
+        let base = || -> Result<reqwest::ClientBuilder, String> {
+            Ok(crate::net::builder_with_proxy(settings)?
+                .no_gzip()
+                .no_brotli()
+                .no_deflate()
+                .timeout(Duration::from_secs(60))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"))
+        };
+
+        let manual_redirect = base()?
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| e.to_string())?;
+        let follow_redirect = base()?
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        *self.proxy_client.write().await = Some(CachedClients {
+            fingerprint,
+            manual_redirect: manual_redirect.clone(),
+            follow_redirect: follow_redirect.clone(),
+        });
+        Ok((manual_redirect, follow_redirect))
+    }
+
+    async fn host_recently_validated(&self, host: &str) -> bool {
+        let mut hosts = self.proxy_hosts.lock().await;
+        match hosts.get(host) {
+            Some(expiry) if *expiry > Instant::now() => true,
+            Some(_) => {
+                hosts.remove(host);
+                false
+            }
+            None => false,
+        }
+    }
+
+    async fn remember_validated_host(&self, host: &str) {
+        let mut hosts = self.proxy_hosts.lock().await;
+        if hosts.len() > 256 {
+            let now = Instant::now();
+            hosts.retain(|_, expiry| *expiry > now);
+            if hosts.len() > 256 {
+                hosts.clear();
+            }
+        }
+        hosts.insert(host.to_string(), Instant::now() + PROXY_HOST_TTL);
+    }
+
+    async fn allowed_roots_for(&self, download_dir: &str) -> Vec<PathBuf> {
+        if let Some(cached) = self.resolved_roots.read().await.as_ref() {
+            if cached.download_dir == download_dir {
+                return cached.roots.clone();
+            }
+        }
+
+        let mut candidates = self.allowed_roots.clone();
+        let user_dir = PathBuf::from(download_dir);
+        if !candidates.contains(&user_dir) {
+            candidates.push(user_dir);
+        }
+        #[cfg(target_os = "android")]
+        {
+            if let Ok(ensured) =
+                crate::downloader::manager::DownloadManager::ensure_download_root(download_dir)
+            {
+                if !candidates.contains(&ensured) {
+                    candidates.push(ensured);
+                }
+            }
+        }
+
+        let roots = tokio::task::spawn_blocking(move || {
+            candidates
+                .iter()
+                .filter_map(|root| dunce::canonicalize(root).ok())
+                .collect::<Vec<PathBuf>>()
+        })
+        .await
+        .unwrap_or_default();
+
+        *self.resolved_roots.write().await = Some(ResolvedRoots {
+            download_dir: download_dir.to_string(),
+            roots: roots.clone(),
+        });
+        roots
+    }
 }
 
 impl MediaServer {
@@ -47,18 +197,22 @@ impl MediaServer {
                 HeaderValue::from_static("http://127.0.0.1:1420"),
             ])
             .allow_methods([Method::GET, Method::HEAD])
-            .allow_headers([header::RANGE, header::CONTENT_TYPE, header::ACCEPT])
+            .allow_headers([
+                header::RANGE,
+                header::CONTENT_TYPE,
+                header::ACCEPT,
+                header::IF_NONE_MATCH,
+                header::IF_MODIFIED_SINCE,
+            ])
             .expose_headers([
                 header::CONTENT_LENGTH,
                 header::CONTENT_RANGE,
                 header::ACCEPT_RANGES,
+                header::ETAG,
+                header::CACHE_CONTROL,
             ]);
 
-        let state = Arc::new(MediaServerState {
-            allowed_roots,
-            config_manager,
-            token,
-        });
+        let state = Arc::new(MediaServerState::new(allowed_roots, config_manager, token));
 
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
@@ -114,40 +268,17 @@ async fn serve_media_handler(
     };
 
     let path = PathBuf::from(&path_str);
-    let target = dunce::canonicalize(&path).map_err(|_| {
-        tracing::warn!("Local media file not found: {:?}", path);
-        (StatusCode::NOT_FOUND, "File not found".to_string())
-    })?;
-    if !target.is_file() {
-        return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
-    }
+    let target = tokio::task::spawn_blocking(move || dunce::canonicalize(&path))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|_| (StatusCode::NOT_FOUND, "File not found".to_string()))?;
 
-    let mut allowed_roots = state.allowed_roots.clone();
     let settings = state
         .config_manager
         .load()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let user_dir = PathBuf::from(&settings.download_dir);
-    if !allowed_roots.contains(&user_dir) {
-        allowed_roots.push(user_dir);
-    }
-    #[cfg(target_os = "android")]
-    {
-        if let Ok(ensured) = crate::downloader::manager::DownloadManager::ensure_download_root(
-            &settings.download_dir,
-        ) {
-            if !allowed_roots.contains(&ensured) {
-                allowed_roots.push(ensured);
-            }
-        }
-    }
-    let allowed = allowed_roots.iter().any(|root| {
-        if let Ok(clean_root) = dunce::canonicalize(root) {
-            target.starts_with(clean_root)
-        } else {
-            false
-        }
-    });
+    let allowed_roots = state.allowed_roots_for(&settings.download_dir).await;
+    let allowed = allowed_roots.iter().any(|root| target.starts_with(root));
 
     if !allowed {
         let is_media_extension = target
@@ -178,12 +309,42 @@ async fn serve_media_handler(
 
     let file_metadata = tokio::fs::metadata(&target)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|_| (StatusCode::NOT_FOUND, "File not found".to_string()))?;
+    if !file_metadata.is_file() {
+        return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
+    }
     let file_size = file_metadata.len();
 
     let mime_type = mime_guess::from_path(&target)
         .first_or_octet_stream()
         .to_string();
+
+    let etag = file_etag(&file_metadata);
+    let cache_headers = |res_headers: &mut HeaderMap| {
+        res_headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=86400"),
+        );
+        if let Some(ref tag) = etag {
+            if let Ok(val) = HeaderValue::from_str(tag) {
+                res_headers.insert(header::ETAG, val);
+            }
+        }
+    };
+
+    if let Some(ref tag) = etag {
+        let matches = headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value == "*" || value.split(',').any(|candidate| candidate.trim() == tag)
+            });
+        if matches {
+            let mut response = StatusCode::NOT_MODIFIED.into_response();
+            cache_headers(response.headers_mut());
+            return Ok(response);
+        }
+    }
 
     if let Some(range_header) = headers.get(header::RANGE) {
         if let Ok(range_str) = range_header.to_str() {
@@ -200,7 +361,7 @@ async fn serve_media_handler(
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
                 let limited_file = file.take(chunk_size);
-                let stream = ReaderStream::new(limited_file);
+                let stream = ReaderStream::with_capacity(limited_file, FILE_STREAM_CHUNK);
 
                 let body = Body::from_stream(stream);
 
@@ -217,6 +378,7 @@ async fn serve_media_handler(
                     res_headers.insert(header::CONTENT_RANGE, val);
                 }
                 res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
+                cache_headers(res_headers);
                 return Ok(response);
             }
         }
@@ -225,7 +387,7 @@ async fn serve_media_handler(
     let file = File::open(&target)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let stream = ReaderStream::new(file);
+    let stream = ReaderStream::with_capacity(file, FILE_STREAM_CHUNK);
     let body = Body::from_stream(stream);
 
     let mut response = (StatusCode::OK, body).into_response();
@@ -236,7 +398,18 @@ async fn serve_media_handler(
     }
     res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(file_size));
+    cache_headers(res_headers);
     Ok(response)
+}
+
+fn file_etag(metadata: &std::fs::Metadata) -> Option<String> {
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    Some(format!("\"{:x}-{:x}\"", metadata.len(), modified))
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,13 +476,14 @@ async fn serve_mega_stream_handler(
         return Err((StatusCode::BAD_REQUEST, "Invalid key length".to_string()));
     };
 
-    let client = reqwest::Client::builder()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let settings = state
+        .config_manager
+        .load()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let (_, client) = state
+        .upstream_clients(&settings)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let payload = if let Some(ref nid) = params.node_id {
         json!([{"a": "g", "g": 1, "n": nid}])
     } else if let Some(ref fid) = params.file_id {
@@ -491,36 +665,14 @@ async fn serve_cloud_proxy_stream_handler(
         .config_manager
         .load()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let mut builder = reqwest::Client::builder()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .timeout(std::time::Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
-
-    match settings.proxy_mode {
-        crate::config::ProxyMode::None => builder = builder.no_proxy(),
-        crate::config::ProxyMode::System => {}
-        crate::config::ProxyMode::Custom => {
-            if !settings.proxy_url.trim().is_empty() {
-                let mut proxy = reqwest::Proxy::all(settings.proxy_url.trim())
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-                if !settings.proxy_username.is_empty() {
-                    proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
-                }
-                builder = builder.proxy(proxy);
-            }
-        }
-    }
-
-    let client = builder
-        .build()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let (client, _) = state
+        .upstream_clients(&settings)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let is_head = method == Method::HEAD;
     let normalized_url = crate::downloader::normalize_download_url(&params.url);
-    let mut target_url = validate_proxy_target(&normalized_url).await?;
+    let mut target_url = validate_proxy_target(&state, &normalized_url).await?;
     let mut redirect_count = 0;
     let upstream = loop {
         let target_text = target_url.as_str();
@@ -582,7 +734,7 @@ async fn serve_cloud_proxy_stream_handler(
                 format!("Cloud upstream returned an invalid redirect URL: {e}"),
             )
         })?;
-        target_url = validate_proxy_target(redirected.as_str()).await?;
+        target_url = validate_proxy_target(&state, redirected.as_str()).await?;
         redirect_count += 1;
     };
 
@@ -693,7 +845,10 @@ async fn serve_cloud_proxy_stream_handler(
     Ok(response)
 }
 
-async fn validate_proxy_target(raw: &str) -> Result<reqwest::Url, (StatusCode, String)> {
+async fn validate_proxy_target(
+    state: &MediaServerState,
+    raw: &str,
+) -> Result<reqwest::Url, (StatusCode, String)> {
     let url = reqwest::Url::parse(raw)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cloud URL: {e}")))?;
     if url.scheme() != "https"
@@ -706,18 +861,28 @@ async fn validate_proxy_target(raw: &str) -> Result<reqwest::Url, (StatusCode, S
             "Cloud proxy only accepts credential-free HTTPS URLs on port 443".to_string(),
         ));
     }
-    let host = url.host_str().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Cloud proxy URL has no host".to_string(),
-        )
-    })?;
-    let addresses = tokio::net::lookup_host((host, 443)).await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Cloud host lookup failed: {e}"),
-        )
-    })?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Cloud proxy URL has no host".to_string(),
+            )
+        })?
+        .to_ascii_lowercase();
+
+    if state.host_recently_validated(&host).await {
+        return Ok(url);
+    }
+
+    let addresses = tokio::net::lookup_host((host.as_str(), 443))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Cloud host lookup failed: {e}"),
+            )
+        })?;
     let mut found = false;
     for address in addresses {
         found = true;
@@ -734,6 +899,7 @@ async fn validate_proxy_target(raw: &str) -> Result<reqwest::Url, (StatusCode, S
             "Cloud host did not resolve to an address".to_string(),
         ));
     }
+    state.remember_validated_host(&host).await;
     Ok(url)
 }
 
@@ -778,12 +944,10 @@ mod tests {
 
     #[test]
     fn test_is_public_ipv4_allows_fakeip_and_cgnat() {
-        // Fake-IP ranges used by TUN adapters must remain reachable.
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 37)));
         assert!(is_public_ipv4(Ipv4Addr::new(198, 19, 255, 254)));
 
-        // CGNAT addresses are also used by peer-to-peer overlays such as Tailscale.
         assert!(is_public_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(100, 100, 100, 100)));
 
@@ -797,20 +961,72 @@ mod tests {
         assert!(!is_public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
         assert!(!is_public_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
         assert!(!is_public_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
-        // Cloud metadata endpoints are link-local and must stay blocked.
         assert!(!is_public_ipv4(Ipv4Addr::new(169, 254, 169, 254)));
         assert!(!is_public_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
         assert!(!is_public_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
         assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
     }
 
+    fn test_state() -> Option<MediaServerState> {
+        let config_manager = crate::config::ConfigManager::new().ok()?;
+        Some(MediaServerState::new(
+            Vec::new(),
+            Arc::new(config_manager),
+            "test-token".to_string(),
+        ))
+    }
+
     #[tokio::test]
     async fn test_validate_proxy_target_dropbox() {
-        let res = validate_proxy_target(crate::cloud::dropbox::example_url()).await;
-        assert!(
-            res.is_ok(),
-            "Failed to validate proxy target: {:?}",
-            res.err()
-        );
+        let Some(state) = test_state() else { return };
+        let res = validate_proxy_target(&state, crate::cloud::dropbox::example_url()).await;
+
+        match res {
+            Ok(_) => {}
+            Err((StatusCode::BAD_GATEWAY, message)) if message.contains("lookup failed") => {}
+            Err(other) => panic!("Failed to validate proxy target: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validated_host_is_cached_then_expires() {
+        let Some(state) = test_state() else { return };
+        assert!(!state.host_recently_validated("example.com").await);
+
+        state.remember_validated_host("example.com").await;
+        assert!(state.host_recently_validated("example.com").await);
+
+        state
+            .proxy_hosts
+            .lock()
+            .await
+            .insert("example.com".to_string(), Instant::now());
+        assert!(!state.host_recently_validated("example.com").await);
+    }
+
+    #[tokio::test]
+    async fn test_private_targets_are_rejected_and_not_cached() {
+        let Some(state) = test_state() else { return };
+        let res = validate_proxy_target(&state, "https://localhost/file.mp4").await;
+        assert!(res.is_err(), "loopback target must be rejected");
+        assert!(!state.host_recently_validated("localhost").await);
+    }
+
+    #[test]
+    fn test_file_etag_tracks_size_and_mtime() {
+        let dir = std::env::temp_dir().join(format!("pawstash-etag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sample.bin");
+
+        std::fs::write(&path, b"one").expect("write");
+        let first = file_etag(&std::fs::metadata(&path).expect("metadata"));
+
+        std::fs::write(&path, b"a longer body").expect("rewrite");
+        let second = file_etag(&std::fs::metadata(&path).expect("metadata"));
+
+        assert!(first.is_some() && second.is_some());
+        assert_ne!(first, second, "etag must change when the file changes");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

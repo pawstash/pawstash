@@ -51,7 +51,6 @@
       buttonLeft >= currentScroll + edgePadding &&
       buttonLeft + buttonWidth <= currentScroll + containerWidth - edgePadding;
 
-    // During scroll-spy (smooth === false), don't jitter if already comfortably visible
     if (!smooth && isComfortablyVisible) {
       return;
     }

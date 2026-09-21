@@ -36,7 +36,6 @@ pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
     let path = url.path().trim_matches('/');
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    // Format 1: https://mega.nz/folder/{folder_id}#{folder_key}
     if segments.first() == Some(&"folder") {
         let id = segments.get(1)?.to_string();
         let key = fragment.trim().to_string();
@@ -45,7 +44,6 @@ pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
         }
     }
 
-    // Format 2: https://mega.nz/file/{file_id}#{file_key}
     if segments.first() == Some(&"file") {
         let id = segments.get(1)?.to_string();
         let key = fragment.trim().to_string();
@@ -54,7 +52,6 @@ pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
         }
     }
 
-    // Format 3: https://mega.nz/#F!{folder_id}!{folder_key}
     if fragment.starts_with("F!") {
         let parts: Vec<&str> = fragment.split('!').collect();
         if parts.len() >= 3 {
@@ -65,7 +62,6 @@ pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
         }
     }
 
-    // Format 4: https://mega.nz/#!{file_id}!{file_key}
     if fragment.starts_with('!') {
         let parts: Vec<&str> = fragment.split('!').collect();
         if parts.len() >= 3 {
@@ -131,7 +127,7 @@ struct MegaFolderNode {
     #[serde(default)]
     p: Option<String>,
     #[serde(default)]
-    t: i32, // 0 = file, 1 = folder, 2 = root
+    t: i32,
     #[serde(default)]
     a: Option<String>,
     #[serde(default)]
@@ -264,11 +260,9 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                         for k_part in &candidate_keys {
                             if let Ok(k_bytes) = mega_base64_decode(k_part) {
                                 if k_bytes.len() >= 16 {
-                                    // Shared node keys are normally wrapped with AES-128-ECB.
                                     if let Ok(dec_k) = decrypt_aes_ecb(&folder_key, k_bytes.clone())
                                     {
                                         if dec_k.len() >= 16 {
-                                            // File keys combine two 16-byte halves.
                                             let mut test_key = [0u8; 16];
                                             if dec_k.len() >= 32 {
                                                 for i in 0..16 {
@@ -289,7 +283,6 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                                                 }
                                             }
 
-                                            // Folder keys use the first 16 bytes directly.
                                             let mut test_key_direct = [0u8; 16];
                                             test_key_direct.copy_from_slice(&dec_k[..16]);
                                             if let Ok(dec_attr) = decrypt_aes_cbc_zeros(
@@ -306,7 +299,6 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                                         }
                                     }
 
-                                    // Accept CBC-wrapped keys when the ECB form does not decrypt.
                                     if let Ok(dec_k) = decrypt_aes_cbc_zeros(&folder_key, k_bytes) {
                                         if dec_k.len() >= 16 {
                                             let mut test_key = [0u8; 16];
@@ -334,7 +326,6 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                             }
                         }
 
-                        // Some responses encrypt attributes directly with the share key.
                         if decrypted_name.is_none() {
                             if let Ok(dec_attr) =
                                 decrypt_aes_cbc_zeros(&folder_key, a_bytes.clone())

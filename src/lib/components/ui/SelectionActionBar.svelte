@@ -262,7 +262,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Map child buttons from views directly to mobile-dock-btn specifications */
   :global(.selection-dock-capsule .selection-btn) {
     display: flex !important;
     flex-direction: column !important;

@@ -84,6 +84,16 @@ export class FeedState {
   isLoading = $derived(this.current.loading);
   error = $derived(this.current.error);
 
+  private favoriteCreatorKeys = $derived.by(() => {
+    const keys = new Set<string>();
+    for (const creator of accountState.favoriteCreators ?? []) {
+      const entry = creator as { id?: string; service?: string };
+      if (!entry?.id || !entry?.service) continue;
+      keys.add(`${entry.service.toLowerCase()}:${entry.id.toLowerCase()}`);
+    }
+    return keys;
+  });
+
   filteredPosts = $derived(
     this.posts.filter((post) => {
       if (Object.keys(this.providerFilters).length > 0) {
@@ -116,10 +126,11 @@ export class FeedState {
         if (this.mode === 'popular' && !isPostAi) return false;
       }
 
-      const isFavCreator = accountState.favoriteCreators?.some(
-        (c: any) => c.id.toLowerCase() === post.user.toLowerCase() && c.service.toLowerCase() === post.service.toLowerCase()
-      ) ?? false;
-      const matchesFavorites = !this.favoritesOnly || isFavCreator;
+      const matchesFavorites =
+        !this.favoritesOnly ||
+        this.favoriteCreatorKeys.has(
+          `${(post.service ?? '').toLowerCase()}:${(post.user ?? '').toLowerCase()}`
+        );
 
       let matchesQuery = true;
       const q = this._searchQuery.trim().toLowerCase();

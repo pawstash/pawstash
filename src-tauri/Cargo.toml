@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.9.1-17"
+version = "26.9.1-18"
 description = "A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more."
 authors = ["nichind"]
 license = "GPL-3.0-or-later"
@@ -32,7 +32,7 @@ async-trait = "0.1"
 mime_guess = "2.0"
 axum = { version = "0.7", features = ["tokio", "http1", "http2"] }
 tower-http = { version = "0.5", features = ["cors"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots", "json", "cookies", "stream", "gzip", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots", "http2", "json", "cookies", "stream", "gzip", "socks"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5.0"
 anyhow = "1.0"

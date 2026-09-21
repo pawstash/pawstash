@@ -27,7 +27,6 @@ pub fn sanitize_path_segment(input: &str, max_len: usize) -> String {
         }
     }
 
-    // Collapse multiple underscores/spaces
     let mut cleaned = String::with_capacity(sanitized.len());
     let mut prev_char: Option<char> = None;
     for c in sanitized.chars() {
@@ -38,10 +37,8 @@ pub fn sanitize_path_segment(input: &str, max_len: usize) -> String {
         prev_char = Some(c);
     }
 
-    // Trim trailing and leading whitespace and dots (Windows requirement)
     let trimmed = cleaned.trim().trim_matches('.').trim();
 
-    // Check Windows reserved names
     let upper = trimmed.to_ascii_uppercase();
     let is_reserved = matches!(
         upper.as_str(),
@@ -77,7 +74,6 @@ pub fn sanitize_path_segment(input: &str, max_len: usize) -> String {
         trimmed.to_string()
     };
 
-    // Safe UTF-8 truncation
     if base.chars().count() > max_len {
         let truncated: String = base.chars().take(max_len).collect();
         let trimmed_trunc = truncated.trim().trim_matches('.').trim();
@@ -271,7 +267,6 @@ pub fn resolve_filename(template: &str, ctx: &TemplateContext) -> String {
 
     let mut result = tpl.to_string();
 
-    // Longer tokens first to prevent partial token replacement collisions
     result = result.replace("{post_title}", title);
     result = result.replace("{title}", title);
     result = result.replace("{post_id}", ctx.post_id);
@@ -308,7 +303,6 @@ pub fn resolve_filename(template: &str, ctx: &TemplateContext) -> String {
     result = result.replace("{media_id}", ctx.media_id);
     result = result.replace("{id}", ctx.post_id);
 
-    // If result ends with .<orig_ext> (e.g. user wrote .png or .{ext} or {filename} was at end), strip it for clean stem sanitization
     let mut stem = result.trim().to_string();
     if !orig_ext.is_empty() {
         let dot_ext = format!(".{}", orig_ext.to_ascii_lowercase());

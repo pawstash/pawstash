@@ -202,6 +202,9 @@ export const apiRevalidateCreatorArtwork = (
 export const apiFetchCreatorTags = (service: string, creatorId: string, providerId?: string) =>
   invoke<string[]>('fetch_creator_tags', { service, creatorId, providerId });
 
+export const apiGetThumbnailPath = (key: string) =>
+  invoke<string | null>('get_thumbnail_path', { key });
+
 export const apiSearchHash = (fileHash: string) =>
   invoke<FileSearchResult>('search_hash', { fileHash });
 

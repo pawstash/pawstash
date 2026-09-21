@@ -4,7 +4,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
-use crate::config::settings::{AppSettings, ProxyMode};
+use crate::config::settings::AppSettings;
 use crate::smart_links::{is_known_shortener_url, parse_external_post_link};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -53,7 +53,7 @@ impl PawchiveClient {
         if url.scheme() != "https" && !local {
             return Err("Pawchive login requires HTTPS".to_string());
         }
-        let login_client = Client::builder()
+        let login_client = crate::net::builder_with_proxy(&settings)?
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .gzip(true)
@@ -158,33 +158,12 @@ impl PawchiveClient {
             attempt.follow()
         });
 
-        let mut builder = Client::builder()
+        crate::net::builder_with_proxy(settings)?
             .timeout(Duration::from_secs(45))
             .redirect(redirect_policy)
-            .gzip(true);
-
-        match settings.proxy_mode {
-            ProxyMode::None => builder = builder.no_proxy(),
-            ProxyMode::System => {}
-            ProxyMode::Custom => {
-                if settings.proxy_url.trim().is_empty() {
-                    builder = builder.no_proxy();
-                    return builder.build().map_err(|e| e.to_string());
-                }
-                let mut proxy = reqwest::Proxy::all(settings.proxy_url.trim())
-                    .map_err(|e| format!("Invalid proxy URL: {e}"))?;
-                if !settings.proxy_username.is_empty() {
-                    proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
-                }
-                if settings.proxy_bypass_local {
-                    proxy =
-                        proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
-                }
-                builder = builder.proxy(proxy);
-            }
-        }
-
-        builder.build().map_err(|e| e.to_string())
+            .gzip(true)
+            .build()
+            .map_err(|e| e.to_string())
     }
 
     fn cookie_header(raw: &str) -> Option<HeaderValue> {

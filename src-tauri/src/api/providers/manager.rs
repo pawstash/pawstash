@@ -35,12 +35,97 @@ fn create_provider(config: ProviderConfig) -> Result<Arc<dyn SourceProvider>, St
     }
 }
 
+const ARTWORK_EXTENSIONS: [&str; 5] = ["webp", "png", "jpg", "jpeg", "gif"];
+
+const ARTWORK_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+
+struct ArtworkIndex {
+    loaded_at: std::time::Instant,
+    avatars: HashSet<String>,
+    banners: HashSet<String>,
+}
+
+impl ArtworkIndex {
+    fn contains(&self, kind: &str, filename: &str) -> bool {
+        match kind {
+            "banner" => self.banners.contains(filename),
+            _ => self.avatars.contains(filename),
+        }
+    }
+}
+
+fn list_dir_filenames(dir: &std::path::Path) -> HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return HashSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect()
+}
+
 pub struct ProviderManager {
     providers: Arc<RwLock<Vec<Arc<dyn SourceProvider>>>>,
     default_queue: Arc<ProviderRequestQueue>,
+    artwork_index: Arc<RwLock<Option<ArtworkIndex>>>,
 }
 
 impl ProviderManager {
+    async fn cached_artwork_path(&self, kind: &str, stem: &str) -> Option<String> {
+        let index = self.artwork_index().await;
+        let dir = content_cache_path().join(if kind == "banner" {
+            "banners"
+        } else {
+            "avatars"
+        });
+        for ext in ARTWORK_EXTENSIONS {
+            let filename = format!("{stem}.{ext}");
+            if index.contains(kind, &filename) {
+                return Some(dir.join(filename).to_string_lossy().into_owned());
+            }
+        }
+        None
+    }
+
+    async fn artwork_index(&self) -> Arc<ArtworkIndex> {
+        if let Some(index) = self.artwork_index.read().await.as_ref() {
+            if index.loaded_at.elapsed() < ARTWORK_INDEX_TTL {
+                return Arc::new(ArtworkIndex {
+                    loaded_at: index.loaded_at,
+                    avatars: index.avatars.clone(),
+                    banners: index.banners.clone(),
+                });
+            }
+        }
+
+        let root = content_cache_path();
+        let listed = tokio::task::spawn_blocking(move || {
+            (
+                list_dir_filenames(&root.join("avatars")),
+                list_dir_filenames(&root.join("banners")),
+            )
+        })
+        .await
+        .unwrap_or_default();
+
+        let index = ArtworkIndex {
+            loaded_at: std::time::Instant::now(),
+            avatars: listed.0,
+            banners: listed.1,
+        };
+        let snapshot = Arc::new(ArtworkIndex {
+            loaded_at: index.loaded_at,
+            avatars: index.avatars.clone(),
+            banners: index.banners.clone(),
+        });
+        *self.artwork_index.write().await = Some(index);
+        snapshot
+    }
+
+    pub async fn invalidate_artwork_index(&self) {
+        *self.artwork_index.write().await = None;
+    }
+
     pub fn new(configs: Vec<ProviderConfig>) -> Self {
         let mut list: Vec<Arc<dyn SourceProvider>> = Vec::new();
         for config in configs {
@@ -64,6 +149,7 @@ impl ProviderManager {
                 "default",
                 ProviderQueueConfig::default(),
             )),
+            artwork_index: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1509,30 +1595,19 @@ impl ProviderManager {
             }
         }
 
+        let s = sanitize_cache_key(&creator.service);
+        let id = sanitize_cache_key(&creator.id);
+
         if creator.avatar_path.is_none() {
-            let dir = content_cache_path().join("avatars");
-            let s = sanitize_cache_key(&creator.service);
-            let id = sanitize_cache_key(&creator.id);
-            for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                let p = dir.join(format!("{s}_{id}_avatar.{ext}"));
-                if p.is_file() {
-                    creator.avatar_path = Some(p.to_string_lossy().into_owned());
-                    break;
-                }
-            }
+            creator.avatar_path = self
+                .cached_artwork_path("avatar", &format!("{s}_{id}_avatar"))
+                .await;
         }
 
         if creator.banner_path.is_none() {
-            let dir = content_cache_path().join("banners");
-            let s = sanitize_cache_key(&creator.service);
-            let id = sanitize_cache_key(&creator.id);
-            for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                let p = dir.join(format!("{s}_{id}_banner.{ext}"));
-                if p.is_file() {
-                    creator.banner_path = Some(p.to_string_lossy().into_owned());
-                    break;
-                }
-            }
+            creator.banner_path = self
+                .cached_artwork_path("banner", &format!("{s}_{id}_banner"))
+                .await;
         }
     }
 
@@ -1570,61 +1645,38 @@ impl ProviderManager {
             }
         }
 
-        if profile.avatar_path.is_none() {
-            let dir = content_cache_path().join("avatars");
-            let s = sanitize_cache_key(&profile.service);
-            let id = sanitize_cache_key(&profile.id);
-            if let Some(ref pid) = prov_id {
-                if pid != "auto" {
-                    let p_san = sanitize_cache_key(pid);
-                    for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                        let p = dir.join(format!("{s}_{id}_{p_san}_avatar.{ext}"));
-                        if p.is_file() {
-                            profile.avatar_path = Some(p.to_string_lossy().into_owned());
-                            break;
-                        }
-                    }
-                }
-            }
-            if profile.avatar_path.is_none()
-                && (prov_id.is_none() || prov_id.as_deref() == Some("auto"))
-            {
-                for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                    let p = dir.join(format!("{s}_{id}_avatar.{ext}"));
-                    if p.is_file() {
-                        profile.avatar_path = Some(p.to_string_lossy().into_owned());
-                        break;
-                    }
-                }
-            }
-        }
+        let s = sanitize_cache_key(&profile.service);
+        let id = sanitize_cache_key(&profile.id);
+        let specific_provider = prov_id.as_deref().filter(|pid| *pid != "auto");
+        let generic_provider = specific_provider.is_none();
 
-        if profile.banner_path.is_none() {
-            let dir = content_cache_path().join("banners");
-            let s = sanitize_cache_key(&profile.service);
-            let id = sanitize_cache_key(&profile.id);
-            if let Some(ref pid) = prov_id {
-                if pid != "auto" {
-                    let p_san = sanitize_cache_key(pid);
-                    for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                        let p = dir.join(format!("{s}_{id}_{p_san}_banner.{ext}"));
-                        if p.is_file() {
-                            profile.banner_path = Some(p.to_string_lossy().into_owned());
-                            break;
-                        }
-                    }
-                }
+        for kind in ["avatar", "banner"] {
+            let current = if kind == "banner" {
+                &profile.banner_path
+            } else {
+                &profile.avatar_path
+            };
+            if current.is_some() {
+                continue;
             }
-            if profile.banner_path.is_none()
-                && (prov_id.is_none() || prov_id.as_deref() == Some("auto"))
-            {
-                for ext in &["webp", "png", "jpg", "jpeg", "gif"] {
-                    let p = dir.join(format!("{s}_{id}_banner.{ext}"));
-                    if p.is_file() {
-                        profile.banner_path = Some(p.to_string_lossy().into_owned());
-                        break;
-                    }
-                }
+
+            let mut found = None;
+            if let Some(pid) = specific_provider {
+                let p_san = sanitize_cache_key(pid);
+                found = self
+                    .cached_artwork_path(kind, &format!("{s}_{id}_{p_san}_{kind}"))
+                    .await;
+            }
+            if found.is_none() && generic_provider {
+                found = self
+                    .cached_artwork_path(kind, &format!("{s}_{id}_{kind}"))
+                    .await;
+            }
+
+            if kind == "banner" {
+                profile.banner_path = found;
+            } else {
+                profile.avatar_path = found;
             }
         }
     }

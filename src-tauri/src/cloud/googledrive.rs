@@ -464,19 +464,16 @@ mod tests {
 
     #[test]
     fn test_parse_googledrive_urls() {
-        // File /file/d/{id}
         assert_eq!(
             parse_googledrive_url("https://drive.google.com/file/d/1a2b3c4d5e/view?usp=sharing"),
             Some(("1a2b3c4d5e".to_string(), false))
         );
 
-        // Folder /drive/folders/{id}
         assert_eq!(
             parse_googledrive_url("https://drive.google.com/drive/folders/folder98765"),
             Some(("folder98765".to_string(), true))
         );
 
-        // Query parameter ?id={id}
         assert_eq!(
             parse_googledrive_url("https://drive.google.com/uc?id=query_id_123&export=download"),
             Some(("query_id_123".to_string(), false))

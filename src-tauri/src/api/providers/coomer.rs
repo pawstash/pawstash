@@ -189,7 +189,6 @@ impl CoomerProvider {
             USER_AGENT,
             HeaderValue::from_static(crate::downloader::PAWSTASH_USER_AGENT),
         );
-        // DDoS-Guard rejects this endpoint unless it receives the CSS accept header.
         headers.insert(ACCEPT, HeaderValue::from_static("text/css"));
         let cookie_raw = config.session_cookie.trim();
         if !cookie_raw.is_empty() {
@@ -207,7 +206,7 @@ impl CoomerProvider {
 
     fn build_client(config: &ProviderConfig) -> Result<Client, String> {
         let headers = Self::build_headers(config);
-        Client::builder()
+        crate::net::builder()
             .timeout(Duration::from_secs(30))
             .gzip(true)
             .default_headers(headers)

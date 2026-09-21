@@ -1,4 +1,4 @@
-use crate::config::settings::{AppSettings, ProxyMode};
+use crate::config::settings::AppSettings;
 use reqwest::{Client, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
@@ -121,21 +121,7 @@ impl SyncHttpClient {
         if url.scheme() != "https" && !local {
             return Err("Sync server requires HTTPS".to_string());
         }
-        let mut builder = Client::builder().timeout(Duration::from_secs(45));
-        match settings.proxy_mode {
-            ProxyMode::None => builder = builder.no_proxy(),
-            ProxyMode::System => {}
-            ProxyMode::Custom => {
-                if !settings.proxy_url.trim().is_empty() {
-                    let mut proxy = reqwest::Proxy::all(settings.proxy_url.trim())
-                        .map_err(|e| e.to_string())?;
-                    if !settings.proxy_username.is_empty() {
-                        proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password)
-                    }
-                    builder = builder.proxy(proxy)
-                }
-            }
-        }
+        let builder = crate::net::builder_with_proxy(settings)?.timeout(Duration::from_secs(45));
         let base = format!("{}/v1", server_url.trim().trim_end_matches('/'));
         Ok(Self {
             client: builder.build().map_err(|e| e.to_string())?,

@@ -81,7 +81,6 @@ pub fn store_custom_background(
         .filter(|value| allowed_extensions.contains(&value.as_str()))
         .ok_or_else(|| "Unsupported custom background file format".to_string())?;
 
-    // Clean up any legacy copied background files from internal app data to reclaim space
     if let Ok(dir) = app.path().app_data_dir().map(|d| d.join("background")) {
         if dir.is_dir() {
             let _ = remove_custom_background_files(&dir, &kind);
@@ -142,7 +141,6 @@ pub fn clear_custom_background(app: tauri::AppHandle, kind: String) -> Result<()
     if kind != "image" && kind != "video" {
         return Err("Unsupported custom background type".to_string());
     }
-    // Clean up any legacy copied background files from internal app data
     if let Ok(dir) = app.path().app_data_dir().map(|d| d.join("background")) {
         if dir.is_dir() {
             let _ = remove_custom_background_files(&dir, &kind);
@@ -288,8 +286,6 @@ pub async fn save_settings(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let previous = state.config_manager.load()?;
-    // Empty secret fields mean "unchanged": settings returned to Svelte are
-    // deliberately redacted, while explicit non-empty replacements still work.
     if settings.session_cookie.is_empty() {
         settings.session_cookie = previous.session_cookie.clone();
     }
@@ -331,6 +327,7 @@ pub async fn save_settings(
         return Err(error);
     }
     state.content.set_cache_limit_mb(settings.cache_max_mb)?;
+    crate::net::reset_shared_clients();
     state.download_manager.notify_scheduler();
     let _ = state.sync_manager.set_enabled(settings.sync_enabled);
     Ok(())
@@ -556,13 +553,24 @@ pub async fn sync_provider_favorites(
         .await
 }
 
+fn persist_post_list(
+    content: std::sync::Arc<crate::db::content::ContentRepository>,
+    list_key: String,
+    offset: u32,
+    posts: Vec<Post>,
+) {
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = content.save_post_list(&list_key, offset, &posts) {
+            tracing::warn!("Failed to cache post list '{list_key}' at offset {offset}: {error}");
+        }
+    });
+}
+
 async fn enrich_posts(
     posts: &mut [Post],
     manager: &crate::api::providers::manager::ProviderManager,
 ) {
-    for post in posts.iter_mut() {
-        manager.enrich_post(post).await;
-    }
+    futures_util::future::join_all(posts.iter_mut().map(|post| manager.enrich_post(post))).await;
 }
 
 #[tauri::command]
@@ -570,23 +578,35 @@ pub async fn list_creators_page(
     query: CreatorsQuery,
     state: State<'_, AppState>,
 ) -> Result<CreatorsPageResult, String> {
-    let mut page = state.content.query_creators(&query)?;
-    for item in &mut page.items {
-        state.provider_manager.enrich_creator(item).await;
-    }
+    let content = state.content.clone();
+    let mut page = tokio::task::spawn_blocking(move || content.query_creators(&query))
+        .await
+        .map_err(|e| e.to_string())??;
+    futures_util::future::join_all(
+        page.items
+            .iter_mut()
+            .map(|item| state.provider_manager.enrich_creator(item)),
+    )
+    .await;
     Ok(page)
 }
 
 #[tauri::command]
 pub async fn list_creator_services(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    state.content.list_creator_services()
+    let content = state.content.clone();
+    tokio::task::spawn_blocking(move || content.list_creator_services())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn list_creator_names(
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, String>, String> {
-    state.content.list_creator_names()
+    let content = state.content.clone();
+    tokio::task::spawn_blocking(move || content.list_creator_names())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -595,7 +615,10 @@ pub async fn get_creator_name(
     creator_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    state.content.get_creator_name(&service, &creator_id)
+    let content = state.content.clone();
+    tokio::task::spawn_blocking(move || content.get_creator_name(&service, &creator_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -621,7 +644,10 @@ pub async fn fetch_creators(
     app_handle: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<Creator>, String> {
-    let cached = state.content.list_creators()?;
+    let content_for_read = state.content.clone();
+    let cached = tokio::task::spawn_blocking(move || content_for_read.list_creators())
+        .await
+        .map_err(|e| e.to_string())??;
     if !cached.is_empty() {
         let provider_manager = state.provider_manager.clone();
         let content = state.content.clone();
@@ -664,7 +690,7 @@ pub async fn fetch_posts(
     {
         Ok(mut posts) => {
             enrich_posts(&mut posts, &state.provider_manager).await;
-            state.content.save_post_list(&list_key, offset, &posts)?;
+            persist_post_list(state.content.clone(), list_key, offset, posts.clone());
             Ok(posts)
         }
         Err(error) => {
@@ -693,7 +719,7 @@ pub async fn fetch_recent_posts(
     {
         Ok(mut posts) => {
             enrich_posts(&mut posts, &state.provider_manager).await;
-            state.content.save_post_list(&list_key, offset, &posts)?;
+            persist_post_list(state.content.clone(), list_key, offset, posts.clone());
             Ok(posts)
         }
         Err(error) => {
@@ -726,8 +752,17 @@ pub async fn fetch_popular_posts(
     {
         Ok(mut posts) => {
             enrich_posts(&mut posts, &state.provider_manager).await;
-            state.content.save_post_list(&list_key, offset, &posts)?;
-            if let Ok(mut cached) = state.content.load_post_list(&list_key, offset) {
+            let content = state.content.clone();
+            let cache_key = list_key.clone();
+            let to_save = posts.clone();
+            let round_tripped = tokio::task::spawn_blocking(move || {
+                content.save_post_list(&cache_key, offset, &to_save)?;
+                content.load_post_list(&cache_key, offset)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+            if let Ok(mut cached) = round_tripped {
                 if cached.len() == posts.len() {
                     enrich_posts(&mut cached, &state.provider_manager).await;
                     return Ok(cached);
@@ -774,7 +809,7 @@ pub async fn fetch_creator_posts(
     match result {
         Ok(mut posts) => {
             enrich_posts(&mut posts, &state.provider_manager).await;
-            state.content.save_post_list(&list_key, offset, &posts)?;
+            persist_post_list(state.content.clone(), list_key, offset, posts.clone());
             Ok(posts)
         }
         Err(error) => {
@@ -1117,7 +1152,12 @@ pub async fn get_cached_post(
     provider_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<Post>, String> {
-    let mut post_opt = state.content.get_post(&service, &creator_id, &post_id)?;
+    let content = state.content.clone();
+    let lookup = (service.clone(), creator_id.clone(), post_id.clone());
+    let mut post_opt =
+        tokio::task::spawn_blocking(move || content.get_post(&lookup.0, &lookup.1, &lookup.2))
+            .await
+            .map_err(|e| e.to_string())??;
     if let Some(ref mut post) = post_opt {
         if let Some(ref pid) = provider_id {
             if pid != "auto" {
@@ -1401,7 +1441,6 @@ pub async fn fetch_account_favorites(
             .fetch_account_favorites(None, Some(kind))
             .await
         {
-            // Account favorites are pinned so they remain available offline.
             for fav in &remote_items {
                 if kind == "post" {
                     let user_id = fav
@@ -1562,7 +1601,6 @@ pub async fn fetch_account_favorites(
             let mut merged = Vec::new();
             let mut seen_keys = std::collections::HashSet::new();
 
-            // Remote state wins except for metadata that the API does not return.
             for mut item in remote_items {
                 let srv = item.service.as_deref().unwrap_or("").to_lowercase();
                 let id = item.id.to_lowercase();
@@ -1663,7 +1701,6 @@ pub async fn fetch_account_favorites(
                     }
                 }
             } else {
-                // Without local persistence, mirror removals from the account.
                 for key in local_map.keys() {
                     if !seen_keys.contains(key) {
                         let _ = state.content.set_pin(
@@ -1939,7 +1976,8 @@ pub async fn revalidate_creator_artwork(
     if url.is_empty() {
         return Ok(None);
     }
-    let client = reqwest::Client::new();
+    let settings = state.config_manager.load()?;
+    let client = crate::net::shared_client(&settings)?;
     let res = state
         .content
         .revalidate_creator_artwork(
@@ -1951,6 +1989,9 @@ pub async fn revalidate_creator_artwork(
             &client,
         )
         .await?;
+    if res.is_some() {
+        state.provider_manager.invalidate_artwork_index().await;
+    }
     Ok(res.map(|p| p.to_string_lossy().into_owned()))
 }
 
@@ -2013,6 +2054,17 @@ pub async fn get_video_thumbnail(
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     state.content.thumbnail_data_url(&key)
+}
+
+#[tauri::command]
+pub async fn get_thumbnail_path(
+    key: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let content = state.content.clone();
+    tokio::task::spawn_blocking(move || content.thumbnail_path(&key))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2265,29 +2317,36 @@ pub fn remove_library_post(
 }
 
 #[tauri::command]
-pub fn list_saved_post_identities(
+pub async fn list_saved_post_identities(
     state: State<'_, AppState>,
 ) -> Result<Vec<LibraryPostIdentity>, String> {
-    state.library.list_saved_post_identities()
+    let library = state.library.clone();
+    tokio::task::spawn_blocking(move || library.list_saved_post_identities())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn list_post_stash_memberships(
+pub async fn list_post_stash_memberships(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::db::library::PostStashMembership>, String> {
-    state.library.list_post_stash_memberships()
+    let library = state.library.clone();
+    tokio::task::spawn_blocking(move || library.list_post_stash_memberships())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn list_library_posts(
+pub async fn list_library_posts(
     collection_id: Option<String>,
     offset: u32,
     limit: u32,
     state: State<'_, AppState>,
 ) -> Result<Vec<Post>, String> {
-    state
-        .library
-        .list_posts(collection_id.as_deref(), offset, limit)
+    let library = state.library.clone();
+    tokio::task::spawn_blocking(move || library.list_posts(collection_id.as_deref(), offset, limit))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -2305,6 +2364,7 @@ pub async fn start_download(
     let bg_content = state.content.clone();
     let bg_provider = state.provider_manager.clone();
     let bg_post = post.clone();
+    let bg_settings = settings.clone();
     tokio::spawn(async move {
         if let Ok(creator) = bg_provider
             .fetch_creator_profile(&bg_post.service, &bg_post.user, None)
@@ -2346,6 +2406,7 @@ pub async fn start_download(
                         kind,
                         &data,
                     );
+                    bg_provider.invalidate_artwork_index().await;
                 }
             }
         }
@@ -2365,7 +2426,11 @@ pub async fn start_download(
             let preview_url = bg_provider
                 .resolve_thumbnail_url(&bg_post.service, file, prov_id)
                 .await;
-            let _ = bg_content.cache_post_preview(&bg_post, &preview_url).await;
+            if let Ok(client) = crate::net::shared_client(&bg_settings) {
+                let _ = bg_content
+                    .cache_post_preview(&bg_post, &preview_url, &client)
+                    .await;
+            }
         }
     });
 
@@ -2519,7 +2584,6 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJo
         };
         let prov_id = post.extra.get("provider_id").and_then(|v| v.as_str());
 
-        // 1. If file_preview_url is missing, resolve it specifically for THIS file:
         if job.file_preview_url.is_none() {
             let target_media_path = if !job.media_id.is_empty() && job.media_id.starts_with('/') {
                 Some(job.media_id.as_str())
@@ -2554,7 +2618,6 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJo
             }
         }
 
-        // 2. If post_preview_url is missing, resolve it for the post cover:
         if job.post_preview_url.is_none() {
             let post_cover_path = post
                 .file

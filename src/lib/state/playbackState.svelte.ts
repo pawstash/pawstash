@@ -7,9 +7,9 @@ interface PlaybackEntry {
 }
 
 const STORAGE_KEY = 'pawstash_playback_positions';
-const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-const MIN_SAVE_TIME = 5; // don't save first 5 seconds
-const END_THRESHOLD_RATIO = 0.95; // consider finished if > 95%
+const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MIN_SAVE_TIME = 5;
+const END_THRESHOLD_RATIO = 0.95;
 
 class PlaybackState {
   private entries = $state<Record<string, PlaybackEntry>>({});
@@ -84,8 +84,7 @@ class PlaybackState {
 
   saveTime(mediaKey?: string | null, currentTime?: number, duration?: number) {
     if (!mediaKey || currentTime === undefined || currentTime < MIN_SAVE_TIME) return;
-    
-    // If video is almost finished (> 95% or within last 5 seconds), clear it
+
     if (duration && duration > 0 && (currentTime >= duration * END_THRESHOLD_RATIO || (duration - currentTime) <= 5)) {
       this.clearTime(mediaKey);
       return;

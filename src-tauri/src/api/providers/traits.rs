@@ -80,7 +80,7 @@ pub fn derive_subdomain_url(base_url: &str, prefix: &str) -> String {
 pub struct AuthField {
     pub key: String,
     pub label_key: String,
-    pub field_type: String, // "text" | "password" | "textarea"
+    pub field_type: String,
     pub placeholder: Option<String>,
     pub help_text_key: Option<String>,
     pub required: bool,

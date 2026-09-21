@@ -128,10 +128,7 @@ pub fn decompress_payload(decrypted: &[u8]) -> Result<Vec<u8>, String> {
             Ok(decompressed)
         }
         PAYLOAD_MARKER_RAW => Ok(decrypted[1..].to_vec()),
-        _ => {
-            // Legacy uncompressed record (starts with '{' 0x7B or other un-prefixed byte)
-            Ok(decrypted.to_vec())
-        }
+        _ => Ok(decrypted.to_vec()),
     }
 }
 
@@ -288,7 +285,7 @@ mod tests {
     #[test]
     fn kdf_rejects_out_of_bounds_parameters() {
         let bad_kdf = KdfEnvelope {
-            memory_kib: 1024 * 1024, // 1 GB
+            memory_kib: 1024 * 1024,
             ..KdfEnvelope::generate()
         };
         let secrets = VaultSecrets::generate();

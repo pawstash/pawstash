@@ -255,7 +255,6 @@ impl SyncRepository {
         let tx = connection.transaction().map_err(|e| e.to_string())?;
         let mut dirty_records = Vec::new();
 
-        // 1. Collections (non-system)
         let collections = collect(
             &tx,
             "SELECT id,kind,parent_id,name,position,created_at,updated_at,color FROM collections WHERE is_system=0",
@@ -344,7 +343,6 @@ impl SyncRepository {
             }
         }
 
-        // 2. Posts (referenced in collection_posts)
         let posts = collect(
             &tx,
             "SELECT DISTINCT p.service,p.creator_id,p.post_id,p.title,p.published_at,p.snapshot_json,p.cached_at
@@ -435,7 +433,6 @@ impl SyncRepository {
             }
         }
 
-        // 3. Memberships (collection_posts)
         let memberships = collect(
             &tx,
             "SELECT collection_id,service,creator_id,post_id,position,operation_id,added_at FROM collection_posts",
@@ -528,7 +525,6 @@ impl SyncRepository {
             }
         }
 
-        // 4. Subscriptions
         let subscriptions = collect(
             &tx,
             "SELECT id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,created_at,updated_at FROM subscriptions",
@@ -621,7 +617,6 @@ impl SyncRepository {
             }
         }
 
-        // 5. Pawchive Session (sec:pawchive_session) if enabled in settings
         let sync_session_enabled: bool = tx
             .query_row(
                 "SELECT value FROM app_settings WHERE key = 'setting.sync_pawchive_session'",
@@ -703,7 +698,6 @@ impl SyncRepository {
             }
         }
 
-        // 6. Favorite Posts
         let fav_posts = collect(
             &tx,
             "SELECT pin.service, pin.creator_id, pin.post_id, p.snapshot_json, pin.created_at
@@ -793,7 +787,6 @@ impl SyncRepository {
             }
         }
 
-        // 7. Favorite Creators
         let fav_creators = collect(
             &tx,
             "SELECT pin.service, pin.creator_id, c.name, c.snapshot_json, pin.created_at
@@ -991,9 +984,7 @@ impl SyncRepository {
                         return Err(format!("Malformed favorite creator record ID: {record_id}"));
                     }
                 }
-                "post" | "session" => {
-                    // Posts and sessions can remain cached locally unless unpinned/overwritten
-                }
+                "post" | "session" => {}
                 unknown => {
                     tracing::warn!(kind = %unknown, record_id = %record_id, "Skipping tombstone for unsupported sync record kind");
                     return Ok(());
@@ -1304,7 +1295,6 @@ mod tests {
         assert!(!dirty[0].tombstone);
         assert!(dirty[0].payload.is_some());
 
-        // Mark synced
         repo.mark_records_synced(&[crate::sync::client::AcceptedRecord {
             record_id: "col:col_01".into(),
             revision: 1,
@@ -1312,11 +1302,9 @@ mod tests {
         }])
         .unwrap();
 
-        // Second check with no changes
         let dirty_after = repo.detect_and_get_dirty_records().unwrap();
         assert!(dirty_after.is_empty());
 
-        // Delete collection locally -> detect tombstone
         {
             let conn = repo.connection.lock().unwrap();
             conn.execute("DELETE FROM collections WHERE id='col_01'", [])
@@ -1359,7 +1347,6 @@ mod tests {
             assert_eq!(name, "Remote Stash");
         }
 
-        // Apply tombstone
         repo.apply_remote_change("col:remote_col_01", "collection", 2, None, true)
             .unwrap();
 
@@ -1381,7 +1368,6 @@ mod tests {
         let repo_a = SyncRepository::in_memory();
         let repo_b = SyncRepository::in_memory();
 
-        // 1. Device A creates a collection, post, membership, subscription, and favorites
         {
             let conn = repo_a.connection.lock().unwrap();
             conn.execute(
@@ -1426,11 +1412,9 @@ mod tests {
             .unwrap();
         }
 
-        // Device A detects dirty records
         let dirty_a = repo_a.detect_and_get_dirty_records().unwrap();
-        assert_eq!(dirty_a.len(), 6); // collection, post, membership, subscription, fav_post, fav_creator
+        assert_eq!(dirty_a.len(), 6);
 
-        // Simulate server accept
         let mut accepted = Vec::new();
         for (i, d) in dirty_a.iter().enumerate() {
             accepted.push(crate::sync::client::AcceptedRecord {
@@ -1441,14 +1425,12 @@ mod tests {
         }
         repo_a.mark_records_synced(&accepted).unwrap();
 
-        // 2. Device B pulls and applies Device A's changes
         for d in &dirty_a {
             repo_b
                 .apply_remote_change(&d.record_id, &d.kind, 1, d.payload.as_deref(), d.tombstone)
                 .unwrap();
         }
 
-        // Verify Device B now has all entities
         {
             let conn = repo_b.connection.lock().unwrap();
             let col_name: String = conn
@@ -1506,7 +1488,6 @@ mod tests {
             assert_eq!(fav_creator_count, 1);
         }
 
-        // Device B has no local dirty records
         let dirty_b = repo_b.detect_and_get_dirty_records().unwrap();
         assert!(dirty_b.is_empty());
     }

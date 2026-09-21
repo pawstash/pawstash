@@ -3283,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "pawstash"
-version = "26.9.1-17"
+version = "26.9.1-18"
 dependencies = [
  "aes",
  "anyhow",
@@ -3945,6 +3945,7 @@ dependencies = [
  "cookie_store",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

@@ -119,9 +119,7 @@ export class ThemeState {
           this.systemPalette = { primary: res, quadrants: pal.quadrants };
         }
       }
-    } catch {
-      // Running on browser or desktop without native system accent
-    }
+    } catch {}
   }
 
   async init() {
@@ -147,8 +145,6 @@ export class ThemeState {
     this.watchSystemColorScheme();
     await this.fetchSystemPalette();
 
-    // If first launch (no accent previously saved in localStorage) and systemPalette is available,
-    // default to 'system'
     if (!savedAccent && this.systemPalette) {
       this.tokens.accent = 'system';
     }
@@ -253,9 +249,7 @@ export class ThemeState {
     this.applyCssTokens();
   }
 
-  setSidebarWidth(_widthPx: number) {
-    // Deprecated: sidebar width is driven by CSS var --sidebar-width-expanded in app.css
-  }
+  setSidebarWidth(_widthPx: number) {}
 
   applyCssTokens() {
     if (typeof document === 'undefined') return;

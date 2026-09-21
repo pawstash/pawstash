@@ -15,7 +15,7 @@
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
   import { isVideoUrl, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
-  import { getMediaThumbnail } from '$lib/utils/mediaThumbnail';
+  import { getMediaThumbnail, cancelMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -98,6 +98,7 @@
 
     return () => {
       cancelled = true;
+      cancelMediaThumbnail(key);
     };
   });
 

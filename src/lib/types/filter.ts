@@ -34,12 +34,6 @@ export function getExcludedKeys(map: FilterMap): string[] {
   return Object.keys(map).filter((k) => map[k] === 'exclude');
 }
 
-/**
- * Checks whether an item's values match a tri-state filter map.
- * - If item matches any excluded key -> returns false.
- * - If there are included keys and item matches none of them -> returns false.
- * - Otherwise returns true.
- */
 export function matchesTriStateFilter(itemValues: string[], filterMap: FilterMap): boolean {
   const excluded = getExcludedKeys(filterMap);
   if (excluded.length > 0 && excluded.some((ex) => itemValues.includes(ex))) {
@@ -54,18 +48,12 @@ export function matchesTriStateFilter(itemValues: string[], filterMap: FilterMap
   return true;
 }
 
-/**
- * Checks a boolean flag against a TriStateBool.
- */
 export function matchesTriStateBool(hasFlag: boolean, state: TriStateBool): boolean {
   if (state === 'include') return hasFlag;
   if (state === 'exclude') return !hasFlag;
   return true;
 }
 
-/**
- * Calculates the number of active (non-neutral) filters.
- */
 export function countActiveFilters(
   filterMaps: FilterMap[],
   boolFilters: TriStateBool[] = []

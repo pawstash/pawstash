@@ -78,7 +78,6 @@
     const diffY = currentY - startY;
     const diffX = Math.abs(currentX - startX);
 
-    // Prevent trigger on horizontal swipe gestures
     if (diffX > diffY && diffX > 8) {
       isTracking = false;
       return;

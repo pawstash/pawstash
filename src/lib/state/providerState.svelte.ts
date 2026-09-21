@@ -7,8 +7,8 @@ class ProviderState {
   providers = $state<ProviderConfig[]>([]);
   healths = $state<Record<string, ProviderHealth>>({});
   postRevisions = $state<Record<string, PostRevisionData[]>>({});
-  selectedProvider = $state<Record<string, string>>({}); // postKey -> providerId or 'auto'
-  selectedRevision = $state<Record<string, number>>({}); // postKey -> revision_id
+  selectedProvider = $state<Record<string, string>>({});
+  selectedRevision = $state<Record<string, number>>({});
   capabilities = $state<Record<string, ProviderCapabilities>>({});
   activeCapabilities = $state<ProviderCapabilities | null>(null);
   loading = $state(false);

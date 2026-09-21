@@ -163,9 +163,7 @@ export class DownloadState {
         contentState.seedPost(merged);
         return merged;
       }
-    } catch {
-      // A cached summary is sufficient when the detail lookup fails.
-    }
+    } catch {}
     return post;
   }
 

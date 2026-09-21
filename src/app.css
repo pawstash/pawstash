@@ -13,16 +13,6 @@
 @import "@fontsource/outfit/700.css";
 @import "overlayscrollbars/overlayscrollbars.css";
 
-/* ==========================================================================
-   OVERLAYSCROLLBARS — PAWSTASH THEME INTEGRATION
-   Binds OverlayScrollbars directly to Pawstash Material dynamic tokens:
-   - Handle: neutral translucent wash (--surface-tint-rgb at 0.22 alpha)
-   - Handle Hover: brighter neutral wash (--surface-tint-rgb at 0.38 alpha)
-   - Handle Active (Dragging): vibrant accent fill (--accent-primary)
-   - Track: transparent (subtle wash on hover/active)
-   - Geometry: 8px slim desktop scrollbar with 9999px pill radius
-   - Interactive Grab Area: 4px expanded hit zone for effortless grabbing
-   ========================================================================== */
 .os-scrollbar,
 .os-theme-dark,
 .os-theme-light,
@@ -62,7 +52,6 @@
   --os-size: 8px;
 }
 
-/* Vertical scrollbars: inset ONLY top/bottom (ends) to respect rounded corners & edge content */
 .os-scrollbar.os-scrollbar-vertical,
 .os-scrollbar.os-scrollbar-vertical.os-scrollbar-cornerless,
 .os-scrollbar.os-scrollbar-vertical.os-scrollbar-cornerless.os-scrollbar-rtl {
@@ -81,7 +70,6 @@
   bottom: calc(var(--os-size) + var(--os-inset-axis, 10px)) !important;
 }
 
-/* Horizontal scrollbars: inset ONLY left/right (ends) */
 .os-scrollbar.os-scrollbar-horizontal,
 .os-scrollbar.os-scrollbar-horizontal.os-scrollbar-cornerless,
 .os-scrollbar.os-scrollbar-horizontal.os-scrollbar-cornerless.os-scrollbar-rtl {
@@ -107,7 +95,6 @@
               transform var(--duration-fast, 120ms) ease;
 }
 
-/* Parametric top/bottom clearance for rounded containers */
 .select-dropdown-portal,
 .select-dropdown-viewport,
 .template-dropdown,
@@ -121,18 +108,15 @@
   --os-inset-axis: 14px;
 }
 
-/* Modals with 28px radius need 16px vertical clearance to avoid corner clipping */
 .modal-box,
 .modal-body-wrapper {
   --os-inset-axis: 16px;
 }
 
-/* Mobile bottom nav safe clearance on mobile pages */
 .page-shell.mobile .os-scrollbar-vertical {
   bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)) + 8px) !important;
 }
 
-/* Native scrollbar fallback */
 * {
   scrollbar-color: rgba(var(--surface-tint-rgb), 0.22) transparent;
   scrollbar-width: thin;

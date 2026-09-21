@@ -7,7 +7,7 @@ pub mod pixeldrain;
 
 pub use models::{CloudFolderResult, CloudNode};
 
-use crate::config::{AppSettings, ProxyMode};
+use crate::config::AppSettings;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -23,29 +23,18 @@ impl Default for CloudResolver {
 
 impl CloudResolver {
     pub fn new(settings: Option<&AppSettings>) -> Self {
-        let mut builder = Client::builder()
+        let mut builder = crate::net::builder();
+        if let Some(s) = settings {
+            builder = crate::net::apply_proxy(builder, s).unwrap_or_else(|_| crate::net::builder());
+        }
+
+        let client = builder
             .timeout(Duration::from_secs(30))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
             .redirect(reqwest::redirect::Policy::limited(10))
-            .gzip(true);
-
-        if let Some(s) = settings {
-            match s.proxy_mode {
-                ProxyMode::None => builder = builder.no_proxy(),
-                ProxyMode::System => {}
-                ProxyMode::Custom if !s.proxy_url.trim().is_empty() => {
-                    if let Ok(mut proxy) = reqwest::Proxy::all(s.proxy_url.trim()) {
-                        if !s.proxy_username.is_empty() {
-                            proxy = proxy.basic_auth(&s.proxy_username, &s.proxy_password);
-                        }
-                        builder = builder.proxy(proxy);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let client = builder.build().unwrap_or_else(|_| Client::new());
+            .gzip(true)
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self { client }
     }
 

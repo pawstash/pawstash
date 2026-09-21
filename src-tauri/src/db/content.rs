@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 fn map_post_row(json: String, preview: Option<String>) -> Result<Post, String> {
     let mut post = Post::from_json_str(&json).map_err(|e| e.to_string())?;
@@ -65,9 +65,15 @@ struct CacheFile {
     protected: bool,
 }
 
+const CACHE_PRUNE_MIN_INTERVAL: Duration = Duration::from_secs(120);
+
+const CACHE_PRUNE_FORCE_OVERSHOOT: u64 = 256 * 1024 * 1024;
+
 pub struct ContentRepository {
     connection: Mutex<Connection>,
     cache_limit_bytes: AtomicU64,
+    cache_bytes_since_prune: AtomicU64,
+    last_prune_at: Mutex<Option<Instant>>,
 }
 
 impl ContentRepository {
@@ -79,6 +85,8 @@ impl ContentRepository {
         Self {
             connection: Mutex::new(connection),
             cache_limit_bytes: AtomicU64::new(cache_limit_mb.saturating_mul(1024 * 1024)),
+            cache_bytes_since_prune: AtomicU64::new(0),
+            last_prune_at: Mutex::new(None),
         }
     }
 
@@ -100,7 +108,15 @@ impl ContentRepository {
     pub fn set_cache_limit_mb(&self, max_mb: u64) -> Result<CacheStats, String> {
         let limit = max_mb.clamp(64, 2048).saturating_mul(1024 * 1024);
         self.cache_limit_bytes.store(limit, Ordering::Release);
+        self.note_pruned();
         self.prune_cache(limit)
+    }
+
+    fn note_pruned(&self) {
+        self.cache_bytes_since_prune.store(0, Ordering::Release);
+        if let Ok(mut last) = self.last_prune_at.lock() {
+            *last = Some(Instant::now());
+        }
     }
 
     pub fn clear_cached_images(&self) -> Result<CacheStats, String> {
@@ -297,6 +313,37 @@ impl ContentRepository {
                 |row| row.get::<_, u64>(0),
             )
             .map_err(|error| error.to_string())
+    }
+
+    fn enforce_cache_limit_after_write(&self, written_bytes: u64) {
+        let pending = self
+            .cache_bytes_since_prune
+            .fetch_add(written_bytes, Ordering::AcqRel)
+            .saturating_add(written_bytes);
+
+        if !self.should_prune_now(pending) {
+            return;
+        }
+
+        self.cache_bytes_since_prune.store(0, Ordering::Release);
+        self.enforce_cache_limit();
+    }
+
+    fn should_prune_now(&self, pending_bytes: u64) -> bool {
+        let Ok(mut last) = self.last_prune_at.lock() else {
+            return false;
+        };
+        let now = Instant::now();
+        let due = match *last {
+            Some(previous) => now.duration_since(previous) >= CACHE_PRUNE_MIN_INTERVAL,
+            None => true,
+        };
+        if due || pending_bytes >= CACHE_PRUNE_FORCE_OVERSHOOT {
+            *last = Some(now);
+            true
+        } else {
+            false
+        }
     }
 
     fn enforce_cache_limit(&self) {
@@ -1293,7 +1340,7 @@ impl ContentRepository {
             extension
         );
         let path = dir.join(safe);
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
         let column = if kind == "banner" {
             "banner_path"
         } else {
@@ -1307,7 +1354,7 @@ impl ContentRepository {
             )
             .map_err(|e| e.to_string())?;
         drop(connection);
-        self.enforce_cache_limit();
+        self.enforce_cache_limit_after_write(bytes.len() as u64);
         Ok(path)
     }
 
@@ -1371,7 +1418,7 @@ impl ContentRepository {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let safe = format!("{}.{}", sanitize_cache_key(key), extension);
         let path = dir.join(safe);
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
 
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
         let path_str = path.to_string_lossy();
@@ -1386,8 +1433,19 @@ impl ContentRepository {
         }
         drop(connection);
 
-        self.enforce_cache_limit();
+        self.enforce_cache_limit_after_write(bytes.len() as u64);
         Ok(path)
+    }
+
+    pub fn thumbnail_path(&self, key: &str) -> Option<String> {
+        let dir = content_cache_path().join("thumbnails");
+        for ext in &["webp", "jpg", "png"] {
+            let path = dir.join(format!("{}.{}", sanitize_cache_key(key), ext));
+            if path.is_file() {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+        None
     }
 
     pub fn thumbnail_data_url(&self, key: &str) -> Result<Option<String>, String> {
@@ -1410,8 +1468,13 @@ impl ContentRepository {
         Ok(None)
     }
 
-    pub async fn cache_post_preview(&self, post: &Post, url: &str) -> Result<PathBuf, String> {
-        let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
+    pub async fn cache_post_preview(
+        &self,
+        post: &Post,
+        url: &str,
+        client: &reqwest::Client,
+    ) -> Result<PathBuf, String> {
+        let response = client.get(url).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("Preview HTTP {}", response.status()));
         }
@@ -1461,7 +1524,7 @@ impl ContentRepository {
         )
         .map_err(|e| e.to_string())?;
         drop(c);
-        self.enforce_cache_limit();
+        self.enforce_cache_limit_after_write(bytes.len() as u64);
         Ok(path)
     }
 
@@ -1574,7 +1637,7 @@ impl ContentRepository {
             drop(connection);
         }
 
-        self.enforce_cache_limit();
+        self.enforce_cache_limit_after_write(bytes.len() as u64);
         Ok(Some(path))
     }
 }
@@ -1679,6 +1742,32 @@ fn remove_empty_cache_dirs(root: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_prune_is_debounced_after_writes() {
+        let repo = ContentRepository::in_memory(128).unwrap();
+
+        assert!(repo.should_prune_now(1024));
+        assert!(!repo.should_prune_now(1024));
+        assert!(!repo.should_prune_now(1024));
+    }
+
+    #[test]
+    fn cache_prune_is_forced_by_a_large_overshoot() {
+        let repo = ContentRepository::in_memory(128).unwrap();
+        assert!(repo.should_prune_now(0));
+        assert!(!repo.should_prune_now(1024));
+
+        assert!(repo.should_prune_now(CACHE_PRUNE_FORCE_OVERSHOOT));
+    }
+
+    #[test]
+    fn note_pruned_resets_pending_byte_counter() {
+        let repo = ContentRepository::in_memory(128).unwrap();
+        repo.cache_bytes_since_prune.store(4096, Ordering::Release);
+        repo.note_pruned();
+        assert_eq!(repo.cache_bytes_since_prune.load(Ordering::Acquire), 0);
+    }
 
     #[test]
     fn cache_stats_separate_protected_files() {

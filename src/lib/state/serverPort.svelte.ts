@@ -3,6 +3,7 @@ import { apiGetAxumPort } from '$lib/utils/ipc';
 export class ServerPortState {
   port = $state<number>(0);
   token = $state<string>('');
+  settled = $state<boolean>(false);
   private isInitializing = false;
 
   async init(): Promise<number> {
@@ -16,10 +17,12 @@ export class ServerPortState {
         if (info.port > 0 && info.token) {
           this.port = info.port;
           this.token = info.token;
+          this.settled = true;
           return info.port;
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
+      this.settled = true;
       return 0;
     } finally {
       this.isInitializing = false;

@@ -321,7 +321,6 @@
     max-height: calc(100vh - 40px);
   }
 
-  /* Mobile safe area: status bar (top) + floating navbar (bottom) */
   .modal-overlay.mobile {
     padding-top: calc(var(--mobile-status-bar-height, 36px) + 8px);
     padding-bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)));

@@ -46,7 +46,6 @@ export class CreatorsState {
     return [...new Set(defaults)].sort();
   }
 
-  // Lookup index "service:id" -> name. Kept outside $state to avoid reactive proxy overhead.
   creatorsMap = new Map<string, string>();
 
   get searchQuery(): string {

@@ -778,7 +778,6 @@
   function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
-      // Chromium reports zero dimensions when it can play audio but not the video codec.
       if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
         logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
         videoFailures[index] = { preset: 'unsupported_codec', format: 'H.265 / HEVC' };

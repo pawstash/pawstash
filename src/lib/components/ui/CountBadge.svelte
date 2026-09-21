@@ -79,7 +79,6 @@
     font-weight: 600;
   }
 
-  /* When inside an active accent button, boost background contrast */
   :global(.btn-accent) .variant-tab,
   :global(.btn-accent) .variant-pill,
   :global(.btn.btn-accent) .variant-tab,

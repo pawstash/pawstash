@@ -114,7 +114,6 @@ pub fn derive_download_cookie(url: &str, session_cookie: &str) -> Option<String>
     if session_cookie.trim().is_empty() {
         return None;
     }
-    // Never leak a provider session cookie to an external cloud host.
     let _ = derive_download_referer(url)?;
     if session_cookie.contains('=') {
         Some(session_cookie.to_string())

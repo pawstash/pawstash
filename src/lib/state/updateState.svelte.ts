@@ -37,9 +37,7 @@ export class UpdateState {
           }
         }
       );
-    } catch {
-      // Ignored if outside Tauri context
-    }
+    } catch {}
   }
 
   async check(silent: boolean = false) {
@@ -96,9 +94,6 @@ export class UpdateState {
   }
 
   closeModal() {
-    if (this.downloading) {
-      // Don't close if download in progress, or allow minimize
-    }
     this.modalOpen = false;
   }
 
@@ -117,7 +112,6 @@ export class UpdateState {
     const assetName = this.info?.asset_name || 'pawstash-update';
 
     if (!downloadUrl) {
-      // If no direct asset matching current platform, fallback to GitHub release in browser
       return this.openReleasePage();
     }
 

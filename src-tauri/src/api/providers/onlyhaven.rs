@@ -627,7 +627,7 @@ impl OnlyHavenProvider {
             HeaderValue::from_static(crate::downloader::PAWSTASH_USER_AGENT),
         );
 
-        let client = Client::builder()
+        let client = crate::net::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .gzip(true)
             .default_headers(headers)
@@ -953,7 +953,7 @@ impl SourceProvider for OnlyHavenProvider {
     async fn fetch_creators(&self) -> Result<Vec<Creator>, String> {
         let mut all_rows: Vec<OnlyHavenCreatorRow> = Vec::new();
         let chunk_size = 10;
-        let max_pages = 30; // Up to 1,500 creators concurrently fetched
+        let max_pages = 30;
 
         for batch_start in (0..max_pages).step_by(chunk_size) {
             let tasks: Vec<_> = (batch_start..std::cmp::min(batch_start + chunk_size, max_pages))

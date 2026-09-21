@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod downloader;
 pub mod logging;
+pub mod net;
 pub mod server;
 pub mod smart_links;
 pub mod subscriptions;
@@ -104,8 +105,6 @@ pub fn run() {
 
     builder
         .setup(move |app| {
-            // Do not reveal an uninitialized WebView: on Windows it otherwise
-            // appears as a large gray surface while Vite is still serving the UI.
             let window_handle = app.handle().clone();
             let wh = window_handle.clone();
             app.listen("frontend-ready", move |_| {
@@ -288,6 +287,7 @@ pub fn run() {
             resolve_creator_avatar_url,
             resolve_creator_banner_url,
             get_video_thumbnail,
+            get_thumbnail_path,
             store_video_thumbnail,
             search_hash,
             flag_post,

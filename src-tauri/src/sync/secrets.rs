@@ -89,7 +89,6 @@ impl SecretStore {
         }
         let raw = std::fs::read(&path).map_err(|e| e.to_string())?;
         if !raw.starts_with(android_vault::MAGIC_HEADER) {
-            // Auto-migrate legacy unencrypted secret entry to encrypted PWSEC2 envelope
             if let Ok(encrypted) = android_vault::encrypt(&raw) {
                 let _ = std::fs::write(&path, encrypted);
             }
@@ -239,7 +238,6 @@ mod android_vault {
                     err
                 })
         } else {
-            // Unencrypted legacy fallback
             Ok(envelope.to_vec())
         }
     }

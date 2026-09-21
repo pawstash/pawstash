@@ -76,7 +76,7 @@ fn strip_redundant_release_heading(body: &str) -> String {
 #[tauri::command]
 pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let client = reqwest::Client::builder()
+    let client = crate::net::builder()
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
@@ -108,7 +108,6 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
                 if !is_version_newer(tag, &current_version) {
                     return false;
                 }
-                // When updating to a stable release, exclude development pre-releases of that release/branch
                 if !latest.prerelease && r.prerelease {
                     return false;
                 }
@@ -243,7 +242,7 @@ pub async fn download_and_install_update(
     };
     let target_path = temp_dir.join(&safe_name);
 
-    let client = reqwest::Client::builder()
+    let client = crate::net::builder()
         .user_agent(USER_AGENT)
         .no_gzip()
         .build()
@@ -505,7 +504,6 @@ fn find_platform_asset(assets: &[ReleaseAsset]) -> (Option<String>, Option<Strin
 fn find_platform_asset_ref(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     #[cfg(target_os = "windows")]
     {
-        // Priority 1: Setup installer
         if let Some(asset) = assets.iter().find(|a| {
             let name = a.name.to_lowercase();
             name.ends_with("-setup.exe")
@@ -514,14 +512,12 @@ fn find_platform_asset_ref(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
         }) {
             return Some(asset);
         }
-        // Priority 2: MSI installer
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".msi"))
         {
             return Some(asset);
         }
-        // Priority 3: Portable / standalone executable
         if let Some(asset) = assets
             .iter()
             .find(|a| a.name.to_lowercase().ends_with(".exe"))
