@@ -58,6 +58,7 @@
   import IconTextFont from '~icons/fluent/text-font-24-regular';
   import IconFlagUs from '~icons/circle-flags/us';
   import IconFlagRu from '~icons/circle-flags/ru';
+  import IconFlagCn from '~icons/circle-flags/cn';
   import IconCheck from '~icons/fluent/checkmark-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconGrid from '~icons/fluent/grid-24-regular';
@@ -223,7 +224,7 @@
     try {
       const d = new Date(BUILD_TIME);
       if (isNaN(d.getTime())) return BUILD_TIME;
-      return d.toLocaleString(i18n.currentLocale === 'ru' ? 'ru-RU' : 'en-US', {
+      return d.toLocaleString(i18n.currentLocale, {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -1199,10 +1200,12 @@
           <ChoiceGroup
             options={[
               { value: 'en', label: 'English', icon: IconFlagUs },
-              { value: 'ru', label: 'Русский', icon: IconFlagRu }
+              { value: 'ru', label: 'Русский', icon: IconFlagRu },
+              { value: 'zh-CN', label: '简体中文', icon: IconFlagCn }
             ]}
             value={i18n.currentLocale}
-            onchange={(val) => i18n.setLocale(val as any)}
+            onchange={(val) => i18n.setLocale(val as Locale)}
+            wrap={true}
           />
         </SettingItem>
 

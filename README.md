@@ -3,6 +3,10 @@
 </p>
 
 <p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more.
 </p>
 

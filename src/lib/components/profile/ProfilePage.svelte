@@ -235,7 +235,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    notify.success(i18n.t('sync.recovery_copied'), { glyph: 'copied' });
+    notify.success(i18n.t('sync.recovery_download_started'), { glyph: 'download' });
   }
 
   async function handleUnlockSubmit() {

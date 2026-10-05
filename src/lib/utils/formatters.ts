@@ -1,4 +1,5 @@
 import { extraField } from './fields';
+import { i18n } from '$lib/i18n';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
   if (bytes === 0) return '0 B';
@@ -27,7 +28,7 @@ export function formatDate(dateValue?: string | number | null): string {
       ? new Date(num < 10_000_000_000 ? num * 1000 : num)
       : new Date(String(dateValue));
     if (isNaN(date.getTime())) return String(dateValue);
-    return date.toLocaleDateString(undefined, {
+    return date.toLocaleDateString(i18n.currentLocale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric'

@@ -165,7 +165,7 @@
   function formatTimestamp(ts?: number) {
     if (!ts) return '';
     const date = new Date(ts * 1000);
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return date.toLocaleDateString(i18n.currentLocale, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   function toggleService(service: string) {
