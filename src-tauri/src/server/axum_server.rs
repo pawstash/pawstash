@@ -46,7 +46,8 @@ pub struct MediaServerState {
     pub allowed_roots: Vec<PathBuf>,
     pub config_manager: Arc<crate::config::ConfigManager>,
     pub token: String,
-    upstream: Arc<UpstreamGateway>,
+    pub thumb_cache_dir: PathBuf,
+    pub(crate) upstream: Arc<UpstreamGateway>,
     archives: Arc<crate::archive::ArchiveRegistry>,
     resolved_roots: tokio::sync::RwLock<Option<ResolvedRoots>>,
 }
@@ -279,6 +280,7 @@ impl MediaServerState {
             allowed_roots,
             config_manager,
             token,
+            thumb_cache_dir: crate::db::storage::data_root().join("thumb_cache"),
             upstream,
             archives,
             resolved_roots: tokio::sync::RwLock::new(None),
@@ -367,6 +369,10 @@ impl MediaServer {
 
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
+            .route(
+                "/thumb",
+                get(crate::server::thumbnails::serve_thumbnail_handler),
+            )
             .route("/cloud_stream/mega", get(serve_mega_stream_handler))
             .route("/cloud_stream/filen", get(serve_filen_stream_handler))
             .route(
@@ -573,7 +579,10 @@ struct AuthQuery {
     token: String,
 }
 
-fn require_token(state: &MediaServerState, provided: &str) -> Result<(), (StatusCode, String)> {
+pub(crate) fn require_token(
+    state: &MediaServerState,
+    provided: &str,
+) -> Result<(), (StatusCode, String)> {
     if provided.as_bytes() == state.token.as_bytes() {
         Ok(())
     } else {

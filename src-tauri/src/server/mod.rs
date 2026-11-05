@@ -1,4 +1,5 @@
 pub mod axum_server;
+pub mod thumbnails;
 
 pub fn absolute_local_media_url(url: String, port: u16, token: &str) -> Result<String, String> {
     if !url.starts_with('/') {

@@ -45,7 +45,6 @@ scraper = "0.22"
 sha2 = "0.10"
 argon2 = "0.5"
 base64 = "0.22"
-# tokio-rustls stays on ring like reqwest, so no second crypto provider is pulled in.
 httparse = "1"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 webpki-roots = "1"
@@ -59,6 +58,7 @@ rand = "0.8"
 async-stream = "0.3"
 bytes = "1.0"
 flate2 = "1.0"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 dunce = "1.0"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2", "deflate64", "bzip2", "aes-crypto"] }
 pbkdf2 = "0.12"

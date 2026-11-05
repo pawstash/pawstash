@@ -406,6 +406,16 @@ export function postThumbnailUrl(post: Post): string | null {
   return post.thumbnail_url || post.file?.thumbnail_url || null;
 }
 
+const LOCAL_MEDIA_HOST = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i;
+
+/** Tiles ask the media server for a downscaled copy: a provider preview decodes to 4.5 MB inside a 245px tile. */
+export function thumbnailProxySrc(url: string | null | undefined, width: number): string | null {
+  if (!url) return null;
+  if (!/^https?:\/\//i.test(url) || LOCAL_MEDIA_HOST.test(url)) return url;
+  if (serverPortState.port <= 0 || !serverPortState.token) return url;
+  return serverPortState.mediaUrl(`/thumb?u=${encodeURIComponent(url)}&w=${width}`) || url;
+}
+
 export function postThumbnailSrc(post?: Post | null): string | null {
   if (!post) return null;
   const previewPath = post.preview_path || extraField<string>(post, 'local_preview_path');

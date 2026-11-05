@@ -20,7 +20,8 @@
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle, decodeHtmlEntities } from '$lib/utils/formatters';
-  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, detailIsOutdated, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, detailIsOutdated, videoPoster, thumbnailProxySrc } from '$lib/utils/media';
+  import { claimHoverVideo, releaseHoverVideo } from '$lib/utils/hoverVideo';
   import { getMediaThumbnail, cancelMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
   import { extraField } from '$lib/utils/fields';
@@ -143,6 +144,18 @@
     (isAnimated && generatedThumbnail ? generatedThumbnail : null) ||
     activeThumbnail
   );
+  let tileThumbnail = $derived(thumbnailProxySrc(idleThumbnail, 400));
+
+  let imageAttempt = $state(0);
+  let tileSources = $derived.by(() =>
+    [...new Set([tileThumbnail, idleThumbnail, thumbnailProxySrc(mediaUrl, 400), mediaUrl]
+      .filter((value): value is string => Boolean(value)))]
+  );
+
+  $effect(() => {
+    tileSources;
+    imageAttempt = 0;
+  });
 
   let isHovered = $state(false);
   let showVideo = $state(false);
@@ -179,6 +192,13 @@
       videoEl.pause();
     }
   }
+
+  $effect(() => {
+    const element = videoEl;
+    if (!showVideo || !element) return;
+    claimHoverVideo(element);
+    return () => releaseHoverVideo(element);
+  });
 
   onDestroy(() => {
     if (playTimeout) clearTimeout(playTimeout);
@@ -612,7 +632,7 @@
   {#if idleThumbnail}
     <img
       class="grid-tile-media"
-      src={idleThumbnail}
+      src={tileSources[imageAttempt]}
       alt=""
       loading="lazy"
       decoding="async"
@@ -622,21 +642,28 @@
           freezeFrame(e.currentTarget as HTMLImageElement);
         }
       }}
-      onerror={(e) => {
-        const target = e.currentTarget as HTMLImageElement;
-        if (mediaUrl && target.src !== mediaUrl) {
-          target.src = mediaUrl;
+      onerror={() => {
+        if (imageAttempt < tileSources.length - 1) {
+          imageAttempt++;
         } else {
           imageError = true;
           imageLoaded = false;
-          target.style.display = 'none';
         }
       }}
     />
   {:else if isVideo}
     <div class="grid-tile-placeholder"><IconVideo /></div>
   {:else if mediaUrl}
-    <img class="grid-tile-media" src={mediaUrl} alt="" loading="lazy" decoding="async" />
+    <img
+      class="grid-tile-media"
+      src={tileSources[imageAttempt]}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onerror={() => {
+        if (imageAttempt < tileSources.length - 1) imageAttempt++;
+      }}
+    />
   {:else if isLocked}
     <div class="grid-tile-placeholder grid-tile-placeholder-locked" use:tooltip={i18n.t('feed.locked_content')}>
       <IconLock class="w-7 h-7 text-accent opacity-70" />
