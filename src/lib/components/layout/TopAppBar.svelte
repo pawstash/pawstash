@@ -180,6 +180,7 @@
   <header
     class="top-app-bar is-touch"
     class:is-solid={(solid && scrollTop > 0) || selecting}
+    class:is-selecting={selecting}
     class:is-hidden={hidden}
     data-control-size="md"
     bind:this={barEl}
@@ -330,7 +331,7 @@
   }
 
   .top-app-bar.is-pointer.is-selecting {
-    background: var(--surface-container);
+    background: var(--chrome-surface);
   }
 
   .top-app-bar.is-pointer.has-window-controls .bar-actions {
@@ -361,6 +362,10 @@
 
   .top-app-bar.is-touch.is-solid {
     background: var(--surface-container);
+  }
+
+  .top-app-bar.is-touch.is-selecting {
+    background: var(--chrome-surface);
   }
 
   .top-app-bar.is-touch.is-hidden {
