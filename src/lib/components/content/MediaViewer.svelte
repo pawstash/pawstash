@@ -34,7 +34,7 @@
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import { logMediaError } from '$lib/utils/logger';
-  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, type MediaFailureState } from '$lib/utils/media';
+  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, thumbnailProxySrc, type MediaFailureState } from '$lib/utils/media';
   import { openDownloadedFile } from '$lib/utils/ipc';
   import { getVideoThumbnail, isFrameBlankOrBlack } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
@@ -61,13 +61,14 @@
     items: MediaViewerItem[];
     initialIndex?: number;
     initialTime?: number;
+    originRect?: DOMRect | null;
     onclose: (finalIndex?: number, finalTime?: number) => void;
     ondownload?: (item: MediaViewerItem, index: number) => void | Promise<void>;
     onopenpost?: (item: MediaViewerItem, index: number) => void;
     ondelete?: (item: MediaViewerItem, index: number) => void | Promise<void>;
   }
 
-  let { items, initialIndex = 0, initialTime = 0, onclose, ondownload, onopenpost, ondelete }: Props = $props();
+  let { items, initialIndex = 0, initialTime = 0, originRect = null, onclose, ondownload, onopenpost, ondelete }: Props = $props();
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
@@ -108,10 +109,10 @@
   let isSwiping = $state(false);
   let wasDragging = false;
   let dragResetTimer: ReturnType<typeof setTimeout> | undefined;
-  let slidePhase = $state<'idle' | 'out' | 'in'>('idle');
-  let slideTimer: ReturnType<typeof setTimeout> | undefined;
-  let dismissScale = $derived(1 - Math.min(0.25, Math.abs(dismissOffsetY) * 0.0005));
-  let dismissOpacity = $derived(Math.max(0.1, 1 - Math.abs(dismissOffsetY) / 350));
+  let gestureTween: (() => void) | null = null;
+  let gestureStageWidth = 0;
+  let dismissScale = $derived(1 - Math.min(0.18, Math.abs(dismissOffsetY) * 0.0004));
+  let dismissOpacity = $derived(Math.max(0, 1 - Math.abs(dismissOffsetY) / 420));
   let isGestureDragging = $derived(!isDismissing && (isSwiping || dismissOffsetY !== 0));
   let controlsVisible = $state(true);
   let fullscreen = $state(false);
@@ -134,7 +135,34 @@
   let controlsTimer: ReturnType<typeof setTimeout> | undefined;
   let closing = false;
   let hasAppliedInitialTime = false;
+
+  function growFromOrigin() {
+    const origin = originRect;
+    const target = fitFrame;
+    if (!origin || !target || origin.width <= 0 || origin.height <= 0) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const rect = target.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const scaleX = origin.width / rect.width;
+    const scaleY = origin.height / rect.height;
+    const dx = origin.x + origin.width / 2 - (rect.x + rect.width / 2);
+    const dy = origin.y + origin.height / 2 - (rect.y + rect.height / 2);
+    target.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`, borderRadius: '12px', opacity: 0.4 },
+        { transform: 'translate(0, 0) scale(1, 1)', borderRadius: '0px', opacity: 1 }
+      ],
+      { duration: 300, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+    );
+  }
   let videoErrors = $state<Record<number, MediaFailureState>>({});
+
+  function clearVideoError(target: number) {
+    if (!videoErrors[target]) return;
+    const next = { ...videoErrors };
+    delete next[target];
+    videoErrors = next;
+  }
 
   function handleVideoMetadata(e: Event) {
     const video = e.currentTarget as HTMLVideoElement;
@@ -180,12 +208,12 @@
 
   onDestroy(() => {
     unregisterBack();
-    if (slideTimer) clearTimeout(slideTimer);
+    cancelGestureTween();
     if (dragResetTimer) clearTimeout(dragResetTimer);
     if (scrollRafId) cancelAnimationFrame(scrollRafId);
   });
 
-  type PointerPoint = { x: number; y: number; startX: number; startY: number; startedAt: number };
+  type PointerPoint = { x: number; y: number; startX: number; startY: number; startedAt: number; axis: 'x' | 'y' | null };
   const pointers = new Map<number, PointerPoint>();
 
   let current = $derived(items[index]);
@@ -197,7 +225,9 @@
   let currentDownloaded = $derived(current?.downloadStatus === 'completed');
   let currentDownloadBytes = $derived(Math.max(current?.totalBytes || 0, current?.downloadedBytes || 0, current?.size || 0));
   let currentDownloadProgress = $derived(current?.totalBytes ? Math.min(100, Math.round((current.downloadedBytes || 0) / current.totalBytes * 100)) : 0);
-  let transform = $derived(`translate3d(${translateX + swipeOffset}px, ${translateY + dismissOffsetY}px, 0) scale(${scale * dismissScale})`);
+  let transform = $derived(`translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`);
+  let frameTransform = $derived(`translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})`);
+  let frameOpacity = $derived(swipeOpacity);
 
   let filmstripContainer = $state<HTMLDivElement>();
   let thumbnailRefs = $state<Record<number, HTMLButtonElement>>({});
@@ -431,76 +461,90 @@
     requestAnimationFrame(() => clampTranslation());
   }
 
+  const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
+  const easeOutQuint = (t: number) => 1 - (1 - t) ** 5;
+
+  function cancelGestureTween() {
+    if (!gestureTween) return;
+    gestureTween();
+    gestureTween = null;
+  }
+
+  function animateGesture(
+    duration: number,
+    easing: (t: number) => number,
+    step: (progress: number) => void,
+    done?: () => void
+  ) {
+    cancelGestureTween();
+    const startedAt = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      step(easing(progress));
+      if (progress < 1) {
+        frame = requestAnimationFrame(tick);
+      } else {
+        gestureTween = null;
+        done?.();
+      }
+    };
+    frame = requestAnimationFrame(tick);
+    gestureTween = () => cancelAnimationFrame(frame);
+  }
+
   function transitionSlide(direction: 1 | -1) {
     if (items.length < 2) return;
+    const stageWidth = gestureStageWidth || stage?.clientWidth || window.innerWidth;
+    const startX = swipeOffset;
+    const startOpacity = swipeOpacity;
+    const exitX = -direction * Math.max(Math.abs(startX) + 60, Math.min(stageWidth * 0.3, 240));
+    const enterX = direction * Math.min(stageWidth * 0.14, 110);
 
-    if (slideTimer) {
-      clearTimeout(slideTimer);
-      slideTimer = undefined;
-    }
-
-    const stageWidth = stage?.clientWidth || window.innerWidth;
-    const exitDist = Math.min(stageWidth * 0.45, 360);
-    const enterDist = Math.min(stageWidth * 0.35, 280);
-
-    slidePhase = 'out';
-    isSwiping = false;
-    swipeOffset = direction === 1 ? -exitDist : exitDist;
-    swipeOpacity = 0;
-
-    slideTimer = setTimeout(() => {
-      index = (index + direction + items.length) % items.length;
-      resetTransform();
-
-      isSwiping = true;
-      slidePhase = 'idle';
-      swipeOffset = direction === 1 ? enterDist : -enterDist;
-      swipeOpacity = 0;
-
-      requestAnimationFrame(() => {
+    animateGesture(
+      140,
+      easeOutCubic,
+      (t) => {
+        swipeOffset = startX + (exitX - startX) * t;
+        swipeOpacity = startOpacity * (1 - t);
+      },
+      () => {
+        index = (index + direction + items.length) % items.length;
+        resetTransform();
+        swipeOffset = enterX;
+        swipeOpacity = 0;
         requestAnimationFrame(() => {
-          isSwiping = false;
-          slidePhase = 'in';
-          swipeOffset = 0;
-          swipeOpacity = 1;
-
-          slideTimer = setTimeout(() => {
-            slidePhase = 'idle';
-            slideTimer = undefined;
-          }, 180);
+          animateGesture(220, easeOutCubic, (t) => {
+            swipeOffset = enterX * (1 - t);
+            swipeOpacity = t;
+          });
         });
-      });
-    }, 120);
+      }
+    );
   }
 
   function navigate(delta: number, animate = false) {
     if (items.length < 2) return;
     if (animate) {
       transitionSlide(delta > 0 ? 1 : -1);
-    } else {
-      if (slideTimer) {
-        clearTimeout(slideTimer);
-        slideTimer = undefined;
-      }
-      slidePhase = 'idle';
-      isSwiping = false;
-      swipeOffset = 0;
-      swipeOpacity = 1;
-      index = (index + delta + items.length) % items.length;
-      resetTransform();
+      return;
     }
+    cancelGestureTween();
+    isSwiping = false;
+    swipeOffset = 0;
+    swipeOpacity = 1;
+    dismissOffsetY = 0;
+    index = (index + delta + items.length) % items.length;
+    resetTransform();
   }
 
   function select(nextIndex: number) {
     if (nextIndex === index) return;
-    if (slideTimer) {
-      clearTimeout(slideTimer);
-      slideTimer = undefined;
-    }
-    slidePhase = 'idle';
+    cancelGestureTween();
     isSwiping = false;
     swipeOffset = 0;
     swipeOpacity = 1;
+    dismissOffsetY = 0;
     index = nextIndex;
     resetTransform();
   }
@@ -572,27 +616,39 @@
     if (controlsVisible) registerActivity();
   }
 
+  function resistDismiss(distance: number) {
+    const limit = 200;
+    const magnitude = Math.abs(distance);
+    if (magnitude <= limit) return distance;
+    return Math.sign(distance) * (limit + (magnitude - limit) * 0.55);
+  }
+
   function handlePointerDown(event: PointerEvent) {
+    if (closing || isDismissing) return;
     if (controlsVisible) registerActivity();
     const target = event.target as HTMLElement;
     if (target.closest('button, input, select, audio, .media-viewer-controls')) return;
 
+    cancelGestureTween();
+    gestureStageWidth = stage?.clientWidth || window.innerWidth;
     pointers.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
       startX: event.clientX,
       startY: event.clientY,
-      startedAt: performance.now()
+      startedAt: performance.now(),
+      axis: null
     });
     stage?.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: PointerEvent) {
     const previous = pointers.get(event.pointerId);
-    if (!previous) return;
+    if (!previous || closing || isDismissing) return;
 
     const before = [...pointers.values()];
-    pointers.set(event.pointerId, { ...previous, x: event.clientX, y: event.clientY });
+    const next = { ...previous, x: event.clientX, y: event.clientY };
+    pointers.set(event.pointerId, next);
     const after = [...pointers.values()];
 
     if (after.length >= 2 && current?.kind === 'image') {
@@ -617,28 +673,30 @@
     if (scale > MIN_SCALE + 0.05 && current?.kind === 'image') {
       clampTranslation(translateX + deltaX, translateY + deltaY);
       event.preventDefault();
-    } else {
-      const totalDeltaX = event.clientX - previous.startX;
-      const totalDeltaY = event.clientY - previous.startY;
-
-      if (pointers.size === 1 && Math.abs(totalDeltaY) > 8 && Math.abs(totalDeltaY) > Math.abs(totalDeltaX) * 1.1) {
-        dismissOffsetY = totalDeltaY;
-        swipeOffset = 0;
-        swipeOpacity = 1;
-        event.preventDefault();
-        return;
-      }
-
-      if (dismissOffsetY === 0 && items.length > 1) {
-        if (Math.abs(totalDeltaX) > 4 || Math.abs(swipeOffset) > 0) {
-          isSwiping = true;
-          slidePhase = 'idle';
-          swipeOffset = totalDeltaX;
-          swipeOpacity = Math.max(0.4, 1 - Math.abs(totalDeltaX) / 800);
-          event.preventDefault();
-        }
-      }
+      return;
     }
+
+    const totalX = event.clientX - previous.startX;
+    const totalY = event.clientY - previous.startY;
+    let axis = previous.axis;
+    if (!axis) {
+      if (Math.hypot(totalX, totalY) < 8) return;
+      axis = Math.abs(totalX) > Math.abs(totalY) ? 'x' : 'y';
+      if (axis === 'x' && items.length < 2) axis = 'y';
+    }
+    pointers.set(event.pointerId, { ...next, axis });
+
+    if (axis === 'y') {
+      dismissOffsetY = resistDismiss(totalY);
+      event.preventDefault();
+      return;
+    }
+
+    isSwiping = true;
+    const width = gestureStageWidth || window.innerWidth;
+    swipeOffset = totalX;
+    swipeOpacity = 1 - Math.min(0.2, Math.abs(totalX) / (width * 3));
+    event.preventDefault();
   }
 
   function finishPointer(event: PointerEvent) {
@@ -648,8 +706,7 @@
 
     const deltaX = event.clientX - point.startX;
     const deltaY = event.clientY - point.startY;
-    const moved = Math.hypot(deltaX, deltaY);
-    if (moved > 6 || isSwiping || dismissOffsetY !== 0) {
+    if (Math.hypot(deltaX, deltaY) > 6) {
       wasDragging = true;
       if (dragResetTimer) clearTimeout(dragResetTimer);
       dragResetTimer = setTimeout(() => {
@@ -657,45 +714,61 @@
       }, 120);
     }
 
-    if (dismissOffsetY !== 0) {
-      const deltaY = event.clientY - point.startY;
-      const elapsed = Math.max(1, performance.now() - point.startedAt);
-      const velocityY = Math.abs(deltaY) / elapsed;
+    if (closing || isDismissing) return;
 
-      if (Math.abs(dismissOffsetY) > 110 || (Math.abs(dismissOffsetY) > 30 && velocityY > 0.25)) {
-        isDismissing = true;
-        dismissOffsetY = dismissOffsetY > 0 ? 600 : -600;
-        setTimeout(() => {
-          close();
-        }, 140);
-        return;
+    const elapsed = Math.max(1, performance.now() - point.startedAt);
+
+    if (point.axis === 'y') {
+      const velocityY = deltaY / elapsed;
+      const flung = Math.abs(velocityY) > 0.55 && Math.sign(velocityY) === Math.sign(deltaY);
+      if (Math.abs(deltaY) > 120 || flung) {
+        dismissViewer();
       } else {
-        dismissOffsetY = 0;
+        const fromY = dismissOffsetY;
+        animateGesture(320, easeOutQuint, (t) => {
+          dismissOffsetY = fromY * (1 - t);
+        });
       }
+      return;
     }
 
-    if (scale <= MIN_SCALE + 0.05 && items.length > 1 && swipeOffset !== 0) {
-      const deltaX = event.clientX - point.startX;
-      const deltaY = event.clientY - point.startY;
-      const elapsed = Math.max(1, performance.now() - point.startedAt);
-      const velocityX = Math.abs(deltaX) / elapsed;
-
-      const isSwipe = (Math.abs(deltaX) > 36 || (Math.abs(deltaX) > 16 && velocityX > 0.18)) && Math.abs(deltaX) > Math.abs(deltaY) * 0.7;
-
-      if (isSwipe) {
+    if (point.axis === 'x' && items.length > 1) {
+      const width = gestureStageWidth || stage?.clientWidth || window.innerWidth;
+      const velocityX = deltaX / elapsed;
+      const flung = Math.abs(velocityX) > 0.45 && Math.sign(velocityX) === Math.sign(deltaX);
+      if (Math.abs(deltaX) > width * 0.2 || flung) {
         transitionSlide(deltaX < 0 ? 1 : -1);
       } else {
+        const fromX = swipeOffset;
+        const fromOpacity = swipeOpacity;
         isSwiping = false;
-        swipeOffset = 0;
-        swipeOpacity = 1;
+        animateGesture(280, easeOutQuint, (t) => {
+          swipeOffset = fromX * (1 - t);
+          swipeOpacity = fromOpacity + (1 - fromOpacity) * t;
+        });
       }
-    } else {
-      isSwiping = false;
-      swipeOffset = 0;
-      swipeOpacity = 1;
+      return;
     }
 
+    isSwiping = false;
+    swipeOffset = 0;
+    swipeOpacity = 1;
     if (pointers.size === 0) clampTranslation();
+  }
+
+  function dismissViewer() {
+    isDismissing = true;
+    const height = window.innerHeight || 800;
+    const fromY = dismissOffsetY;
+    const targetY = fromY >= 0 ? height * 0.8 : -height * 0.8;
+    animateGesture(
+      220,
+      easeOutCubic,
+      (t) => {
+        dismissOffsetY = fromY + (targetY - fromY) * t;
+      },
+      () => close()
+    );
   }
 
   async function toggleFullscreen() {
@@ -793,11 +866,11 @@
       registerActivity();
     }
 
-    for (const neighbor of [items[index - 1], items[index + 1]]) {
+    for (const neighbor of [items[index + 1]]) {
       if (neighbor?.kind === 'image') {
         const preload = new Image();
         preload.decoding = 'async';
-        preload.src = neighbor.url;
+        preload.src = thumbnailProxySrc(neighbor.url, 1200) ?? neighbor.url;
       }
     }
   });
@@ -814,6 +887,7 @@
     const handleFullscreenChange = () => fullscreen = document.fullscreenElement === root;
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     void tick().then(() => root?.focus());
+    void tick().then(growFromOrigin);
     registerActivity();
 
     return () => {
@@ -912,12 +986,10 @@
       <div
         bind:this={fitFrame}
         class="media-fit-frame"
-        class:is-swiping={isSwiping}
         class:is-dragging={isGestureDragging}
-        class:is-sliding-out={slidePhase === 'out'}
-        class:is-sliding-in={slidePhase === 'in'}
         class:file-frame={!['image', 'video'].includes(current.kind)}
-        style:opacity={isDismissing ? dismissOpacity : swipeOpacity}
+        style:transform={frameTransform}
+        style:opacity={frameOpacity}
       >
         {#if current.kind === 'image'}
           {#key current?.id || index}
@@ -936,7 +1008,7 @@
         {:else if current.html}
           <div
             class="viewer-embed-state"
-            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            
           >
             <div class="viewer-embed-iframe-wrapper">
               {@html sanitizeEmbedHtml(current.html)}
@@ -946,7 +1018,7 @@
           {@const failure = current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined })}
           <div
             class="viewer-file-state"
-            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            
           >
             <IconVideoOff class="w-12 h-12 text-ink/50 mb-2" />
             <strong class="text-ink text-base font-semibold">{current.name}</strong>
@@ -1009,18 +1081,19 @@
           <video
             bind:this={videoElement}
             class="media-viewer-media"
-            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            
             src={current.url}
             poster={videoPoster(current.poster || videoThumbnails[index])}
             controls
             autoplay
             playsinline
-            preload="auto"
+            preload="metadata"
             use:panicCapture
             onkeydown={handleGlobalPanicKey}
             onplaying={handleMainVideoLoaded}
             onerror={async (e) => {
               const el = e.currentTarget as HTMLVideoElement;
+              if (!el.error) return;
               logMediaError('video', el.src, current.name, el.error);
               const syncDiag = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
                 isLocal: currentDownloaded
@@ -1035,14 +1108,17 @@
                 }
               }
             }}
-            onloadedmetadata={handleVideoMetadata}
+            onloadedmetadata={(e) => {
+              clearVideoError(index);
+              handleVideoMetadata(e);
+            }}
             ontimeupdate={handleVideoTimeUpdate}
             onended={handleVideoEnded}
           ></video>
         {:else if current.kind === 'audio'}
           <div
             class="viewer-file-state"
-            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            
           >
             <IconMusic />
             <strong>{current.name}</strong>
@@ -1060,7 +1136,7 @@
         {:else}
           <div
             class="viewer-file-state"
-            style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
+            
           >
             <IconDocument />
             <strong>{current.name}</strong>
@@ -1211,7 +1287,7 @@
     background: #000;
     color: var(--text-primary);
     outline: none;
-    animation: viewer-enter 180ms var(--ease-expo, ease-out);
+    animation: viewer-enter 220ms cubic-bezier(0.2, 0, 0, 1);
     overscroll-behavior: none;
   }
 
@@ -1220,12 +1296,8 @@
     pointer-events: none;
   }
 
-  .media-viewer.is-dismissing .media-fit-frame {
-    transition: transform 140ms ease-out;
-  }
-
   @keyframes viewer-enter {
-    from { opacity: 0; transform: scale(0.992); }
+    from { opacity: 0; transform: scale(0.94); }
     to { opacity: 1; transform: scale(1); }
   }
 
@@ -1391,7 +1463,6 @@
     place-items: center;
     min-width: 0;
     min-height: 0;
-    transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease-out;
     will-change: transform, opacity;
   }
 
@@ -1402,20 +1473,8 @@
     justify-content: center;
   }
 
-  .media-fit-frame.is-swiping {
-    transition: none !important;
-  }
-
   .media-fit-frame.is-dragging .media-viewer-media {
     transition: none;
-  }
-
-  .media-fit-frame.is-sliding-out {
-    transition: transform 120ms ease-in, opacity 120ms ease-in !important;
-  }
-
-  .media-fit-frame.is-sliding-in {
-    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease-out !important;
   }
 
   .media-viewer-stage.image-interactive {
@@ -1521,10 +1580,10 @@
     display: flex;
     align-items: center;
     justify-content: safe center;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
     box-sizing: border-box;
-    padding: 6px 36px 10px;
+    padding: 8px 32px 12px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -1532,7 +1591,6 @@
     user-select: none;
     -webkit-overflow-scrolling: touch;
     cursor: grab;
-    will-change: scroll-position;
     contain: content;
   }
 
@@ -1562,32 +1620,41 @@
   .filmstrip-thumb {
     position: relative;
     height: 58px;
-    min-width: 36px;
+    min-width: 40px;
     max-width: 140px;
     display: grid;
     place-items: center;
     overflow: hidden;
     padding: 0;
     border: 0;
-    border-radius: 6px;
-    background: rgba(20, 20, 24, 0.7);
+    border-radius: var(--radius-sm, 8px);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-secondary);
-    opacity: 0.55;
-    transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    transition: opacity 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard);
     contain: layout paint;
   }
 
-  .filmstrip-item:hover .filmstrip-thumb {
-    opacity: 0.88;
-    background: rgba(var(--surface-tint-rgb), 0.1);
-    transform: translateY(-2px);
+  .filmstrip-thumb::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: rgba(0, 0, 0, 0.42);
+    transition: opacity 160ms var(--ease-standard);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .filmstrip-item:hover .filmstrip-thumb::after {
+    opacity: 0.45;
   }
 
   .filmstrip-item.active .filmstrip-thumb {
-    opacity: 1;
-    box-shadow: 0 0 0 2px var(--accent-primary), 0 0 16px color-mix(in srgb, var(--accent-primary) 60%, transparent);
-    transform: translateY(-2px) scale(1.04);
-    z-index: 2;
+    box-shadow: 0 0 0 2px var(--accent-primary);
+  }
+
+  .filmstrip-item.active .filmstrip-thumb::after {
+    opacity: 0;
   }
 
   .filmstrip-thumb img {
@@ -1599,6 +1666,8 @@
   }
 
   .filmstrip-fallback {
+    position: relative;
+    z-index: 2;
     display: grid;
     place-items: center;
     width: 100%;
@@ -1614,6 +1683,7 @@
 
   .filmstrip-badge {
     position: absolute;
+    z-index: 2;
     bottom: 3px;
     right: 3px;
     display: inline-flex;
@@ -1841,10 +1911,9 @@
 
     .filmstrip-thumb {
       height: 64px;
-      min-width: 40px;
-      max-width: 140px;
-      flex: 0 0 auto;
-      border-radius: 6px;
+      min-width: 44px;
+      max-width: 150px;
+      border-radius: var(--radius-sm, 8px);
     }
 
     .media-viewer-identity strong { font-size: 13px; }
@@ -1856,9 +1925,9 @@
     :global(.media-viewer .viewer-fullscreen-btn) { display: none !important; }
     .filmstrip-thumb {
       height: 56px;
-      min-width: 34px;
-      max-width: 120px;
-      border-radius: 6px;
+      min-width: 38px;
+      max-width: 130px;
+      border-radius: var(--radius-sm, 8px);
     }
   }
 

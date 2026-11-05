@@ -45,7 +45,7 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, getPostTags, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, thumbnailProxySrc, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
@@ -827,21 +827,43 @@
 
   let hevcSupported = $state(true);
   let videoFailures = $state<Record<number, MediaFailureState>>({});
+  let videoAttempts = $state<Record<number, number>>({});
   let isCodecModalOpen = $state(false);
 
+  function retryVideo(index: number) {
+    videoAttempts = { ...videoAttempts, [index]: (videoAttempts[index] ?? 0) + 1 };
+    const next = { ...videoFailures };
+    delete next[index];
+    videoFailures = next;
+    activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+  }
+
+  function clearVideoFailure(index: number) {
+    if (!videoFailures[index]) return;
+    const next = { ...videoFailures };
+    delete next[index];
+    videoFailures = next;
+  }
+
   function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
-    if (typeof index === 'number' && file) {
-      const video = e.currentTarget as HTMLVideoElement;
-      if (video.videoWidth === 0 && video.videoHeight === 0 && video.duration > 0) {
-        logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
-        videoFailures[index] = { preset: 'unsupported_codec', format: 'H.265 / HEVC' };
-      }
+    if (typeof index !== 'number' || !file) return;
+    const video = e.currentTarget as HTMLVideoElement;
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      clearVideoFailure(index);
+      return;
     }
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !(video.duration > 0)) return;
+    logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
+    videoFailures = { ...videoFailures, [index]: { preset: 'unsupported_codec', format: 'H.265 / HEVC' } };
   }
 
   async function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
     if (typeof index === 'number' && file) {
       const video = e.currentTarget as HTMLVideoElement;
+      if (!video.error) {
+        logger.debug(`Media element reported an error without a media error for "${file.name}"`);
+        return;
+      }
       logMediaError('video', video.src, file.name, video.error);
 
       const job = attachmentDownload(file);
@@ -875,6 +897,12 @@
         if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
           videoFailures = { ...videoFailures, [index]: asyncDiag };
         }
+      }
+
+      if (videoFailures[index]) {
+        const next = new Set(activeVideoIndexes);
+        next.delete(index);
+        activeVideoIndexes = next;
       }
     }
   }
@@ -1215,6 +1243,7 @@
   }));
 
   let viewerInitialTime = $state(0);
+  let viewerOriginRect = $state<DOMRect | null>(null);
 
   function handleVideoPlay(e: Event) {
     const currentVideo = e.currentTarget as HTMLVideoElement;
@@ -1236,7 +1265,7 @@
 
   function openMediaViewer(file: Attachment, source: Attachment[] = activeGalleryItems, originVideoEl?: HTMLVideoElement | null) {
     let time = 0;
-    if (originVideoEl && !originVideoEl.paused) {
+    if (originVideoEl) {
       time = originVideoEl.currentTime || 0;
       originVideoEl.pause();
     } else {
@@ -1253,6 +1282,9 @@
     });
 
     viewerInitialTime = time;
+
+    const originElement = (document.activeElement as HTMLElement | null)?.closest('.video-frame, .media-open-surface');
+    viewerOriginRect = originElement ? originElement.getBoundingClientRect() : null;
 
     const sourceList = source && source.length > 0 ? source : [file];
     const sourceItems = sourceList
@@ -1399,6 +1431,7 @@
     const closedIndex = typeof finalIndex === 'number' ? finalIndex : viewerIndex;
     viewerIndex = null;
     viewerInitialTime = 0;
+    viewerOriginRect = null;
 
     if (typeof closedIndex === 'number' && typeof finalTime === 'number' && finalTime > 0) {
       const closedFile = viewerFiles[closedIndex];
@@ -2602,8 +2635,7 @@
                               variant="ghost"
                               class="placeholder-fix-btn"
                               onclick={() => {
-                                delete videoFailures[index];
-                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                                retryVideo(index);
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
@@ -2619,8 +2651,7 @@
                               variant="ghost"
                               class="placeholder-fix-btn"
                               onclick={() => {
-                                delete videoFailures[index];
-                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                                retryVideo(index);
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
@@ -2633,8 +2664,7 @@
                               variant="ghost"
                               class="placeholder-fix-btn"
                               onclick={() => {
-                                delete videoFailures[index];
-                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                                retryVideo(index);
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
@@ -2646,8 +2676,7 @@
                               variant="ghost"
                               class="placeholder-fix-btn"
                               onclick={() => {
-                                delete videoFailures[index];
-                                activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+                                retryVideo(index);
                               }}
                             >
                               <IconArrowClockwise class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
@@ -2687,6 +2716,7 @@
                             style:height={frame ? `${frame.height}px` : undefined}
                           >
                             {#if activeVideoIndexes.has(index)}
+                              {#key videoAttempts[index] ?? 0}
                               <!-- svelte-ignore a11y_media_has_caption -->
                               <video
                                 src={url}
@@ -2702,6 +2732,7 @@
                                 onerror={(e) => handleVideoError(e, file, index)}
                                 onplay={handleVideoPlay}
                               ></video>
+                              {/key}
                             {:else if thumbUrl}
                               <button
                                 class="media-open-surface video-thumbnail-surface"
@@ -2710,7 +2741,7 @@
                                 aria-label={i18n.t('post.play_video')}
                               >
                                 <img
-                                  src={thumbUrl}
+                                  src={thumbnailProxySrc(thumbUrl, 600) ?? thumbUrl}
                                   alt={file?.name || post.title}
                                   loading="lazy"
                                   decoding="async"
@@ -2738,7 +2769,7 @@
                           </div>
                         {:else}
                           {@const thumbUrl = attachmentThumbnailUrl(file!, service, post)}
-                          {@const displaySrc = downloaded?.final_path ? url : (thumbUrl || url)}
+                          {@const displaySrc = thumbnailProxySrc(downloaded?.final_path ? url : (thumbUrl || url), 800) ?? url}
                           <button
                             class="media-open-surface"
                             type="button"
@@ -3018,6 +3049,7 @@
     items={viewerItems}
     initialIndex={viewerIndex}
     initialTime={viewerInitialTime}
+    originRect={viewerOriginRect}
     onclose={handleCloseViewer}
     ondownload={downloadViewerItem}
   />
