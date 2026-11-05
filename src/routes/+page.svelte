@@ -1,3 +1,40 @@
+<script module lang="ts">
+  import type { AppRoute } from '$lib/state/navigationState.svelte';
+
+  function lazyView<T>(load: () => Promise<{ default: T }>): () => Promise<{ default: T }> {
+    let pending: Promise<{ default: T }> | undefined;
+    return () => (pending ??= load());
+  }
+
+  const views = {
+    feed: lazyView(() => import('$lib/components/content/FeedView.svelte')),
+    favorites: lazyView(() => import('$lib/components/content/FavoritesView.svelte')),
+    library: lazyView(() => import('$lib/components/library/LibraryView.svelte')),
+    creators: lazyView(() => import('$lib/components/content/CreatorsView.svelte')),
+    downloads: lazyView(() => import('$lib/components/downloads/DownloadQueueList.svelte')),
+    profile: lazyView(() => import('$lib/components/profile/ProfilePage.svelte')),
+    post: lazyView(() => import('$lib/components/content/PostPage.svelte')),
+    creator: lazyView(() => import('$lib/components/content/CreatorPage.svelte')),
+    settings: lazyView(() => import('$lib/components/settings/SettingsPage.svelte'))
+  };
+
+  function preloadView(name: AppRoute['name']) {
+    void views[name]();
+  }
+
+  function preloadRemainingViews() {
+    for (const name of Object.keys(views) as AppRoute['name'][]) void views[name]();
+  }
+
+  function scheduleViewPreload() {
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => preloadRemainingViews(), { timeout: 4000 });
+    } else {
+      setTimeout(preloadRemainingViews, 1500);
+    }
+  }
+</script>
+
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
@@ -19,16 +56,7 @@
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
   import MobileBottomNav from '$lib/components/layout/MobileBottomNav.svelte';
-  import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
   import SettingsNav from '$lib/components/settings/SettingsNav.svelte';
-  import FeedView from '$lib/components/content/FeedView.svelte';
-  import PostPage from '$lib/components/content/PostPage.svelte';
-  import CreatorPage from '$lib/components/content/CreatorPage.svelte';
-  import LibraryView from '$lib/components/library/LibraryView.svelte';
-  import DownloadQueueList from '$lib/components/downloads/DownloadQueueList.svelte';
-  import CreatorsView from '$lib/components/content/CreatorsView.svelte';
-  import FavoritesView from '$lib/components/content/FavoritesView.svelte';
-  import ProfilePage from '$lib/components/profile/ProfilePage.svelte';
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
   import NoticeModal from '$lib/components/ui/NoticeModal.svelte';
   import { noticeState } from '$lib/state/noticeState.svelte';
@@ -49,6 +77,7 @@
   import ContextMenu from '$lib/components/ui/ContextMenu.svelte';
 
   navigationState.init();
+  preloadView(navigationState.route.name);
 
   onMount(() => {
     initFrontendLogging();
@@ -138,6 +167,7 @@
     requestAnimationFrame(() => {
       void emit('frontend-ready');
       void apiShowMainWindow().catch((e) => logger.warn('Failed to show main window', e));
+      scheduleViewPreload();
     });
 
     return () => {
@@ -200,33 +230,62 @@
     <main class="flex-1 flex overflow-hidden w-full h-full">
       {#key navigationState.entryKey}
         {#if navigationState.route.name === 'feed'}
-          <FeedView />
+          {#await views.feed() then viewModule}
+            {@const FeedView = viewModule.default}
+            <FeedView />
+          {/await}
         {:else if navigationState.route.name === 'favorites'}
-          <FavoritesView />
+          {#await views.favorites() then viewModule}
+            {@const FavoritesView = viewModule.default}
+            <FavoritesView />
+          {/await}
         {:else if navigationState.route.name === 'library'}
-          <LibraryView />
+          {#await views.library() then viewModule}
+            {@const LibraryView = viewModule.default}
+            <LibraryView />
+          {/await}
         {:else if navigationState.route.name === 'downloads'}
-          <DownloadQueueList />
+          {#await views.downloads() then viewModule}
+            {@const DownloadQueueList = viewModule.default}
+            <DownloadQueueList />
+          {/await}
         {:else if navigationState.route.name === 'creators'}
-          <CreatorsView />
+          {#await views.creators() then viewModule}
+            {@const CreatorsView = viewModule.default}
+            <CreatorsView />
+          {/await}
         {:else if navigationState.route.name === 'profile'}
-          <ProfilePage />
+          {#await views.profile() then viewModule}
+            {@const ProfilePage = viewModule.default}
+            <ProfilePage />
+          {/await}
         {:else if navigationState.route.name === 'post'}
-          <PostPage
-            service={navigationState.route.service}
-            creatorId={navigationState.route.creatorId}
-            postId={navigationState.route.postId}
-            initialMedia={navigationState.route.initialMedia}
-            openViewer={navigationState.route.openViewer}
-          />
+          {@const route = navigationState.route}
+          {#await views.post() then viewModule}
+            {@const PostPage = viewModule.default}
+            <PostPage
+              service={route.service}
+              creatorId={route.creatorId}
+              postId={route.postId}
+              initialMedia={route.initialMedia}
+              openViewer={route.openViewer}
+            />
+          {/await}
         {:else if navigationState.route.name === 'creator'}
-          <CreatorPage
-            service={navigationState.route.service}
-            creatorId={navigationState.route.creatorId}
-            initialTag={navigationState.route.initialTag}
-          />
+          {@const route = navigationState.route}
+          {#await views.creator() then viewModule}
+            {@const CreatorPage = viewModule.default}
+            <CreatorPage
+              service={route.service}
+              creatorId={route.creatorId}
+              initialTag={route.initialTag}
+            />
+          {/await}
         {:else if navigationState.route.name === 'settings'}
-          <SettingsPage />
+          {#await views.settings() then viewModule}
+            {@const SettingsPage = viewModule.default}
+            <SettingsPage />
+          {/await}
         {/if}
       {/key}
     </main>
