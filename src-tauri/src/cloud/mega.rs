@@ -258,12 +258,18 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                 return Err(format!("MEGA API returned HTTP {}", resp.status()));
             }
 
-            let results: Vec<Value> = resp
+            let body: Value = resp
                 .json()
                 .await
                 .map_err(|e| format!("Failed to parse MEGA JSON response: {e}"))?;
-
-            let first_val = results.into_iter().next().ok_or("Empty MEGA response")?;
+            let first_val = match body {
+                Value::Array(mut items) => items.drain(..).next().ok_or("Empty MEGA response")?,
+                Value::Number(number) => Value::Number(number),
+                _ => return Err("MEGA API returned an unexpected response".into()),
+            };
+            if matches!(first_val.as_i64(), Some(-9) | Some(-11) | Some(-16)) {
+                return Err("MEGA link is unavailable (deleted, expired or private)".into());
+            }
             let folder_res: MegaFolderApiResponse = serde_json::from_value(first_val)
                 .map_err(|e| format!("Failed to deserialize MEGA nodes: {e}"))?;
 

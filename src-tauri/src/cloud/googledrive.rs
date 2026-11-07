@@ -31,7 +31,7 @@ pub async fn resolve_googledrive(
         .ok_or_else(|| format!("Invalid Google Drive URL: {url_str}"))?;
 
     if is_folder {
-        return Ok(resolve_folder(client, url_str, &target_id).await);
+        return resolve_folder(client, url_str, &target_id).await;
     }
 
     let node = resolve_file(client, &target_id, None).await;
@@ -58,7 +58,11 @@ struct FolderListing {
     entries: Vec<FolderEntry>,
 }
 
-async fn resolve_folder(client: &Client, url_str: &str, root_id: &str) -> CloudFolderResult {
+async fn resolve_folder(
+    client: &Client,
+    url_str: &str,
+    root_id: &str,
+) -> Result<CloudFolderResult, String> {
     let mut title = format!("Google Drive Folder ({root_id})");
     let mut nodes = vec![folder_node(root_id.to_string(), None, title.clone())];
     let mut files: Vec<(FolderEntry, String)> = Vec::new();
@@ -79,6 +83,9 @@ async fn resolve_folder(client: &Client, url_str: &str, root_id: &str) -> CloudF
             let listing = match listing {
                 Ok(listing) => listing,
                 Err(error) => {
+                    if parent == root_id {
+                        return Err(error);
+                    }
                     tracing::warn!(%error, folder = %parent, "Couldn't list a Google Drive folder");
                     continue;
                 }
@@ -124,7 +131,7 @@ async fn resolve_folder(client: &Client, url_str: &str, root_id: &str) -> CloudF
     let total_size = file_nodes.iter().filter_map(|node| node.size).sum();
     let total_files = file_nodes.len() as u64;
     nodes.extend(file_nodes);
-    CloudFolderResult {
+    Ok(CloudFolderResult {
         provider: "googledrive".into(),
         url: url_str.to_string(),
         title,
@@ -132,7 +139,7 @@ async fn resolve_folder(client: &Client, url_str: &str, root_id: &str) -> CloudF
         total_size,
         is_single_file: false,
         nodes,
-    }
+    })
 }
 
 async fn list_folder(client: &Client, folder_id: &str) -> Result<FolderListing, String> {
@@ -142,7 +149,14 @@ async fn list_folder(client: &Client, folder_id: &str) -> Result<FolderListing, 
         return Err(format!("Google Drive returned HTTP {}", response.status()));
     }
     let html = response.text().await.map_err(|e| e.to_string())?;
+    if folder_requires_login(&html) {
+        return Err("Google Drive folder requires sign-in or is private".to_string());
+    }
     parse_folder_listing(&html)
+}
+
+fn folder_requires_login(html: &str) -> bool {
+    html.contains("request-storage-access") || html.contains("show-login-page")
 }
 
 fn parse_folder_listing(html: &str) -> Result<FolderListing, String> {
@@ -691,5 +705,13 @@ mod tests {
             parse_human_size("1.5GB"),
             Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
         );
+    }
+
+    #[test]
+    fn private_folder_page_is_rejected() {
+        assert!(folder_requires_login(
+            r#"<div class="request-storage-access"><div class="show-login-page">"#
+        ));
+        assert!(!folder_requires_login(r#"<div class="flip-entry">"#));
     }
 }

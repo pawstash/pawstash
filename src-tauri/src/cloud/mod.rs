@@ -102,17 +102,31 @@ pub fn canonicalize_cloud_result(result: &mut CloudFolderResult) {
         if node.is_folder {
             continue;
         }
-        if let Some(stream_url) = node.stream_url.as_deref() {
-            if should_proxy_cloud_stream(stream_url) {
-                let target = normalize_cloud_direct_url(stream_url);
-                node.stream_url = Some(format!(
-                    "/cloud_stream/proxy?url={}&name={}",
-                    urlencoding::encode(&target),
-                    urlencoding::encode(&node.name)
-                ));
-            }
+        let Some(stream_url) = node.stream_url.as_deref() else {
+            continue;
+        };
+        let was_proxy = stream_url.starts_with("/cloud_stream/proxy?");
+        let target = proxy_url_target(stream_url).unwrap_or_else(|| stream_url.to_string());
+        if was_proxy || should_proxy_cloud_stream(&target) {
+            let normalized = normalize_cloud_direct_url(&target);
+            node.stream_url = Some(format!(
+                "/cloud_stream/proxy?url={}&name={}",
+                urlencoding::encode(&normalized),
+                urlencoding::encode(&node.name)
+            ));
         }
     }
+}
+
+fn proxy_url_target(stream_url: &str) -> Option<String> {
+    let query = stream_url.strip_prefix("/cloud_stream/proxy?")?;
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        if key != "url" {
+            return None;
+        }
+        urlencoding::decode(value).ok().map(|v| v.into_owned())
+    })
 }
 
 fn should_proxy_cloud_stream(url: &str) -> bool {

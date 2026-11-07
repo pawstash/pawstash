@@ -4038,12 +4038,20 @@ pub async fn resolve_cloud_link(
         .content
         .load_document::<crate::cloud::CloudFolderResult>("cloud_folder", &url, "", "")
     {
+        if cached.provider == "dropbox" && cached.nodes.iter().any(|n| n.is_folder) {
+            return Err(
+                "Dropbox folders are not supported; open the link in a browser".to_string(),
+            );
+        }
+        let cached_empty_drive = cached.provider == "googledrive"
+            && cached.nodes.len() == 1
+            && cached.nodes[0].is_folder;
         let has_missing_sizes = cached
             .nodes
             .iter()
             .any(|n| !n.is_folder && (n.size.is_none() || n.size == Some(0)));
         let has_files = cached.nodes.iter().any(|n| !n.is_folder);
-        if has_files && !has_missing_sizes {
+        if !cached_empty_drive && has_files && !has_missing_sizes {
             crate::cloud::canonicalize_cloud_result(&mut cached);
             return Ok(cached);
         }

@@ -748,7 +748,12 @@
         }
       }
       const directMedia = extractDirectMediaLinks(post.content || post.substring || '');
+      const knownCloudLinks = new Set(
+        (post.cloud_urls || []).map((url) => url.replace(/&amp;/g, '&').trim())
+      );
       for (const d of directMedia) {
+        const link = d.url.replace(/&amp;/g, '&').trim();
+        if (knownCloudLinks.has(link)) continue;
         const att: Attachment = {
           name: d.name,
           path: d.url,
