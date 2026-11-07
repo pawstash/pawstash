@@ -73,6 +73,8 @@
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
   import PostPoll from './PostPoll.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
+  import MediaSurface from '$lib/components/ui/MediaSurface.svelte';
+  import { mediaRegistry } from '$lib/media/mediaRegistry';
   import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
   import IconCloud from '~icons/fluent/cloud-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
@@ -831,11 +833,14 @@
   let isOverflowing = $derived(contentHeight > MAX_CONTENT_HEIGHT);
 
   let hevcSupported = $state(true);
+  let hevcAttempts = $state<Set<number>>(new Set());
   let videoFailures = $state<Record<number, MediaFailureState>>({});
   let videoAttempts = $state<Record<number, number>>({});
   let isCodecModalOpen = $state(false);
 
   function retryVideo(index: number) {
+    const file = media[index];
+    if (file) mediaRegistry.reset(mediaElementKey(file));
     videoAttempts = { ...videoAttempts, [index]: (videoAttempts[index] ?? 0) + 1 };
     const next = { ...videoFailures };
     delete next[index];
@@ -850,9 +855,18 @@
     videoFailures = next;
   }
 
-  function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
-    if (typeof index !== 'number' || !file) return;
-    const video = e.currentTarget as HTMLVideoElement;
+  function tryHevc(index: number) {
+    hevcAttempts = new Set(hevcAttempts).add(index);
+    clearVideoFailure(index);
+    activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+  }
+
+  function checkVideoElement(video: HTMLVideoElement, file: Attachment, index: number) {
+    if (video.error) {
+      video.pause();
+      void handleVideoElementError(video, file, index);
+      return;
+    }
     if (video.videoWidth > 0 && video.videoHeight > 0) {
       const known = videoRatios[index];
       if (!known || known.width !== video.videoWidth || known.height !== video.videoHeight) {
@@ -862,57 +876,69 @@
       return;
     }
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !(video.duration > 0)) return;
+    video.pause();
+    video.muted = true;
     logger.warn(`Video "${file.name}" has audio but unsupported video codec (videoWidth=0)`);
     videoFailures = { ...videoFailures, [index]: { preset: 'unsupported_codec', format: 'H.265 / HEVC' } };
   }
 
+  function handleVideoLoadedMetadata(e: Event, file?: Attachment | null, index?: number) {
+    if (typeof index !== 'number' || !file) return;
+    checkVideoElement(e.currentTarget as HTMLVideoElement, file, index);
+  }
+
   async function handleVideoError(e: Event, file?: Attachment | null, index?: number) {
-    if (typeof index === 'number' && file) {
-      const video = e.currentTarget as HTMLVideoElement;
-      if (!video.error) {
-        logger.debug(`Media element reported an error without a media error for "${file.name}"`);
+    if (typeof index !== 'number' || !file) return;
+    await handleVideoElementError(e.currentTarget as HTMLVideoElement, file, index);
+  }
+
+  async function handleVideoElementError(video: HTMLVideoElement, file: Attachment, index: number) {
+    if (!video.error) {
+      logger.debug(`Media element reported an error without a media error for "${file.name}"`);
+      return;
+    }
+    video.pause();
+    video.muted = true;
+    logMediaError('video', video.src, file.name, video.error);
+
+    const job = attachmentDownload(file);
+    const isDownloaded = Boolean(job?.final_path && job.status === 'completed');
+
+    if (!isDownloaded) {
+      const remote = remoteFileUrl(file);
+      if (remote && video.src !== remote && !video.src.includes('cloud_stream')) {
+        logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
+        video.src = remote;
+        mediaRegistry.overrideElementSource(video, remote);
         return;
       }
-      logMediaError('video', video.src, file.name, video.error);
+    }
 
-      const job = attachmentDownload(file);
-      const isDownloaded = Boolean(job?.final_path && job.status === 'completed');
+    if (!isDownloaded && sources.fail(file)) {
+      logger.warn(`Playback failed on ${file.cloud_provider} for "${file.name}", switching to a mirror`);
+      return;
+    }
 
-      if (!isDownloaded) {
-        const remote = remoteFileUrl(file);
-        if (remote && video.src !== remote && !video.src.includes('cloud_stream')) {
-          logger.warn(`Local video playback failed, falling back to remote stream for "${file.name}": ${remote}`);
-          video.src = remote;
-          return;
-        }
-      }
+    const syncDiag = diagnoseVideoFailure(file, video, {
+      isLocal: isDownloaded,
+      isUnarchived: isFileUnarchived(file, isDownloaded)
+    });
+    videoFailures = { ...videoFailures, [index]: syncDiag };
 
-      if (!isDownloaded && sources.fail(file)) {
-        logger.warn(`Playback failed on ${file.cloud_provider} for "${file.name}", switching to a mirror`);
-        return;
-      }
-
-      const syncDiag = diagnoseVideoFailure(file, video, {
+    if (!isDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
+      const asyncDiag = await diagnoseVideoFailureAsync(file, video, {
         isLocal: isDownloaded,
         isUnarchived: isFileUnarchived(file, isDownloaded)
       });
-      videoFailures = { ...videoFailures, [index]: syncDiag };
-
-      if (!isDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
-        const asyncDiag = await diagnoseVideoFailureAsync(file, video, {
-          isLocal: isDownloaded,
-          isUnarchived: isFileUnarchived(file, isDownloaded)
-        });
-        if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
-          videoFailures = { ...videoFailures, [index]: asyncDiag };
-        }
+      if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
+        videoFailures = { ...videoFailures, [index]: asyncDiag };
       }
+    }
 
-      if (videoFailures[index]) {
-        const next = new Set(activeVideoIndexes);
-        next.delete(index);
-        activeVideoIndexes = next;
-      }
+    if (videoFailures[index]) {
+      const next = new Set(activeVideoIndexes);
+      next.delete(index);
+      activeVideoIndexes = next;
     }
   }
 
@@ -1130,6 +1156,17 @@
     );
   }
 
+  function mediaKeyFor(file?: { path?: string; name?: string } | null): string {
+    if (!file) return '';
+    const job = attachmentDownload(file);
+    return String(job?.media_id || job?.id || job?.filename || file.path || file.name || '');
+  }
+
+  function mediaElementKey(file?: Attachment | null): string {
+    if (!file) return '';
+    return mediaKeyFor(file) || (file.path ? fileUrl(file) : '');
+  }
+
   function getEffectiveFileSize(file?: Attachment | null): number {
     if (!file) return 0;
     const declared = getAttachmentDeclaredSize(file);
@@ -1225,13 +1262,14 @@
     const isEmbed = file === embedAttachment || Boolean((file as any)?.html);
     const url = file.path ? fileUrl(file) : '';
     const job = attachmentDownload(file);
-    const width = typeof file.width === 'number' && file.width > 0 ? file.width : undefined;
-    const height = typeof file.height === 'number' && file.height > 0 ? file.height : undefined;
-    const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
     const mediaIndex = media.findIndex((m) => isSameAttachment(m, file));
-    const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
-    const key = job?.media_id || job?.id || job?.filename || file.path || file.name || `vid_${itemIndex}`;
     const kind = isEmbed ? 'video' : mediaViewerKind(file, url);
+    const measured = kind === 'video' && mediaIndex >= 0 ? videoRatios[mediaIndex] : undefined;
+    const width = typeof file.width === 'number' && file.width > 0 ? file.width : measured?.width;
+    const height = typeof file.height === 'number' && file.height > 0 ? file.height : measured?.height;
+    const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
+    const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
+    const key = mediaElementKey(file) || `vid_${itemIndex}`;
     return {
       id: key,
       thumbnailKey: thumbnailKey(key, post),
@@ -1273,24 +1311,16 @@
   });
 
   function openMediaViewer(file: Attachment, source: Attachment[] = activeGalleryItems, originVideoEl?: HTMLVideoElement | null) {
-    let time = 0;
-    if (originVideoEl) {
-      time = originVideoEl.currentTime || 0;
-      originVideoEl.pause();
-    } else {
-      const pageVideos = document.querySelectorAll<HTMLVideoElement>('.media-gallery video');
-      for (const v of pageVideos) {
-        if (!v.paused) {
-          time = v.currentTime || 0;
-          v.pause();
-        }
-      }
-    }
-    document.querySelectorAll<HTMLVideoElement>('video, audio').forEach((el) => {
-      if (!el.paused) el.pause();
+    const targetKey = mediaElementKey(file);
+    const shared = targetKey ? mediaRegistry.element(targetKey) : undefined;
+
+    if (originVideoEl && originVideoEl !== shared) originVideoEl.pause();
+
+    document.querySelectorAll<HTMLMediaElement>('video, audio').forEach((el) => {
+      if (el !== shared && !el.paused) el.pause();
     });
 
-    viewerInitialTime = time;
+    viewerInitialTime = shared ? 0 : (originVideoEl?.currentTime || 0);
 
     const originElement = (document.activeElement as HTMLElement | null)?.closest('.video-frame, .media-open-surface');
     viewerOriginRect = originElement ? originElement.getBoundingClientRect() : null;
@@ -1436,21 +1466,10 @@
     }
   });
 
-  function handleCloseViewer(finalIndex?: number, finalTime?: number) {
-    const closedIndex = typeof finalIndex === 'number' ? finalIndex : viewerIndex;
+  function handleCloseViewer() {
     viewerIndex = null;
     viewerInitialTime = 0;
     viewerOriginRect = null;
-
-    if (typeof closedIndex === 'number' && typeof finalTime === 'number' && finalTime > 0) {
-      const closedFile = viewerFiles[closedIndex];
-      if (closedFile?.path) {
-        const matchingVideo = document.querySelector<HTMLVideoElement>(`.media-gallery video[src*="${closedFile.path}"]`);
-        if (matchingVideo) {
-          matchingVideo.currentTime = finalTime;
-        }
-      }
-    }
   }
 
   function openPreviewViewer() {
@@ -1532,6 +1551,14 @@
     const { width, height } = surface.getBoundingClientRect();
     videoFrames[index] = { width, height };
     activeVideoIndexes = new Set(activeVideoIndexes).add(index);
+    const file = media[index];
+    if (file) playMediaAfterMount(file);
+  }
+
+  function playMediaAfterMount(file: Attachment) {
+    const key = mediaElementKey(file);
+    if (!key) return;
+    void tick().then(() => mediaRegistry.element(key)?.play().catch(() => {}));
   }
   let activeAudioIndexes = $state<Set<number>>(new Set());
   let videoThumbnails = $state<Record<number, string>>({});
@@ -2727,21 +2754,21 @@
                           >
                             {#if activeVideoIndexes.has(index)}
                               {#key videoAttempts[index] ?? 0}
-                              <!-- svelte-ignore a11y_media_has_caption -->
-                              <video
-                                src={url}
-                                poster={videoPoster(thumbUrl)}
-                                controls
-                                autoplay
-                                playsinline
-                                preload="auto"
-                                use:panicCapture
-                                onkeydown={handleGlobalPanicKey}
-                                onloadedmetadata={(e) => handleVideoLoadedMetadata(e, file, index)}
-                                onplaying={(e) => handleVideoLoadedMetadata(e, file, index)}
-                                onerror={(e) => handleVideoError(e, file, index)}
-                                onplay={handleVideoPlay}
-                              ></video>
+                                <MediaSurface
+                                  mediaKey={mediaElementKey(file)}
+                                  kind="video"
+                                  src={url}
+                                  poster={videoPoster(thumbUrl)}
+                                  autoplay
+                                  resume
+                                  onmedia={(el) => {
+                                    if (el instanceof HTMLVideoElement) checkVideoElement(el, file!, index);
+                                  }}
+                                  onloadedmetadata={(e) => handleVideoLoadedMetadata(e, file, index)}
+                                  onplaying={(e) => handleVideoLoadedMetadata(e, file, index)}
+                                  onerror={(e) => handleVideoError(e, file, index)}
+                                  onplay={handleVideoPlay}
+                                />
                               {/key}
                             {:else if thumbUrl}
                               <button
@@ -2820,14 +2847,14 @@
                       {:else if activeAudioIndexes.has(index)}
                         <div class="audio-player-wrapper">
                           <IconMusicFilled class="placeholder-icon video-play-accent mb-2" />
-                          <audio
+                          <MediaSurface
+                            mediaKey={mediaElementKey(file)}
+                            kind="audio"
                             src={url}
-                            controls
                             autoplay
-                            preload="auto"
-                            use:panicCapture
+                            resume
                             onplay={handleVideoPlay}
-                          ></audio>
+                          />
                         </div>
                       {:else}
                         <button
@@ -2835,6 +2862,7 @@
                           type="button"
                           onclick={() => {
                             activeAudioIndexes = new Set(activeAudioIndexes).add(index);
+                            if (file) playMediaAfterMount(file);
                           }}
                           aria-label={i18n.t('post.play_audio')}
                         >
@@ -3515,7 +3543,8 @@
     justify-self: center;
   }
 
-  .media-item video {
+  .media-item > video,
+  .media-item :global(.media-surface video) {
     position: relative;
     z-index: 2;
     display: block;
@@ -3543,7 +3572,7 @@
     padding: 16px;
   }
 
-  .audio-player-wrapper audio {
+  .audio-player-wrapper :global(.media-surface audio) {
     width: 100%;
     max-width: 320px;
   }
@@ -3575,7 +3604,7 @@
     right: var(--tile-chip-inset, 8px);
   }
 
-  .video-frame.is-sized video {
+  .video-frame.is-sized :global(.media-surface video) {
     width: 100%;
     height: 100%;
     min-height: 0;

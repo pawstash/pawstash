@@ -32,7 +32,9 @@
   import { formatBytes, formatDuration } from '$lib/utils/formatters';
   import { tooltip } from '$lib/motion';
   import { playbackState } from '$lib/state/playbackState.svelte';
-  import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
+  import { handleGlobalPanicKey } from '$lib/utils/panic';
+  import { mediaRegistry } from '$lib/media/mediaRegistry';
+  import MediaSurface from '$lib/components/ui/MediaSurface.svelte';
   import { mediaInfoState } from '$lib/state/mediaInfoState.svelte';
   import { logMediaError } from '$lib/utils/logger';
   import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, thumbnailProxySrc, type MediaFailureState } from '$lib/utils/media';
@@ -121,7 +123,6 @@
   let stage = $state<HTMLDivElement>();
   let fitFrame = $state<HTMLDivElement>();
   let mediaElement = $state<HTMLImageElement>();
-  let videoElement = $state<HTMLVideoElement>();
   let loadedWidth = $state(0);
   let loadedHeight = $state(0);
   let frameWidth = $state(0);
@@ -167,32 +168,64 @@
     videoErrors = next;
   }
 
-  function handleVideoMetadata(e: Event) {
-    const video = e.currentTarget as HTMLVideoElement;
-    if (video.videoWidth > 0 && video.videoHeight > 0) {
-      loadedWidth = video.videoWidth;
-      loadedHeight = video.videoHeight;
-      aspectRatios[index] = video.videoWidth / video.videoHeight;
-    }
-    if (video.duration && isFinite(video.duration) && video.duration > 0) {
-      activeVideoDuration = video.duration;
-    }
-    if (!hasAppliedInitialTime && initialTime > 0 && index === initialIndex) {
-      hasAppliedInitialTime = true;
-      video.currentTime = initialTime;
-    } else if (current) {
-      const saved = playbackState.getTime(current.id || current.url);
-      if (saved !== undefined && saved > 0) {
-        video.currentTime = saved;
+  function handleMediaAttached(element: HTMLMediaElement) {
+    if (element instanceof HTMLVideoElement) {
+      if (element.error && current) {
+        element.pause();
+        element.muted = true;
+        videoErrors = {
+          ...videoErrors,
+          [index]: diagnoseVideoFailure({ name: current.name, path: current.url } as any, element, {
+            isLocal: currentDownloaded
+          })
+        };
+        return;
+      }
+      if (
+        current &&
+        element.readyState >= HTMLMediaElement.HAVE_METADATA &&
+        element.duration > 0 &&
+        element.videoWidth === 0
+      ) {
+        element.pause();
+        element.muted = true;
+        videoErrors = {
+          ...videoErrors,
+          [index]: { preset: 'unsupported_codec', format: 'H.265 / HEVC' }
+        };
+        return;
+      }
+      if (element.videoWidth > 0 && element.videoHeight > 0) {
+        loadedWidth = element.videoWidth;
+        loadedHeight = element.videoHeight;
+        aspectRatios[index] = element.videoWidth / element.videoHeight;
+      }
+      if (element.duration && isFinite(element.duration) && element.duration > 0) {
+        activeVideoDuration = element.duration;
+      }
+      if (!current?.poster && !videoThumbnails[index] && element.currentTime >= 0.5) {
+        captureVideoFrame(element, index);
       }
     }
+
+    if (!current) return;
+    if (!hasAppliedInitialTime && initialTime > 0 && index === initialIndex) {
+      hasAppliedInitialTime = true;
+      if (Math.abs(element.currentTime - initialTime) > 1) element.currentTime = initialTime;
+      return;
+    }
+    if (element.currentTime <= 0.01 && element.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      const saved = playbackState.getTime(current.id || current.url);
+      if (saved !== undefined && saved > 0) element.currentTime = saved;
+    }
+  }
+
+  function handleVideoMetadata(e: Event) {
+    handleMediaAttached(e.currentTarget as HTMLMediaElement);
   }
 
   function handleVideoTimeUpdate(e: Event) {
     const video = e.currentTarget as HTMLVideoElement;
-    if (current && video.duration > 0) {
-      playbackState.saveTime(current.id || current.url, video.currentTime, video.duration);
-    }
     if (!current?.poster && !videoThumbnails[index] && video.currentTime >= 0.8) {
       captureVideoFrame(video, index);
     }
@@ -260,6 +293,13 @@
       cancelled = true;
       loader.onload = null;
     };
+  });
+
+  $effect(() => {
+    const item = current;
+    const key = item && (item.kind === 'video' || item.kind === 'audio') ? item.id || item.url : null;
+    if (lastViewerMediaKey && lastViewerMediaKey !== key) mediaRegistry.pause(lastViewerMediaKey);
+    lastViewerMediaKey = key;
   });
 
   let currentId = $derived(current?.id);
@@ -896,10 +936,7 @@
   function close() {
     if (closing) return;
     closing = true;
-    const finalTime = videoElement?.currentTime;
-    if (videoElement) {
-      videoElement.pause();
-    }
+    const finalTime = current ? mediaRegistry.element(current.id || current.url)?.currentTime : undefined;
     if (document.fullscreenElement === root) {
       void document.exitFullscreen().finally(() => onclose(index, finalTime));
     } else {
@@ -1200,44 +1237,47 @@
             {/if}
           </div>
         {:else if current.kind === 'video'}
-          <!-- svelte-ignore a11y_media_has_caption -->
-          <video
-            bind:this={videoElement}
-            class="media-viewer-media"
-            
-            src={current.url}
-            poster={videoPoster(current.poster || videoThumbnails[index])}
-            controls
-            autoplay
-            playsinline
-            preload="metadata"
-            use:panicCapture
-            onkeydown={handleGlobalPanicKey}
-            onplaying={handleMainVideoLoaded}
-            onerror={async (e) => {
-              const el = e.currentTarget as HTMLVideoElement;
-              if (!el.error) return;
-              logMediaError('video', el.src, current.name, el.error);
-              const syncDiag = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
-                isLocal: currentDownloaded
-              });
-              videoErrors = { ...videoErrors, [index]: syncDiag };
-              if (!currentDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
-                const asyncDiag = await diagnoseVideoFailureAsync({ name: current.name, path: current.url } as any, el, {
+          <div
+            class="media-box"
+            style:width={mediaBox ? `${mediaBox.width}px` : '100%'}
+            style:height={mediaBox ? `${mediaBox.height}px` : '100%'}
+          >
+            <MediaSurface
+              mediaKey={current.id || current.url}
+              kind="video"
+              src={current.url}
+              poster={videoPoster(current.poster || videoThumbnails[index])}
+              autoplay
+              resume
+              onmedia={handleMediaAttached}
+              onplaying={handleMainVideoLoaded}
+              onerror={async (e) => {
+                const el = e.currentTarget as HTMLVideoElement;
+                if (!el.error) return;
+                el.pause();
+                el.muted = true;
+                logMediaError('video', el.src, current.name, el.error);
+                const syncDiag = diagnoseVideoFailure({ name: current.name, path: current.url } as any, el, {
                   isLocal: currentDownloaded
                 });
-                if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
-                  videoErrors = { ...videoErrors, [index]: asyncDiag };
+                videoErrors = { ...videoErrors, [index]: syncDiag };
+                if (!currentDownloaded && (syncDiag.preset === 'unavailable' || syncDiag.preset === 'network')) {
+                  const asyncDiag = await diagnoseVideoFailureAsync({ name: current.name, path: current.url } as any, el, {
+                    isLocal: currentDownloaded
+                  });
+                  if (asyncDiag && asyncDiag.preset !== syncDiag.preset) {
+                    videoErrors = { ...videoErrors, [index]: asyncDiag };
+                  }
                 }
-              }
-            }}
-            onloadedmetadata={(e) => {
-              clearVideoError(index);
-              handleVideoMetadata(e);
-            }}
-            ontimeupdate={handleVideoTimeUpdate}
-            onended={handleVideoEnded}
-          ></video>
+              }}
+              onloadedmetadata={(e) => {
+                clearVideoError(index);
+                handleVideoMetadata(e);
+              }}
+              ontimeupdate={handleVideoTimeUpdate}
+              onended={handleVideoEnded}
+            />
+          </div>
         {:else if current.kind === 'audio'}
           <div
             class="viewer-file-state"
@@ -1246,15 +1286,18 @@
             <IconMusic />
             <strong>{current.name}</strong>
             {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
-            <audio
+            <MediaSurface
+              mediaKey={current.id || current.url}
+              kind="audio"
               src={current.url}
-              controls
               autoplay
+              resume
+              onmedia={handleMediaAttached}
               onerror={(e) => {
                 const el = e.currentTarget as HTMLAudioElement;
                 logMediaError('audio', el.src, current.name, el.error);
               }}
-            ></audio>
+            />
           </div>
         {:else}
           <div
@@ -1661,9 +1704,13 @@
     cursor: grabbing;
   }
 
-  .media-viewer-media:is(video) {
-    width: min(100%, 1600px);
-    max-height: 100%;
+  .media-box :global(.media-surface video) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
     background: #000;
   }
 
@@ -1910,7 +1957,7 @@
   }
 
   .viewer-file-state span { color: var(--text-secondary); font-size: 13px; }
-  .viewer-file-state audio { width: min(420px, 80vw); }
+  .viewer-file-state :global(.media-surface audio) { width: min(420px, 80vw); }
 
   :global(.media-viewer .viewer-download-icon.is-downloaded) {
     background: transparent !important;
