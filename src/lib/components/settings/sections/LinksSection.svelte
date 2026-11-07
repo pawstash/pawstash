@@ -3,6 +3,8 @@
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import NumberStepper from '$lib/components/ui/NumberStepper.svelte';
+  import SettingChoice from '../SettingChoice.svelte';
+  import type { AppSettings } from '$lib/types/config';
   import SettingsGroup from '../SettingsGroup.svelte';
   import { settingsController as ctl } from '../settingsController.svelte';
 
@@ -26,7 +28,25 @@
   />
 
   {#if enabled}
-    <SettingItem title={i18n.t('settings.cloud_proxy_url')} description={i18n.t('settings.cloud_proxy_url_desc')}>
+    <SettingItem
+      title={i18n.t('settings.cloud_links_in_comments')}
+      description={i18n.t('settings.cloud_links_in_comments_desc')}
+      checked={settings.cloud_links_in_comments ?? false}
+      onCheckedChange={(value) => void ctl.save('cloud_links_in_comments', value)}
+    />
+    {#if settings.cloud_links_in_comments}
+      <SettingChoice
+        title={i18n.t('settings.cloud_links_in_comments_from')}
+        description={i18n.t('settings.cloud_links_in_comments_from_desc')}
+        options={[
+          { value: 'all', label: i18n.t('settings.comment_cloud_source_all') },
+          { value: 'author', label: i18n.t('settings.comment_cloud_source_author') },
+          { value: 'others', label: i18n.t('settings.comment_cloud_source_others') }
+        ] as { value: NonNullable<AppSettings['cloud_links_in_comments_from']>; label: string }[]}
+        value={settings.cloud_links_in_comments_from || 'all'}
+        onchange={(source) => void ctl.save('cloud_links_in_comments_from', source)}
+      />
+    {/if}    <SettingItem title={i18n.t('settings.cloud_proxy_url')} description={i18n.t('settings.cloud_proxy_url_desc')}>
       <Input
         clearable={true}
         placeholder={i18n.t('settings.inherits_global_proxy')}

@@ -22,6 +22,12 @@ export interface CloudFolderResult {
   nodes: CloudNode[];
 }
 
+export interface CommentCloudLinks {
+  all: string[];
+  author: string[];
+  others: string[];
+}
+
 export interface CloudLinkContext {
   service: string;
   creator_id: string;

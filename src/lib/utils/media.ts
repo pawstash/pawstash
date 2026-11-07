@@ -791,6 +791,36 @@ export function extractDirectMediaLinks(raw: string): Array<{ url: string; name:
   return results;
 }
 
+const CLOUD_HOST_PATTERN = /(^|\.)(mega\.nz|mega\.co\.nz|drive\.google\.com|docs\.google\.com|dropbox\.com|pixeldrain\.com|filen\.io)$/i;
+
+export function extractCloudLinks(raw: string): string[] {
+  if (!raw) return [];
+  const found = new Set<string>();
+  const add = (value: string) => {
+    if (!value) return;
+    try {
+      const url = new URL(value);
+      if (CLOUD_HOST_PATTERN.test(url.hostname)) found.add(url.href);
+    } catch {}
+  };
+
+  const anchorRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = anchorRegex.exec(raw)) !== null) {
+    add(match[1].replace(/&amp;/g, '&').trim());
+  }
+
+  const plainText = raw.replace(/<[^>]+>/g, ' ');
+  const urlRegex = /https?:\/\/[^\s<>"')]+/gi;
+  while ((match = urlRegex.exec(plainText)) !== null) {
+    let value = match[0].replace(/&amp;/g, '&').trim();
+    while (/[.,;:!?)]$/.test(value)) value = value.slice(0, -1);
+    add(value);
+  }
+
+  return [...found];
+}
+
 export interface PostFileCounts {
   images: number;
   videos: number;

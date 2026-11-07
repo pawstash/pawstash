@@ -45,6 +45,8 @@ export class ConfigState {
     cloud_max_redirects: 0,
     cloud_scraping_enabled: true,
     content_indexing_enabled: true,
+    cloud_links_in_comments: false,
+    cloud_links_in_comments_from: 'all',
     cloud_user_agent: '',
     cloud_proxy_url: '',
     titlebar_style: 'auto',

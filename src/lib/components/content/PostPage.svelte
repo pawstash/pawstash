@@ -124,7 +124,7 @@
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
   import CloudLinkCard from '$lib/components/content/CloudLinkCard.svelte';
   import CodecGuideModal from '$lib/components/content/CodecGuideModal.svelte';
-  import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudNode } from '$lib/types/cloud';
+  import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudNode, CommentCloudLinks } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
   import { copyText } from '$lib/utils/clipboard';
@@ -542,6 +542,13 @@
   }
 
   const cloud = new PostCloudLinks();
+  let commentCloudLinks = $state<CommentCloudLinks>({ all: [], author: [], others: [] });
+  let commentCloudLinksPostKey = $state('');
+
+  function handleCommentCloudLinks(links: CommentCloudLinks) {
+    commentCloudLinks = links;
+    commentCloudLinksPostKey = postKey;
+  }
   let activeCloudModalFolder = $state<CloudFolderResult | null>(null);
   let activeCloudModalInitialFolderId = $state<string | null>(null);
   let isCloudModalOpen = $state(false);
@@ -663,7 +670,7 @@
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  async function handleOpenCloudFromText(url: string) {
+  async function handleOpenCloudFromText(url: string, extraText?: string) {
     let existing = cloud.cached(url);
     if (!existing && cloud.isLocked(url)) {
       void revealLockedCloudLink(url);
@@ -672,7 +679,11 @@
     if (!existing && configState.settings.cloud_scraping_enabled !== false) {
       const requestedFor = postKey;
       try {
-        existing = await cloud.fetch(url, post ? cloudLinkContext(post) : undefined);
+        const base = post ? cloudLinkContext(post) : undefined;
+        const context = base && extraText
+          ? { ...base, post_text: [base.post_text, extraText].filter(Boolean).join('\n') }
+          : base;
+        existing = await cloud.fetch(url, context);
       } catch (err) {
         const kind = cloudLockKind(err);
         if (kind) {
@@ -696,7 +707,19 @@
   $effect(() => {
     const currentPostKey = postKey;
     const cloudUrls = configState.settings.cloud_scraping_enabled === false ? [] : post?.cloud_urls || [];
-    untrack(() => cloud.sync(currentPostKey, cloudUrls, post ? cloudLinkContext(post) : undefined));
+    const links = commentCloudLinksPostKey === currentPostKey
+      ? commentCloudLinks
+      : { all: [], author: [], others: [] };
+    const source = configState.settings.cloud_links_in_comments_from ?? 'all';
+    const commentUrls = configState.settings.cloud_links_in_comments
+      ? source === 'author'
+        ? links.author
+        : source === 'others'
+          ? links.others
+          : links.all
+      : [];
+    const urls = [...new Set([...cloudUrls, ...commentUrls])];
+    untrack(() => cloud.sync(currentPostKey, urls, post ? cloudLinkContext(post) : undefined));
   });
 
   function isFileUnarchived(file: Attachment | null | undefined, isDownloaded?: boolean): boolean {
@@ -3062,7 +3085,21 @@
       {/if}
 
       {#key postKey}
-        <PostComments bind:this={commentsSection} {service} {creatorId} {postId} />
+        <PostComments
+          bind:this={commentsSection}
+          {service}
+          {creatorId}
+          {postId}
+          oncloudlinks={handleCommentCloudLinks}
+          onopencloud={(url, text) => void handleOpenCloudFromText(url, text)}
+          onopenmedia={(src, alt) => {
+            const inlineAtt: Attachment = {
+              name: alt || src.split('/').pop()?.split('?')[0] || 'Image',
+              path: src
+            } as any;
+            openMediaViewer(inlineAtt, [inlineAtt]);
+          }}
+        />
       {/key}
       {:else if entry.loading || !entry.loaded}
         <div class="detail-loading" role="status" aria-label={i18n.t('feed.loading')}><IconLoading /></div>

@@ -155,7 +155,49 @@
         }
       }
     }
+    linkifyText(document);
     return document.body.innerHTML;
+  }
+
+  function linkifyText(document: Document) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest('a, code, pre')) continue;
+      if (!/https?:\/\//i.test(node.nodeValue || '')) continue;
+      nodes.push(node as Text);
+    }
+
+    for (const text of nodes) {
+      const parts = (text.nodeValue || '').split(/(https?:\/\/[^\s<>"']+)/i);
+      if (parts.length <= 1) continue;
+      const fragment = document.createDocumentFragment();
+      for (const part of parts) {
+        if (!/^https?:\/\//i.test(part)) {
+          fragment.appendChild(document.createTextNode(part));
+          continue;
+        }
+        let url = part;
+        let suffix = '';
+        while (/[.,;:!?)]$/.test(url)) {
+          suffix = url.slice(-1) + suffix;
+          url = url.slice(0, -1);
+        }
+        if (!url) {
+          fragment.appendChild(document.createTextNode(part));
+          continue;
+        }
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.textContent = url;
+        anchor.rel = 'noopener noreferrer nofollow';
+        fragment.appendChild(anchor);
+        if (suffix) fragment.appendChild(document.createTextNode(suffix));
+      }
+      text.replaceWith(fragment);
+    }
   }
 
   export function resolveSmartLink(

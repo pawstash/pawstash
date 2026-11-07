@@ -59,7 +59,7 @@ export class PostCloudLinks {
       this.#unlocked = [];
     }
 
-    const cachedNodes = postNodesCache.get(postKey);
+    const cachedNodes = postNodesCache.get(key);
     if (cachedNodes && cachedNodes.length > 0 && !missingSizes(cachedNodes)) {
       this.#run++;
       this.resolved = cachedNodes;
@@ -70,7 +70,7 @@ export class PostCloudLinks {
     if (urls.length === 0) {
       this.#run++;
       this.resolved = [];
-      postNodesCache.delete(postKey);
+      this.#dropVariants(postKey, key);
       this.resolving = false;
       return;
     }
@@ -87,20 +87,35 @@ export class PostCloudLinks {
   async #resolveAll(postKey: string, urls: string[], context: CloudLinkContext | undefined, isCurrent: () => boolean) {
     const byLink: Attachment[][] = urls.map(() => []);
     let current: Attachment[] = [];
-    await Promise.allSettled(
-      urls.map(async (url, index) => {
-        const nodes = await this.#resolveOne(url, context, isCurrent);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < urls.length && isCurrent()) {
+        const index = cursor++;
+        const nodes = await this.#resolveOne(urls[index], context, isCurrent);
         if (nodes.length > 0 && isCurrent()) {
           byLink[index] = nodes;
           current = byLink.flat();
           this.resolved = this.#withUnlocked(current);
           this.version++;
         }
-      })
-    );
+      }
+    };
+    const workers = Math.min(4, urls.length);
+    await Promise.all(Array.from({ length: workers }, worker));
     if (!isCurrent()) return;
-    if (current.length > 0 && this.locked.length === 0) postNodesCache.set(postKey, current);
+    const cacheKey = `${postKey}:${urls.join('|')}`;
+    if (current.length > 0 && this.locked.length === 0) {
+      this.#dropVariants(postKey, cacheKey);
+      postNodesCache.set(cacheKey, current);
+    }
     this.resolving = false;
+  }
+
+  #dropVariants(postKey: string, keepKey: string) {
+    const prefix = `${postKey}:`;
+    for (const existing of postNodesCache.keys()) {
+      if (existing !== keepKey && existing.startsWith(prefix)) postNodesCache.delete(existing);
+    }
   }
 
   async #resolveOne(url: string, context: CloudLinkContext | undefined, isCurrent: () => boolean): Promise<Attachment[]> {

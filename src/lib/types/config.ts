@@ -40,6 +40,8 @@ export interface AppSettings {
   cloud_max_redirects?: number;
   cloud_scraping_enabled?: boolean;
   content_indexing_enabled?: boolean;
+  cloud_links_in_comments?: boolean;
+  cloud_links_in_comments_from?: 'all' | 'author' | 'others';
   cloud_user_agent?: string;
   cloud_proxy_url?: string;
   titlebar_style?: 'auto' | 'windows' | 'macos';

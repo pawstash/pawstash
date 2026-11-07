@@ -128,6 +128,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub content_indexing_enabled: bool,
     #[serde(default)]
+    pub cloud_links_in_comments: bool,
+    #[serde(default = "default_comment_cloud_source")]
+    pub cloud_links_in_comments_from: String,
+    #[serde(default)]
     pub cloud_user_agent: String,
     #[serde(default)]
     pub cloud_proxy_url: String,
@@ -135,6 +139,10 @@ pub struct AppSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_comment_cloud_source() -> String {
+    "all".to_string()
 }
 
 fn default_notifications_enabled() -> bool {
@@ -269,6 +277,8 @@ impl Default for AppSettings {
             cloud_max_redirects: 0,
             cloud_scraping_enabled: true,
             content_indexing_enabled: true,
+            cloud_links_in_comments: false,
+            cloud_links_in_comments_from: default_comment_cloud_source(),
             cloud_user_agent: String::new(),
             cloud_proxy_url: String::new(),
         }
@@ -583,6 +593,14 @@ impl AppSettings {
                 "content_indexing_enabled",
                 self.content_indexing_enabled.to_string(),
             ),
+            (
+                "cloud_links_in_comments",
+                self.cloud_links_in_comments.to_string(),
+            ),
+            (
+                "cloud_links_in_comments_from",
+                self.cloud_links_in_comments_from.clone(),
+            ),
             ("cloud_user_agent", self.cloud_user_agent.clone()),
             ("cloud_proxy_url", self.cloud_proxy_url.clone()),
             ("titlebar_style", self.titlebar_style.clone()),
@@ -699,6 +717,7 @@ impl AppSettings {
         string!(download_filename_template);
         string!(download_metadata_format);
         string!(card_view_mode);
+        string!(cloud_links_in_comments_from);
         if let Some(value) = get("providers_json") {
             if let Ok(providers) =
                 serde_json::from_str::<Vec<crate::api::provider::ProviderConfig>>(value)
@@ -819,6 +838,9 @@ impl AppSettings {
         }
         if let Some(value) = get("content_indexing_enabled").and_then(|v| v.parse().ok()) {
             self.content_indexing_enabled = value;
+        }
+        if let Some(value) = get("cloud_links_in_comments").and_then(|v| v.parse().ok()) {
+            self.cloud_links_in_comments = value;
         }
         if let Some(value) = get("cache_max_mb").and_then(|v| v.parse().ok()) {
             self.cache_max_mb = value;

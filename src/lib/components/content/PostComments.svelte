@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import type { Comment } from '$lib/types/content';
+  import type { CommentCloudLinks } from '$lib/types/cloud';
   import { i18n } from '$lib/i18n';
   import { logger } from '$lib/utils/logger';
   import { apiFetchPostComments } from '$lib/utils/ipc';
   import { formatDate } from '$lib/utils/formatters';
   import { sortOption } from '$lib/utils/sort';
+  import { extractCloudLinks } from '$lib/utils/media';
   import { collapseSection } from '$lib/utils/collapseSection';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
@@ -21,9 +23,12 @@
     service: string;
     creatorId: string;
     postId: string;
+    onopencloud?: (url: string, text?: string) => void;
+    onopenmedia?: (src: string, alt?: string) => void;
+    oncloudlinks?: (links: CommentCloudLinks) => void;
   }
 
-  let { service, creatorId, postId }: Props = $props();
+  let { service, creatorId, postId, onopencloud, onopenmedia, oncloudlinks }: Props = $props();
 
   const MAX_HEIGHT = 600;
   const SEARCH_MIN = 20;
@@ -39,6 +44,20 @@
   let searchOpen = $state(false);
   let wrapperEl = $state<HTMLElement | null>(null);
   let scrollBeforeExpand = $state<number | null>(null);
+
+  $effect(() => {
+    const all = new Set<string>();
+    const author = new Set<string>();
+    const others = new Set<string>();
+    for (const comment of comments) {
+      for (const url of extractCloudLinks(comment.content)) {
+        all.add(url);
+        if (comment.commenter === creatorId) author.add(url);
+        else others.add(url);
+      }
+    }
+    untrack(() => oncloudlinks?.({ all: [...all], author: [...author], others: [...others] }));
+  });
 
   const sortOptions = [
     sortOption<'newest' | 'oldest'>('newest', 'published', 'desc'),
@@ -116,7 +135,14 @@
       {/if}
     </div>
     <div class="comment-body">
-      <RichContent html={comment.content} currentService={service} currentCreatorId={creatorId} />
+      <RichContent
+        html={comment.content}
+        currentService={service}
+        currentCreatorId={creatorId}
+        cloudUrls={extractCloudLinks(comment.content)}
+        onopencloud={(url) => onopencloud?.(url, comment.content)}
+        {onopenmedia}
+      />
     </div>
     {#if getReplies(comment.id).length > 0}
       <div class="comment-replies">
