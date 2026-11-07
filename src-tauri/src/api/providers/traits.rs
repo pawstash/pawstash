@@ -428,6 +428,10 @@ pub trait SourceProvider: Send + Sync {
     fn resolve_media_url(&self, file_path: &str, server: Option<&str>) -> String;
     fn resolve_thumbnail_url(&self, thumb_path: &str) -> String;
 
+    fn normalize_media_url(&self, url: &str) -> String {
+        url.to_string()
+    }
+
     fn canonical_attachment_path(&self, _attachment: &Attachment, path: &str) -> String {
         path.to_string()
     }
@@ -441,7 +445,8 @@ pub trait SourceProvider: Send + Sync {
             return;
         };
         if path.starts_with("http://") || path.starts_with("https://") {
-            attachment.url = Some(crate::cloud::normalize_cloud_direct_url(&path));
+            let normalized = crate::cloud::normalize_cloud_direct_url(&path);
+            attachment.url = Some(self.normalize_media_url(&normalized));
             return;
         }
         if path.starts_with("/cloud_stream/") {
@@ -462,7 +467,7 @@ pub trait SourceProvider: Send + Sync {
         }
 
         let media_url = self.resolve_media_url(&canonical_path, attachment.server.as_deref());
-        attachment.url = (!media_url.is_empty()).then_some(media_url);
+        attachment.url = (!media_url.is_empty()).then(|| self.normalize_media_url(&media_url));
     }
 
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String;

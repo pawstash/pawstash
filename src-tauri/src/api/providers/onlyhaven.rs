@@ -17,6 +17,30 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+const LIVE_FILE_HOST: &str = "cdn.cum.st";
+const RETIRED_FILE_PREFIXES: [&str; 4] = ["e1", "e2", "n1", "n2"];
+
+fn normalize_cumst_media_url(url: &str) -> String {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return url.to_string();
+    };
+    let stale = parsed
+        .host_str()
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|host| {
+            host.strip_suffix(".cum.st")
+                .is_some_and(|name| RETIRED_FILE_PREFIXES.contains(&name))
+        });
+    if !stale || parsed.set_host(Some(LIVE_FILE_HOST)).is_err() {
+        return url.to_string();
+    }
+    let mut normalized = parsed.to_string();
+    if !url.ends_with('/') && parsed.path() == "/" {
+        normalized.pop();
+    }
+    normalized
+}
+
 fn clean_onlyhaven_title(raw: &str) -> String {
     let s = raw
         .replace("&amp;", "&")
@@ -601,9 +625,9 @@ impl OnlyHavenProvider {
             enabled: false,
             api_url: "https://cum.st".into(),
             fallback_urls: vec![],
-            file_url: Some("https://e1.cum.st".into()),
+            file_url: Some("https://cdn.cum.st".into()),
             image_url: Some("https://img.cum.st".into()),
-            file_prefix: Some("e1".into()),
+            file_prefix: Some("cdn".into()),
             image_prefix: Some("img".into()),
             session_cookie: String::new(),
             username: String::new(),
@@ -625,9 +649,19 @@ impl OnlyHavenProvider {
     }
 
     pub fn with_queue_config(
-        config: ProviderConfig,
+        mut config: ProviderConfig,
         queue_config: ProviderQueueConfig,
     ) -> Result<Self, String> {
+        if let Some(file_url) = config.file_url.as_mut() {
+            *file_url = normalize_cumst_media_url(file_url);
+        }
+        let retired_prefix = config
+            .file_prefix
+            .as_deref()
+            .is_some_and(|prefix| RETIRED_FILE_PREFIXES.contains(&prefix));
+        if retired_prefix {
+            config.file_prefix = Some("cdn".to_string());
+        }
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
@@ -1254,6 +1288,10 @@ impl SourceProvider for OnlyHavenProvider {
         })
     }
 
+    fn normalize_media_url(&self, url: &str) -> String {
+        normalize_cumst_media_url(url)
+    }
+
     fn resolve_media_url(&self, file_path: &str, _server: Option<&str>) -> String {
         let conf = self.config.read().unwrap();
         let key = file_path
@@ -1265,7 +1303,7 @@ impl SourceProvider for OnlyHavenProvider {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "e1"));
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "cdn"));
 
         let path = if key.starts_with("media/") {
             key.to_string()
@@ -1427,7 +1465,7 @@ impl SourceProvider for OnlyHavenProvider {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "e1"));
+            .unwrap_or_else(|| super::traits::derive_subdomain_url(&conf.api_url, "cdn"));
         format!("{file_base}/media/{sub1}/{sub2}/{hash}/original.{ext}")
     }
 
@@ -1778,7 +1816,7 @@ mod tests {
     #[test]
     fn storage_keys_resolve_to_media_and_thumbnail_urls() {
         let provider = provider();
-        let media = format!("https://e1.cum.st/media/{HASH}");
+        let media = format!("https://cdn.cum.st/media/{HASH}");
         let thumb = format!("https://img.cum.st/thumbnail/{HASH}/preview.webp");
         assert_eq!(
             provider.resolve_media_url(HASH, None),
@@ -1795,6 +1833,28 @@ mod tests {
         ] {
             assert_eq!(provider.resolve_thumbnail_url(&path), thumb, "{path}");
         }
+    }
+
+    #[test]
+    fn retired_media_cdn_hosts_are_rewritten() {
+        let mut config = OnlyHavenProvider::default_config();
+        config.file_url = Some("https://e1.cum.st".into());
+        config.file_prefix = Some("e1".into());
+        let provider = OnlyHavenProvider::new(config).unwrap();
+
+        assert_eq!(
+            provider.config().file_url.as_deref(),
+            Some("https://cdn.cum.st")
+        );
+        assert_eq!(provider.config().file_prefix.as_deref(), Some("cdn"));
+        assert_eq!(
+            provider.normalize_media_url("https://n1.cum.st/media/abc/original.mp4"),
+            "https://cdn.cum.st/media/abc/original.mp4"
+        );
+        assert_eq!(
+            provider.normalize_media_url("https://img.cum.st/thumbnail/abc/preview.webp"),
+            "https://img.cum.st/thumbnail/abc/preview.webp"
+        );
     }
 
     #[test]
@@ -1838,7 +1898,7 @@ mod tests {
         provider().enrich_attachment(&mut legacy_video);
         assert_eq!(
             legacy_video.url.as_deref(),
-            Some("https://e1.cum.st/media/abdd1153589ba0dd317b5e3337b12b31/original.mp4")
+            Some("https://cdn.cum.st/media/abdd1153589ba0dd317b5e3337b12b31/original.mp4")
         );
     }
 

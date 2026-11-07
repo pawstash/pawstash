@@ -45,7 +45,7 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, getPostTags, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, supportsHevcPlayback, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, thumbnailProxySrc, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, supportsHevcPlayback, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, thumbnailProxySrc, normalizeProviderMediaUrl, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
@@ -1822,7 +1822,7 @@
     }
 
     if (backendUrl.startsWith('http://') || backendUrl.startsWith('https://')) {
-      return backendUrl;
+      return normalizeProviderMediaUrl(backendUrl);
     }
 
     const remoteUrl = remoteFileUrl(file as Attachment);

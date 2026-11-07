@@ -276,7 +276,7 @@ export function postPageUrl(_service: string, _creatorId: string, _postId: strin
 }
 
 export function postMediaUrl(post: Post): string | null {
-  return post.media_url || null;
+  return post.media_url ? normalizeProviderMediaUrl(post.media_url) : null;
 }
 
 export function detailIsOutdated(fresh: Post, cached: Post): boolean {
@@ -304,6 +304,20 @@ export function isPostUnarchived(post?: Post | null): boolean {
   return false;
 }
 
+const RETIRED_CUMST_FILE_HOSTS = ['e1.cum.st', 'e2.cum.st', 'n1.cum.st', 'n2.cum.st'];
+
+export function normalizeProviderMediaUrl(url: string): string {
+  if (!url) return url;
+  try {
+    const parsed = new URL(url);
+    if (RETIRED_CUMST_FILE_HOSTS.includes(parsed.hostname.toLowerCase())) {
+      parsed.hostname = 'cdn.cum.st';
+      return parsed.toString();
+    }
+  } catch {}
+  return url;
+}
+
 export function attachmentMediaUrl(file: Attachment, _service?: string, _post?: Post | null): string {
   if (!file) return '';
   if (file.url && (
@@ -311,10 +325,10 @@ export function attachmentMediaUrl(file: Attachment, _service?: string, _post?: 
     file.url.startsWith('https://') ||
     file.url.startsWith('/cloud_stream/')
   )) {
-    return file.url;
+    return normalizeProviderMediaUrl(file.url);
   }
   if (file.path && (file.path.startsWith('http://') || file.path.startsWith('https://') || file.path.startsWith('/cloud_stream/'))) {
-    return file.path;
+    return normalizeProviderMediaUrl(file.path);
   }
 
   return '';
