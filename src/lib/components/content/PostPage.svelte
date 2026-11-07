@@ -854,6 +854,10 @@
     if (typeof index !== 'number' || !file) return;
     const video = e.currentTarget as HTMLVideoElement;
     if (video.videoWidth > 0 && video.videoHeight > 0) {
+      const known = videoRatios[index];
+      if (!known || known.width !== video.videoWidth || known.height !== video.videoHeight) {
+        videoRatios = { ...videoRatios, [index]: { width: video.videoWidth, height: video.videoHeight } };
+      }
       clearVideoFailure(index);
       return;
     }
@@ -1522,6 +1526,7 @@
     }
   });
   let videoFrames = $state<Record<number, { width: number; height: number }>>({});
+  let videoRatios = $state<Record<number, { width: number; height: number }>>({});
 
   function startVideo(index: number, surface: HTMLElement) {
     const { width, height } = surface.getBoundingClientRect();

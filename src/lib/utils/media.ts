@@ -3,7 +3,8 @@ import { providerState } from '$lib/state/providerState.svelte';
 import { thumbHashToUrl } from './thumbhash';
 import { extraField } from './fields';
 import { matchesTriStateFilter, type FilterMap } from '$lib/types/filter';
-import { apiProbeDownloadSize } from '$lib/utils/ipc';
+import { apiProbeDownloadSize, apiProbeMediaInfo } from '$lib/utils/ipc';
+import { i18n } from '$lib/i18n';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { serverPortState } from '$lib/state/serverPort.svelte';
 import { configState } from '$lib/state/configState.svelte';
@@ -1218,6 +1219,19 @@ export async function diagnoseVideoFailureAsync(
     }
 
     const declaredBytes = file ? getAttachmentDeclaredSize(file) : 0;
+    const extension = getFileExtension(file?.name || probeUrl);
+
+    if (['MP4', 'MOV', 'M4V'].includes(extension)) {
+      try {
+        const info = await apiProbeMediaInfo(probeUrl);
+        if (!info) {
+          return {
+            preset: 'custom',
+            message: i18n.t('post.source_page')
+          };
+        }
+      } catch {}
+    }
 
     try {
       const size = await apiProbeDownloadSize(probeUrl);

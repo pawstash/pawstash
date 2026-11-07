@@ -19,6 +19,7 @@ use crate::downloader::aria2c::Aria2cManager;
 use crate::downloader::manager::DownloadManager;
 use crate::downloader::native::NativeDownloader;
 use crate::downloader::{DownloadRunError, DownloadTask};
+use crate::media_info::MediaInfo;
 use crate::smart_links::{parse_external_creator_link, parse_external_post_link};
 use crate::subscriptions::SubscriptionManager;
 use crate::sync::client::SyncDevice;
@@ -26,7 +27,7 @@ use crate::sync::manager::{SyncManager, SyncStatus};
 use std::collections::HashMap;
 
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -256,6 +257,71 @@ pub async fn probe_download_sizes(
         connections: settings.aria2_connections.clamp(1, 32),
     };
     Ok(NativeDownloader::probe_total_sizes_batch(&urls, &task_template).await)
+}
+
+fn media_info_cache() -> &'static Mutex<HashMap<String, MediaInfo>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, MediaInfo>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn media_probe_task(url: &str, settings: &AppSettings) -> DownloadTask {
+    let proxy = crate::net::proxy_for_url(settings, url);
+    DownloadTask {
+        id: "media-info-probe".to_string(),
+        url: url.to_string(),
+        output_dir: String::new(),
+        temp_path: String::new(),
+        final_path: String::new(),
+        filename: String::new(),
+        session_cookie: settings.resolve_cookie_for_url(url),
+        proxy_mode: proxy.mode,
+        proxy_url: proxy.url,
+        proxy_username: proxy.username,
+        proxy_password: proxy.password,
+        proxy_bypass_local: proxy.bypass_local,
+        connections: 1,
+    }
+}
+
+#[tauri::command]
+pub async fn probe_media_info(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Option<MediaInfo>, String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Ok(None);
+    }
+    if let Ok(cache) = media_info_cache().lock() {
+        if let Some(info) = cache.get(&url) {
+            return Ok(Some(info.clone()));
+        }
+    }
+
+    let settings = state.config_manager.load()?;
+    let task = media_probe_task(&url, &settings);
+    let head = NativeDownloader::probe_bytes(&task, "bytes=0-131071", 128 * 1024)
+        .await
+        .map_err(|error| match error {
+            DownloadRunError::Failed(message) => message,
+            DownloadRunError::Interrupted(_) => "Media info probe was interrupted".to_string(),
+        })?;
+    let mut info = crate::media_info::from_bytes(&head);
+    if info.is_none() && head.get(4..8) == Some(b"ftyp") {
+        if let Ok(tail) = NativeDownloader::probe_bytes(&task, "bytes=-524288", 512 * 1024).await {
+            info = crate::media_info::from_mp4_tail(&tail);
+        }
+    }
+
+    if let Some(ref info) = info {
+        if let Ok(mut cache) = media_info_cache().lock() {
+            if cache.len() >= 1024 {
+                cache.clear();
+            }
+            cache.insert(url, info.clone());
+        }
+    }
+    Ok(info)
 }
 
 #[tauri::command]

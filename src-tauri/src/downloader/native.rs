@@ -16,6 +16,7 @@ static CLIENT_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Client>>> = OnceL
 const PROGRESS_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const NOTIFICATION_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2500);
+const PROBE_BYTES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 const PROBE_CONCURRENCY: usize = 8;
 
 pub struct NativeDownloader;
@@ -119,6 +120,40 @@ impl NativeDownloader {
         }
 
         None
+    }
+
+    pub async fn probe_bytes(
+        task: &DownloadTask,
+        range: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, DownloadRunError> {
+        let client = Self::client(task)?;
+        let headers = Self::headers(task, Some(range))?;
+        let response = client
+            .get(&task.url)
+            .headers(headers)
+            .timeout(PROBE_BYTES_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| DownloadRunError::Failed(crate::net::error_chain(&error)))?;
+        let status = response.status();
+        if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
+            return Err(DownloadRunError::Failed(format!(
+                "media probe returned {status}"
+            )));
+        }
+        let mut bytes = Vec::with_capacity(64 * 1024);
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk =
+                chunk.map_err(|error| DownloadRunError::Failed(crate::net::error_chain(&error)))?;
+            let remaining = max_bytes.saturating_sub(bytes.len());
+            if remaining == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..remaining.min(chunk.len())]);
+        }
+        Ok(bytes)
     }
 
     pub async fn probe_total_size(task: &DownloadTask) -> Result<Option<u64>, DownloadRunError> {

@@ -33,6 +33,7 @@
   import { tooltip } from '$lib/motion';
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
+  import { mediaInfoState } from '$lib/state/mediaInfoState.svelte';
   import { logMediaError } from '$lib/utils/logger';
   import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, thumbnailProxySrc, type MediaFailureState } from '$lib/utils/media';
   import { openDownloadedFile } from '$lib/utils/ipc';
@@ -123,6 +124,8 @@
   let videoElement = $state<HTMLVideoElement>();
   let loadedWidth = $state(0);
   let loadedHeight = $state(0);
+  let frameWidth = $state(0);
+  let frameHeight = $state(0);
 
   $effect(() => {
     if (mediaElement && mediaElement.complete && mediaElement.naturalWidth > 0) {
@@ -217,9 +220,51 @@
   const pointers = new Map<number, PointerPoint>();
 
   let current = $derived(items[index]);
+  let lastViewerMediaKey: string | null = null;
+
+  function imagePreviewUrl(item: MediaViewerItem): string {
+    const source = item.downloadStatus
+      ? item.url || item.poster || ''
+      : item.poster || item.url || '';
+    return thumbnailProxySrc(source, 800) || item.poster || item.url || '';
+  }
+
+  let imagePreviewSrc = $derived(current && current.kind === 'image' ? imagePreviewUrl(current) : '');
+  let imageFullKey = $state<string | null>(null);
+  let imageDisplaySrc = $derived.by(() => {
+    if (!current || current.kind !== 'image') return '';
+    const key = current.id || current.url;
+    return imageFullKey === key
+      ? (current.url || current.poster || imagePreviewSrc)
+      : imagePreviewSrc;
+  });
+
+  $effect(() => {
+    const item = current;
+    const key = item && item.kind === 'image' ? item.id || item.url : '';
+    if (!item || !key) return;
+    const full = item.url || item.poster || '';
+    if (!full) return;
+    if (full === imagePreviewSrc) {
+      imageFullKey = key;
+      return;
+    }
+    let cancelled = false;
+    const loader = new Image();
+    loader.decoding = 'async';
+    loader.onload = () => {
+      if (!cancelled) imageFullKey = key;
+    };
+    loader.src = full;
+    return () => {
+      cancelled = true;
+      loader.onload = null;
+    };
+  });
+
   let currentId = $derived(current?.id);
-  let currentWidth = $derived(current?.width || loadedWidth);
-  let currentHeight = $derived(current?.height || loadedHeight);
+  let currentWidth = $derived(current?.width || mediaInfoState.info(current?.id || current?.url)?.width || loadedWidth);
+  let currentHeight = $derived(current?.height || mediaInfoState.info(current?.id || current?.url)?.height || loadedHeight);
   let currentResolution = $derived(currentWidth > 0 && currentHeight > 0 ? `${currentWidth} × ${currentHeight}` : '');
   let currentDownloadActive = $derived(Boolean(current && ['queued', 'resolving', 'downloading', 'paused', 'verifying'].includes(current.downloadStatus || '')));
   let currentDownloaded = $derived(current?.downloadStatus === 'completed');
@@ -235,6 +280,53 @@
   let posterFailed = $state<Record<number, boolean>>({});
   let videoThumbnails = $state<Record<number, string>>({});
   let activeVideoDuration = $state(0);
+
+  let currentAspectRatio = $derived.by(() => {
+    if (!current || (current.kind !== 'image' && current.kind !== 'video')) return undefined;
+    if (current.width && current.height) return current.width / current.height;
+    const info = mediaInfoState.info(current.id || current.url);
+    if (info?.width && info.height) return info.width / info.height;
+    if (current.kind === 'video') return aspectRatios[index] || undefined;
+    return undefined;
+  });
+
+  let mediaBox = $derived.by(() => {
+    const ratio = currentAspectRatio;
+    if (!ratio || !frameWidth || !frameHeight) return null;
+    return ratio > frameWidth / frameHeight
+      ? { width: frameWidth, height: frameWidth / ratio }
+      : { width: frameHeight * ratio, height: frameHeight };
+  });
+
+  $effect(() => {
+    const item = current;
+    if (!item || (item.kind !== 'image' && item.kind !== 'video')) return;
+    if (!(item.width && item.height)) mediaInfoState.ensure(item.id || item.url, item.url);
+    const next = items[index + 1];
+    if (next && (next.kind === 'image' || next.kind === 'video') && !(next.width && next.height)) {
+      mediaInfoState.ensure(next.id || next.url, next.url);
+    }
+  });
+
+  $effect(() => {
+    const item = current;
+    if (!item || item.kind !== 'video' || (item.width && item.height)) return;
+    if (aspectRatios[index]) return;
+    const poster = item.poster || videoThumbnails[index];
+    if (!poster) return;
+    let cancelled = false;
+    const probe = new Image();
+    probe.decoding = 'async';
+    probe.onload = () => {
+      if (cancelled || !probe.naturalWidth || !probe.naturalHeight) return;
+      aspectRatios[index] = probe.naturalWidth / probe.naturalHeight;
+    };
+    probe.src = thumbnailProxySrc(poster, 600) || poster;
+    return () => {
+      cancelled = true;
+      probe.onload = null;
+    };
+  });
 
 
   function getVideoDuration(item: MediaViewerItem, itemIndex: number): number | undefined {
@@ -331,9 +423,12 @@
   }
 
   function getThumbAspectRatio(item: MediaViewerItem, itemIndex: number): string {
+    const info = mediaInfoState.info(item.id || item.url);
     const ratio = (item.width && item.height)
       ? (item.width / item.height)
-      : (aspectRatios[itemIndex] ?? 1);
+      : (info?.width && info.height)
+        ? (info.width / info.height)
+        : (aspectRatios[itemIndex] ?? 1);
     const clamped = Math.max(0.4, Math.min(2.4, ratio));
     return `${clamped} / 1`;
   }
@@ -431,14 +526,32 @@
     pointers.clear();
   }
 
+  function imageContentSize(): { width: number; height: number } {
+    const boxWidth = mediaElement?.clientWidth ?? 0;
+    const boxHeight = mediaElement?.clientHeight ?? 0;
+    const naturalWidth = mediaElement?.naturalWidth ?? 0;
+    const naturalHeight = mediaElement?.naturalHeight ?? 0;
+    if (!boxWidth || !boxHeight || !naturalWidth || !naturalHeight) {
+      return { width: boxWidth, height: boxHeight };
+    }
+    const boxRatio = boxWidth / boxHeight;
+    const imageRatio = naturalWidth / naturalHeight;
+    return imageRatio > boxRatio
+      ? { width: boxWidth, height: boxWidth / imageRatio }
+      : { width: boxHeight * imageRatio, height: boxHeight };
+  }
+
   function clampTranslation(nextX = translateX, nextY = translateY) {
     if (!fitFrame || !mediaElement || scale <= MIN_SCALE) {
       translateX = 0;
       translateY = 0;
       return;
     }
-    const maxX = Math.max(0, (mediaElement.clientWidth * scale - fitFrame.clientWidth) / 2);
-    const maxY = Math.max(0, (mediaElement.clientHeight * scale - fitFrame.clientHeight) / 2);
+    const content = mediaBox
+      ? { width: mediaElement.clientWidth, height: mediaElement.clientHeight }
+      : imageContentSize();
+    const maxX = Math.max(0, (content.width * scale - fitFrame.clientWidth) / 2);
+    const maxY = Math.max(0, (content.height * scale - fitFrame.clientHeight) / 2);
     translateX = Math.max(-maxX, Math.min(maxX, nextX));
     translateY = Math.max(-maxY, Math.min(maxY, nextY));
   }
@@ -553,6 +666,7 @@
     const image = event.currentTarget as HTMLImageElement;
     loadedWidth = image.naturalWidth;
     loadedHeight = image.naturalHeight;
+    if (scale > MIN_SCALE) requestAnimationFrame(() => clampTranslation());
   }
 
   function handleImageError(event: Event) {
@@ -870,7 +984,7 @@
       if (neighbor?.kind === 'image') {
         const preload = new Image();
         preload.decoding = 'async';
-        preload.src = thumbnailProxySrc(neighbor.url, 1200) ?? neighbor.url;
+        preload.src = imagePreviewUrl(neighbor);
       }
     }
   });
@@ -985,6 +1099,8 @@
     {#if current}
       <div
         bind:this={fitFrame}
+        bind:clientWidth={frameWidth}
+        bind:clientHeight={frameHeight}
         class="media-fit-frame"
         class:is-dragging={isGestureDragging}
         class:file-frame={!['image', 'video'].includes(current.kind)}
@@ -993,17 +1109,24 @@
       >
         {#if current.kind === 'image'}
           {#key current?.id || index}
-            <img
-              bind:this={mediaElement}
-              class="media-viewer-media image-media"
-              class:zoomed={scale > MIN_SCALE}
-              src={current.url || current.poster}
-              alt={current.name}
-              draggable="false"
-              style:transform
-              onload={handleImageLoad}
-              onerror={handleImageError}
-            />
+            <div
+              class="media-box"
+              style:width={mediaBox ? `${mediaBox.width}px` : '100%'}
+              style:height={mediaBox ? `${mediaBox.height}px` : '100%'}
+            >
+              <img
+                bind:this={mediaElement}
+                class="media-viewer-media image-media"
+                class:zoomed={scale > MIN_SCALE}
+                class:is-fitted={Boolean(mediaBox)}
+                src={imageDisplaySrc || current.url || current.poster}
+                alt={current.name}
+                draggable="false"
+                style:transform
+                onload={handleImageLoad}
+                onerror={handleImageError}
+              />
+            </div>
           {/key}
         {:else if current.html}
           <div
@@ -1207,9 +1330,10 @@
                 >
                   {#if item.kind === 'image'}
                     <img
-                      src={item.poster || item.url}
+                      src={imagePreviewUrl(item)}
                       alt=""
                       loading="lazy"
+                      decoding="async"
                       draggable="false"
                       onload={(e) => handleThumbImageLoad(e, itemIndex)}
                       onerror={(e) => {
@@ -1223,9 +1347,10 @@
                     {@const thumbSrc = (!posterFailed[itemIndex] && item.poster) ? item.poster : videoThumbnails[itemIndex]}
                     {#if thumbSrc}
                       <img
-                        src={thumbSrc}
+                        src={thumbnailProxySrc(thumbSrc, 600) || thumbSrc}
                         alt=""
                         loading="lazy"
+                        decoding="async"
                         draggable="false"
                         onload={(e) => handleThumbImageLoad(e, itemIndex)}
                         onerror={() => {
@@ -1497,13 +1622,34 @@
     transition: transform 150ms var(--ease-expo, ease-out);
   }
 
+  .media-box {
+    grid-area: 1 / 1;
+    place-self: center;
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
   .image-media {
     grid-area: 1 / 1;
     place-self: center;
     position: relative;
     z-index: 2;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
     will-change: transform;
     transition: transform 150ms var(--ease-expo, ease-out);
+  }
+
+  .image-media.is-fitted {
+    object-fit: cover;
   }
 
   .image-media.zoomed {

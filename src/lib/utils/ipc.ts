@@ -5,6 +5,7 @@ import { notify } from '$lib/utils/toast';
 import type { ArchiveOpenRequest, ArchiveOpenResult, CloudFolderResult, CloudLinkContext } from '$lib/types/cloud';
 import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
+import type { MediaInfo } from '$lib/types/media';
 import type { CreatorSubscription, SubscriptionInput } from '$lib/types/subscription';
 import type { SyncDevice, SyncStatus } from '$lib/types/sync';
 import type { ProviderAuthSchema, FavoritesSyncResult, ProviderCapabilities } from '$lib/types/provider';
@@ -391,6 +392,9 @@ export const apiProbeDownloadSize = (url: string) =>
 
 export const apiProbeDownloadSizes = (urls: string[]) =>
   invoke<Record<string, number>>('probe_download_sizes', { urls });
+
+export const apiProbeMediaInfo = (url: string) =>
+  invoke<MediaInfo | null>('probe_media_info', { url });
 
 export const apiListDownloads = () => invoke<DownloadItem[]>('list_downloads');
 export const apiPauseDownload = (downloadId: string) =>

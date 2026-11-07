@@ -8,6 +8,7 @@ pub mod db;
 pub mod downloader;
 pub mod linux_open;
 pub mod logging;
+pub mod media_info;
 pub mod net;
 pub mod server;
 pub mod smart_links;
@@ -290,6 +291,7 @@ pub fn run() {
             check_aria2c_installed,
             probe_download_size,
             probe_download_sizes,
+            probe_media_info,
             get_settings,
             get_default_settings,
             get_network_defaults,

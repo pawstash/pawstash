@@ -511,6 +511,7 @@
     "source": "Source",
     "source_auto": "Merged",
     "source_failed": "Didn't load",
+    "source_page": "The source returned a web page instead of a video. The link may be private, expired, or need a browser.",
     "switch_to_merged": "Switch to Merged",
     "tab_all": "All",
     "tab_cloud": "Cloud files",
