@@ -1067,6 +1067,20 @@ export function isH265Video(filename?: string, url?: string): boolean {
   return /\b(h265|hevc|x265)\b|\.(h265|hevc)(?:$|[?#])/i.test(target);
 }
 
+let hevcPlaybackSupport: boolean | null = null;
+export function supportsHevcPlayback(): boolean {
+  if (hevcPlaybackSupport !== null) return hevcPlaybackSupport;
+  if (typeof document === 'undefined') return false;
+  try {
+    const probe = document.createElement('video');
+    const canPlay = probe.canPlayType('video/mp4; codecs="hevc"') || probe.canPlayType('video/mp4; codecs="hvc1"');
+    hevcPlaybackSupport = canPlay === 'probably' || canPlay === 'maybe';
+  } catch {
+    hevcPlaybackSupport = false;
+  }
+  return hevcPlaybackSupport;
+}
+
 export type MediaErrorPreset =
   | 'unsupported_format'
   | 'unsupported_codec'

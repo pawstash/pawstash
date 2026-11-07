@@ -37,7 +37,7 @@
   import MediaSurface from '$lib/components/ui/MediaSurface.svelte';
   import { mediaInfoState } from '$lib/state/mediaInfoState.svelte';
   import { logMediaError } from '$lib/utils/logger';
-  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, thumbnailProxySrc, type MediaFailureState } from '$lib/utils/media';
+  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, isH265Video, supportsHevcPlayback, videoPoster, thumbnailProxySrc, type MediaFailureState } from '$lib/utils/media';
   import { openDownloadedFile } from '$lib/utils/ipc';
   import { getVideoThumbnail, isFrameBlankOrBlack } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
@@ -1174,8 +1174,8 @@
               {@html sanitizeEmbedHtml(current.html)}
             </div>
           </div>
-        {:else if current.kind === 'video' && (current.isUnarchived || current.isUnavailable || videoErrors[index] || getUnsupportedContainerFormat(current?.name, current?.url))}
-          {@const failure = current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined })}
+        {:else if current.kind === 'video' && (!current.url || current.isUnarchived || current.isUnavailable || videoErrors[index] || (isH265Video(current?.name, current?.url) && !supportsHevcPlayback()) || getUnsupportedContainerFormat(current?.name, current?.url))}
+          {@const failure = !current.url ? { preset: 'unavailable' as const } : current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (isH265Video(current?.name, current?.url) && !supportsHevcPlayback() ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined }))}
           <div
             class="viewer-file-state"
             

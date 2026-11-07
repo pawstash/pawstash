@@ -45,7 +45,7 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, getPostTags, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, thumbnailProxySrc, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isCloudMirror, cloudProviderName, isListableArchive, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, supportsHevcPlayback, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, thumbnailProxySrc, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
@@ -1700,9 +1700,7 @@
     void serverPortState.ensurePort();
 
     try {
-      const v = document.createElement('video');
-      const canPlay = v.canPlayType('video/mp4; codecs="hevc"') || v.canPlayType('video/mp4; codecs="hvc1"');
-      hevcSupported = canPlay === 'probably' || canPlay === 'maybe';
+      hevcSupported = supportsHevcPlayback();
     } catch (e) {
       hevcSupported = false;
     }
@@ -2635,20 +2633,30 @@
                           {@render sourceBadge(file)}
                         {/if}
                       </div>
-                      {#if isVid && (isUnarchived || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported))}
-                        {@const failure = (isUnarchived ? { preset: 'unarchived' as const } : null) || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : null)}
+                      {#if isVid && (isUnarchived || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported && !hevcAttempts.has(index)))}
+                        {@const failure = (isUnarchived ? { preset: 'unarchived' as const } : null) || videoFailures[index] || (isH265Video(file?.name, url) && !hevcSupported && !hevcAttempts.has(index) ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : null)}
                         <div class="file-placeholder is-error-placeholder">
                           <IconVideoOff class="placeholder-icon" />
                           {#if failure?.preset === 'unsupported_codec'}
                             <p class="placeholder-text">{i18n.t('post.unsupported_codec_desc')}</p>
-                            <Button
-                              variant="ghost"
-                              class="placeholder-fix-btn"
-                              onclick={() => isCodecModalOpen = true}
-                            >
-                              <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
-                              <span>{i18n.t('post.codec_how_to_fix')}</span>
-                            </Button>
+                            <div class="codec-actions">
+                              <Button
+                                variant="ghost"
+                                class="placeholder-fix-btn"
+                                onclick={() => isCodecModalOpen = true}
+                              >
+                                <IconSparkle class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                                <span>{i18n.t('post.codec_how_to_fix')}</span>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                class="placeholder-fix-btn"
+                                onclick={() => tryHevc(index)}
+                              >
+                                <IconPlay class="w-[15px] h-[15px] text-[var(--accent-primary)]" />
+                                <span>{i18n.t('post.codec_try_anyway')}</span>
+                              </Button>
+                            </div>
                           {:else if failure?.preset === 'unsupported_format'}
                             <p class="placeholder-text">
                               {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(file?.name) })}
@@ -3670,6 +3678,13 @@
     border-radius: var(--radius-full, 9999px) !important;
     gap: 6px !important;
     margin-top: 4px;
+  }
+
+  .codec-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
   }
 
   .placeholder-text {
