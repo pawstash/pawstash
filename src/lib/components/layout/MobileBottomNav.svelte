@@ -136,8 +136,37 @@
     border-radius: var(--radius-full);
     background: transparent;
     color: inherit;
+    overflow: hidden;
+    isolation: isolate;
     transition: background-color var(--duration-fast) var(--ease-standard),
-                color var(--duration-fast) var(--ease-standard);
+                color var(--duration-normal) var(--ease-expo);
+  }
+
+  .dock-icon-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: -1;
+    width: 72px;
+    height: 72px;
+    margin: -36px 0 0 -36px;
+    border-radius: 50%;
+    background: var(--accent-container);
+    opacity: 0;
+    transform: scale(0);
+    will-change: transform;
+    pointer-events: none;
+    transition:
+      transform var(--duration-normal) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dock-icon-wrapper::before,
+    .mobile-dock-btn.active .dock-icon-wrapper::before {
+      transition: opacity var(--duration-fast) var(--ease-standard);
+    }
   }
 
   @media (hover: hover) {
@@ -150,8 +179,15 @@
     background: var(--state-layer-pressed);
   }
 
+  .mobile-dock-btn.active .dock-icon-wrapper::before {
+    transform: scale(1);
+    opacity: 1;
+    transition:
+      transform var(--duration-slow) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+
   .mobile-dock-btn.active .dock-icon-wrapper {
-    background: var(--accent-container);
     color: var(--accent-on-container);
   }
 

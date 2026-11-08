@@ -311,10 +311,6 @@
     transition: opacity 160ms ease;
   }
 
-  :global(.light) .logo-text-img {
-    filter: invert(1);
-  }
-
   .profile-btn {
     height: 44px !important;
     margin-bottom: 4px;
@@ -362,7 +358,7 @@
   .profile-sub {
     font-size: 10px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     letter-spacing: 0.02em;
     text-transform: none;
     white-space: nowrap;
@@ -403,11 +399,14 @@
     cursor: default;
     box-sizing: border-box;
     overflow: hidden;
-    transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+      width 300ms cubic-bezier(0.16, 1, 0.3, 1),
+      background-color 300ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .sidebar-aside.compact {
     width: calc(var(--sidebar-width-collapsed, 56px) + var(--edge-left, 0px));
+    background: transparent;
   }
 
   .sidebar-scrollable {
@@ -599,13 +598,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    animation: pulse 2s infinite;
     pointer-events: none;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
   }
 
   .sidebar-header {
