@@ -89,10 +89,7 @@
   class:compact={isCompact}
   class:mac-style={isMacStyle}
 >
-  <div class="sidebar-header" data-tauri-drag-region="deep">
-    {#if isMacStyle}
-      <WindowControls variant="macos" />
-    {/if}
+  {#snippet sidebarToggle()}
     <Button
       variant="ghost"
       class="btn-icon sidebar-toggle"
@@ -102,7 +99,13 @@
     >
       {#if isCompact}<IconPanelExpand />{:else}<IconPanelContract />{/if}
     </Button>
-  </div>
+  {/snippet}
+
+  {#if isMacStyle}
+    <div class="sidebar-header" data-tauri-drag-region="deep">
+      <WindowControls variant="macos" />
+    </div>
+  {/if}
 
   <div
     data-overlayscrollbars-initialize
@@ -111,31 +114,43 @@
     data-tauri-drag-region
   >
     <div class="sidebar-content" data-tauri-drag-region>
-      <button
-        data-tauri-drag-region="false"
-        use:motion={'sidebar-item'}
-        onclick={() => navigationState.navigateRoot('feed')}
-        class="sidebar-btn logo-btn"
-        aria-label="Pawstash"
-        use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
-      >
-        <div class="sidebar-icon">
-          <svg viewBox="0 0 602 602" fill="none" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="logo-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#FCD8D2"/>
-                <stop offset="1" stop-color="#FEB8AD"/>
-              </linearGradient>
-            </defs>
-            <g transform="translate(0, 8.5)">
-              <path d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
-            </g>
-          </svg>
-        </div>
-        <span class="sidebar-label logo-label">
-          <img src={pawstashLogo} alt="Pawstash" class="logo-text-img" />
-        </span>
-      </button>
+      <div class="sidebar-top">
+        <button
+          data-tauri-drag-region="false"
+          use:motion={'sidebar-item'}
+          onclick={() => navigationState.navigateRoot('feed')}
+          class="sidebar-btn logo-btn"
+          aria-label="Pawstash"
+          use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
+        >
+          <div class="sidebar-icon">
+            <svg viewBox="0 0 602 602" fill="none" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="logo-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#FCD8D2"/>
+                  <stop offset="1" stop-color="#FEB8AD"/>
+                </linearGradient>
+              </defs>
+              <g transform="translate(0, 8.5)">
+                <path d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
+              </g>
+            </svg>
+          </div>
+          <span class="sidebar-label logo-label">
+            <img src={pawstashLogo} alt="Pawstash" class="logo-text-img" />
+          </span>
+        </button>
+
+        {#if isCompact}
+          <div class="sidebar-expand-overlay">
+            {@render sidebarToggle()}
+          </div>
+        {/if}
+
+        {#if !isCompact}
+          {@render sidebarToggle()}
+        {/if}
+      </div>
 
       <button
         data-tauri-drag-region="false"
@@ -227,11 +242,51 @@
 </aside>
 
 <style>
+  .sidebar-top {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
+    height: 44px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+    --control-height: var(--control-height-base);
+    --control-icon-size: var(--control-icon-base);
+  }
+
+  .sidebar-top > :global(.sidebar-toggle) {
+    margin-inline-start: auto;
+  }
+
+  .sidebar-expand-overlay {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 0;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+
+  .sidebar-top:hover .sidebar-expand-overlay,
+  .sidebar-expand-overlay:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-aside.compact .sidebar-top:hover .logo-btn .sidebar-icon,
+  .sidebar-aside.compact .sidebar-top:has(.sidebar-expand-overlay:focus-within) .logo-btn .sidebar-icon {
+    opacity: 0;
+  }
+
   .sidebar-btn.logo-btn {
     height: 44px;
-    padding: 0 16px 0 11px;
-    gap: 10px;
-    margin-bottom: 8px;
+    padding: 0 10px 0 11px;
+    gap: 8px;
     width: max-content;
     max-width: 100%;
     box-sizing: border-box;
@@ -280,8 +335,8 @@
     justify-content: flex-start;
     min-width: 0;
     flex: 1 1 auto;
-    width: 82px;
-    max-width: 82px;
+    width: 68px;
+    max-width: 68px;
     height: 100%;
     font-weight: 600;
     font-size: 15px;
@@ -299,7 +354,7 @@
   }
 
   .logo-text-img {
-    height: 33px;
+    height: 27px;
     width: auto;
     max-width: 100%;
     object-fit: contain;
@@ -372,13 +427,16 @@
     height: 1px;
     width: calc(100% - 12px);
     max-width: calc(100% - 12px);
-    margin: 4px 0 8px 0;
+    margin: 4px auto 8px;
     background: rgba(var(--surface-tint-rgb), 0.08);
-    transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+      width 300ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 200ms ease;
   }
 
   .sidebar-aside.compact .profile-divider {
     width: 44px;
+    opacity: 0;
   }
 
   .sidebar-aside {

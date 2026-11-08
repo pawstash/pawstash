@@ -176,9 +176,9 @@
   }
 
   :root {
-    --sidebar-width-expanded: 160px;
+    --sidebar-width-expanded: 176px;
     --sidebar-width-collapsed: 56px;
-    --mac-header-width: calc(16px + 52px + 12px + var(--control-height-base) + 8px);
+    --mac-header-width: calc(16px + 52px + 8px);
     --nav-min-width: 200px;
     --nav-max-width: 280px;
     --mobile-nav-height: 64px;

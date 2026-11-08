@@ -306,6 +306,7 @@
     flex-shrink: 0;
     padding-top: var(--edge-top, 0px);
     padding-inline: var(--gutter);
+    transition: padding-inline-start 300ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .top-app-bar.is-pointer:not(.has-window-controls) {
