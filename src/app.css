@@ -100,6 +100,15 @@
   scrollbar-width: thin;
 }
 
+.native-scroll {
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.native-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;

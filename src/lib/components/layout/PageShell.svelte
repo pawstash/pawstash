@@ -106,6 +106,7 @@
       class:is-scrolled={scrolled}
       style:--fade-top={fadeTop}
       use:scrollAction={{
+        nativeOnTouch: true,
         initialScrollTop: scrollKey ? navigationState.scrollFor(scrollKey) : 0,
         onScroll: (top) => {
           scrolled = top > 0;

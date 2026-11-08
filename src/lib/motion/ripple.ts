@@ -16,12 +16,13 @@ export function ripple(node: HTMLElement, enabled = true) {
     document.head.appendChild(_rippleStyle);
   }
 
-  if (window.getComputedStyle(node).position === 'static') {
-    node.style.position = 'relative';
-  }
   node.style.overflow = 'hidden';
 
   function spawn(e: PointerEvent) {
+    if (window.getComputedStyle(node).position === 'static') {
+      node.style.position = 'relative';
+    }
+
     const rect = node.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;

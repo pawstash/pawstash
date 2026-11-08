@@ -32,6 +32,7 @@
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
+  import { progressiveReveal } from '$lib/utils/progressiveReveal.svelte';
   import { ripple, tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
@@ -275,6 +276,7 @@
 
   let visibleCreators = $derived(filteredCreators.slice(0, visibleCreatorsCount));
   let hasMoreCreators = $derived(filteredCreators.length > visibleCreatorsCount);
+  const reveal = progressiveReveal(() => visibleCreators.length);
 
   function loadMoreCreators() {
     if (!hasMoreCreators) return;
@@ -885,6 +887,7 @@
           class:selected={isSelected}
           class:is-entering={enterDelay !== null}
           style:aspect-ratio={ratio}
+          style:content-visibility={index >= reveal.revealed ? 'hidden' : null}
           style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
           data-creator-key={creatorKey}
           data-select-key={creatorKey}

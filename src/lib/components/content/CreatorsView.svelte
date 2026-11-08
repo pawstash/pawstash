@@ -34,6 +34,7 @@
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
+  import { progressiveReveal } from '$lib/utils/progressiveReveal.svelte';
 
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
@@ -203,6 +204,7 @@
   let activeTab = $derived(creatorsState.activeTab);
 
   let creatorsList = $derived(creatorsState.creators);
+  const reveal = progressiveReveal(() => creatorsList.length);
 
   const handoff = new GridHandoff();
   $effect(() => handoff.sync(creatorsList.length > 0, creatorsState.loading));
@@ -539,6 +541,7 @@
           class:selected={isSelected}
           class:is-entering={enterDelay !== null}
           style:aspect-ratio={ratio}
+          style:content-visibility={index >= reveal.revealed ? 'hidden' : null}
           style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
           data-creator-key={creatorKey}
           data-select-key={creatorKey}
