@@ -67,18 +67,21 @@
 <style>
   .nav-item {
     position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 12px;
-    width: 100%;
-    height: 40px;
-    padding-inline: 12px 16px;
+    gap: 11px;
+    width: max-content;
+    max-width: 100%;
+    height: 44px;
+    padding: 0 20px 0 11px;
     border: 0;
     border-radius: var(--radius-full);
     background: transparent;
     color: var(--text-secondary);
     text-align: start;
     overflow: hidden;
+    box-sizing: border-box;
+    flex-shrink: 0;
     transition:
       background-color var(--duration-fast) var(--ease-standard),
       color var(--duration-fast) var(--ease-standard);
@@ -89,6 +92,7 @@
   }
 
   .nav-item.is-compact {
+    width: 44px;
     justify-content: center;
     padding: 0;
   }
@@ -106,8 +110,8 @@
   }
 
   .nav-item.is-active {
-    background: var(--accent-container);
-    color: var(--accent-on-container);
+    background: var(--state-layer-pressed);
+    color: var(--text-primary);
   }
 
   .nav-item__icon {
@@ -115,18 +119,25 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
+    opacity: 0.65;
+    transition: opacity 200ms ease;
+  }
+
+  .nav-item:hover .nav-item__icon,
+  .nav-item.is-active .nav-item__icon {
+    opacity: 1;
   }
 
   .nav-item__icon > :global(svg) {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
   }
 
   .nav-item__icon :global(.progress-ring) {
     position: absolute;
-    inset: -3px;
+    inset: -4px;
   }
 
   .nav-item__dot {
@@ -154,8 +165,20 @@
   }
 
   .nav-item__label {
-    font-size: var(--type-label-lg-size);
-    line-height: var(--type-label-lg-line);
+    font-size: 14px;
+    line-height: normal;
+    font-weight: 475;
+    letter-spacing: 0.015em;
+    opacity: 0.65;
+    transition: opacity 200ms ease;
+  }
+
+  .nav-item:hover .nav-item__label,
+  .nav-item.is-active .nav-item__label {
+    opacity: 1;
+  }
+
+  .nav-item.is-active .nav-item__label {
     font-weight: 500;
   }
 

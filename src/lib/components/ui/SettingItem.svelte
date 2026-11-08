@@ -136,7 +136,7 @@
     padding: 12px 16px;
     box-sizing: border-box;
     border-radius: var(--radius-xs);
-    background: var(--settings-tile, var(--surface-container));
+    background: var(--settings-tile, var(--content-surface));
     overflow: hidden;
   }
 

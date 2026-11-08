@@ -3,6 +3,8 @@
   import { tooltip } from '$lib/motion';
   import { APP_VERSION, BUILD_TIME, COMMIT_HASH } from '$lib/version';
 
+  let { inset = 24 }: { inset?: number } = $props();
+
   let builtOn = $derived.by(() => {
     const date = new Date(BUILD_TIME);
     if (Number.isNaN(date.getTime())) return BUILD_TIME;
@@ -10,8 +12,8 @@
   });
 </script>
 
-<p class="version-line" use:tooltip={`${i18n.t('settings.built_on')} ${builtOn}`}>
-  Pawstash {APP_VERSION} · {COMMIT_HASH}
+<p class="version-line" style:padding-inline={`${inset}px`} use:tooltip={`${i18n.t('settings.built_on')} ${builtOn} · ${COMMIT_HASH}`}>
+  Pawstash {APP_VERSION}
 </p>
 
 <style>
@@ -20,9 +22,13 @@
     margin: 0;
     padding: 12px 24px 16px;
     color: var(--text-secondary);
-    font-family: var(--font-mono);
-    font-size: var(--type-label-sm-size);
-    line-height: var(--type-label-sm-line);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     user-select: text;
     contain: inline-size;
   }

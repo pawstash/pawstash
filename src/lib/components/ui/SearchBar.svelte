@@ -201,7 +201,7 @@
     width: 100%;
     height: 100%;
     padding: 0 40px 0 42px;
-    background: var(--surface-container-high);
+    background: var(--content-surface-high);
     border: 0;
     border-radius: var(--radius-full);
     color: var(--text-primary);

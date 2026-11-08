@@ -27,6 +27,8 @@
     <h1 class="settings-nav__title">{i18n.t('nav.settings')}</h1>
   </div>
 
+  <div class="settings-nav__divider" aria-hidden="true"></div>
+
   <div
     class="settings-nav__scroll"
     data-overlayscrollbars-initialize
@@ -55,7 +57,9 @@
     </div>
   </div>
 
-  <VersionLine />
+  <div class="settings-nav__footer">
+    <VersionLine inset={0} />
+  </div>
 </nav>
 
 <style>
@@ -63,9 +67,7 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    width: max-content;
-    min-width: calc(var(--nav-min-width) + var(--edge-left, 0px));
-    max-width: calc(var(--nav-max-width) + var(--edge-left, 0px));
+    width: calc(var(--sidebar-width-expanded) + var(--edge-left, 0px));
     height: 100%;
     padding: var(--edge-top, 0px) 0 var(--edge-bottom, 0px) var(--edge-left, 0px);
     background: var(--chrome-surface);
@@ -77,22 +79,29 @@
     gap: 8px;
     flex-shrink: 0;
     height: var(--toolbar-height);
-    padding-inline: 16px 12px;
+    padding-inline: 8px 12px;
     --control-height: var(--control-height-base);
     --control-icon-size: var(--control-icon-base);
   }
 
   .settings-nav.is-mac .settings-nav__header {
     gap: 12px;
-    padding-inline-start: 20px;
+    padding-inline-start: 16px;
   }
 
   .settings-nav__title {
     margin: 0;
     color: var(--text-primary);
-    font-size: var(--type-title-lg-size);
-    line-height: var(--type-title-lg-line);
-    font-weight: 400;
+    font-size: var(--type-title-md-size);
+    line-height: var(--type-title-md-line);
+    font-weight: 500;
+  }
+
+  .settings-nav__divider {
+    flex-shrink: 0;
+    height: 1px;
+    margin: 0 12px 10px;
+    background: rgba(var(--surface-tint-rgb), 0.08);
   }
 
   .settings-nav__scroll {
@@ -103,13 +112,19 @@
   .settings-nav__list {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    padding: 8px 12px 16px;
+    gap: 16px;
+    padding: 0 6px 16px;
   }
 
   .settings-nav__group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 6px;
+  }
+
+  .settings-nav__footer {
+    flex-shrink: 0;
+    margin: 0 12px;
+    border-top: 1px solid rgba(var(--surface-tint-rgb), 0.08);
   }
 </style>

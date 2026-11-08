@@ -119,7 +119,7 @@
     padding: var(--choice-inset);
     box-sizing: border-box;
     border-radius: var(--radius-full);
-    background: var(--choice-track, var(--surface-container-high));
+    background: var(--choice-track, var(--content-surface-high));
     user-select: none;
     white-space: nowrap;
   }

@@ -553,12 +553,12 @@
 
   .sidebar-btn:hover {
     color: var(--text-primary);
-    background: rgba(var(--surface-tint-rgb), 0.08);
+    background: var(--state-layer-hover);
   }
 
   .sidebar-btn.active {
     color: var(--text-primary);
-    background: rgba(var(--surface-tint-rgb), 0.10);
+    background: var(--state-layer-pressed);
   }
 
   .sidebar-aside.compact .sidebar-btn {

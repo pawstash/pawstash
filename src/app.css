@@ -179,8 +179,6 @@
     --sidebar-width-expanded: 176px;
     --sidebar-width-collapsed: 56px;
     --mac-header-width: calc(16px + 52px + 8px);
-    --nav-min-width: 200px;
-    --nav-max-width: 280px;
     --mobile-nav-height: 64px;
     --dock-margin: 12px;
     --dock-max-width: 440px;
@@ -297,6 +295,8 @@
     --settings-row-min-height: 58px;
     --settings-control-max-width: 360px;
     --settings-row-bg: rgba(var(--surface-tint-rgb), 0.025);
+    --content-surface: var(--surface-container);
+    --content-surface-high: var(--surface-container-high);
     --settings-row-divider: rgba(var(--surface-tint-rgb), 0.025);
 
     --floating-bg: var(--surface-container-high);
@@ -1990,10 +1990,14 @@ html.is-paint-selecting * {
 
 html[data-backdrop='native'] {
   --chrome-surface: color-mix(in srgb, var(--surface-container-low) 35%, transparent);
+  --content-surface: color-mix(in srgb, var(--surface-container) 58%, transparent);
+  --content-surface-high: color-mix(in srgb, var(--surface-container-high) 68%, transparent);
 }
 
 html[data-backdrop='custom'] {
   --chrome-surface: color-mix(in srgb, var(--surface-container-low) 62%, transparent);
+  --content-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+  --content-surface-high: color-mix(in srgb, var(--surface-container-high) 82%, transparent);
 }
 
 html.opaque-window,
