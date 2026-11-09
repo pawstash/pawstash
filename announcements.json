@@ -1,0 +1,27 @@
+{
+  "announcements": [
+    {
+      "id": "telegram-invite-2026-11",
+      "severity": "info",
+      "title": {
+        "en": "Join the Telegram chat",
+        "ru": "Заходите в Telegram-чат"
+      },
+      "body": {
+        "en": "Discuss features and report bugs.",
+        "ru": "Обсуждайте функции и сообщайте об ошибках."
+      },
+      "starts_at": "2026-11-09",
+      "ends_at": "2026-11-24",
+      "actions": [
+        {
+          "label": {
+            "en": "@pawstashapp",
+            "ru": "@pawstashapp"
+          },
+          "url": "https://t.me/pawstashapp"
+        }
+      ]
+    }
+  ]
+}
