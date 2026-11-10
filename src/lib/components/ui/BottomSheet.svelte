@@ -1,23 +1,26 @@
 <script lang="ts">
-  import { onDestroy, untrack, type Snippet } from 'svelte';
+  import { onDestroy, untrack, type Component, type Snippet } from 'svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import { dialogFocus } from '$lib/actions/dialogFocus';
   import { i18n } from '$lib/i18n';
+  import MaterialShape from '$lib/components/ui/MaterialShape.svelte';
+  import { heroShapeCycle } from '$lib/utils/materialShapes';
 
   interface Props {
     isOpen?: boolean;
     title: string;
     description?: string;
     closeLabel?: string;
+    icon?: Component;
+    tone?: 'accent' | 'danger';
     flush?: boolean;
     scrollable?: boolean;
     tall?: boolean;
     onclose: () => void;
     children?: Snippet;
     footer?: Snippet;
-    floating?: Snippet;
   }
 
   let {
@@ -25,15 +28,24 @@
     title,
     description,
     closeLabel,
+    icon: Icon,
+    tone = 'accent',
     flush = false,
     scrollable: isScrollable = true,
     tall = false,
     onclose,
     children,
-    footer,
-    floating
+    footer
   }: Props = $props();
 
+  let heroNonce = $state(Math.random());
+  let wasOpen = untrack(() => isOpen);
+  $effect.pre(() => {
+    if (isOpen && !wasOpen) heroNonce = Math.random();
+    wasOpen = isOpen;
+  });
+  const heroCycle = $derived(heroShapeCycle(`${title}\u0001${heroNonce}`, tone));
+  const heroShape = $derived(heroCycle[0] ?? 'circle');
 
   const DISMISS_DISTANCE_RATIO = 0.25;
   const DISMISS_FLICK_DISTANCE_RATIO = 0.12;
@@ -254,7 +266,20 @@
           <span class="bottom-sheet__handle" aria-hidden="true"></span>
         </button>
 
-        <header class="bottom-sheet__header">
+        <header class="bottom-sheet__header" class:is-hero={Boolean(Icon)}>
+          {#if Icon}
+            <span class="bottom-sheet__hero" data-tone={tone} aria-hidden="true">
+              <MaterialShape
+                name={heroShape}
+                size={56}
+                duration={700}
+                cycle={heroCycle}
+                spin
+                class="bottom-sheet__hero-shape"
+              />
+              <span class="bottom-sheet__hero-glyph"><Icon /></span>
+            </span>
+          {/if}
           <h2 class="bottom-sheet__title">{title}</h2>
           {#if description}
             <p class="bottom-sheet__description">{description}</p>
@@ -290,10 +315,6 @@
           <footer class="bottom-sheet__footer">
             {@render footer()}
           </footer>
-        {/if}
-
-        {#if floating}
-          {@render floating()}
         {/if}
       </div>
     </div>
@@ -455,6 +476,51 @@
     z-index: 2;
     flex: none;
     padding: 0 var(--bottom-sheet-inset) var(--bottom-sheet-gap);
+  }
+
+  .bottom-sheet__header.is-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding-top: 2px;
+    text-align: center;
+  }
+
+  .bottom-sheet__hero {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    color: var(--bottom-sheet-hero-tone);
+  }
+
+  .bottom-sheet__hero :global(.bottom-sheet__hero-shape) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    color: color-mix(in srgb, var(--bottom-sheet-hero-tone) 20%, transparent);
+  }
+
+  .bottom-sheet__hero[data-tone='accent'] {
+    --bottom-sheet-hero-tone: var(--accent-primary);
+  }
+
+  .bottom-sheet__hero[data-tone='danger'] {
+    --bottom-sheet-hero-tone: var(--status-error);
+  }
+
+  .bottom-sheet__hero-glyph {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+
+  .bottom-sheet__hero-glyph :global(svg) {
+    width: 26px;
+    height: 26px;
   }
 
   .bottom-sheet__title {

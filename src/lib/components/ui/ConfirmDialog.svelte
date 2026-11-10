@@ -45,7 +45,7 @@
   }: Props = $props();
 
   const heroTone = $derived(confirmVariant === 'danger' ? 'danger' : 'accent');
-  const desktopHero = $derived(heroIcon ?? (confirmVariant === 'danger' ? IconWarning : undefined));
+  const hero = $derived(heroIcon ?? (confirmVariant === 'danger' ? IconWarning : undefined));
 
   function handleClose() {
     if (loading) return;
@@ -106,6 +106,8 @@
   <BottomSheet
     {isOpen}
     {title}
+    icon={hero}
+    tone={heroTone}
     closeLabel={cancelLabel || i18n.t('common.cancel')}
     onclose={handleClose}
   >
@@ -121,7 +123,7 @@
     {isOpen}
     {title}
     size="sm"
-    icon={desktopHero}
+    icon={hero}
     tone={heroTone}
     dismissible={false}
     borderlessFooter
@@ -142,5 +144,6 @@
     color: var(--text-secondary);
     font-size: var(--type-body-md-size);
     line-height: var(--type-body-md-line);
+    text-align: center;
   }
 </style>

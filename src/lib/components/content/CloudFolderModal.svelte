@@ -940,7 +940,6 @@
     {onclose}
     size={compact ? 'lg' : 'xl'}
     flush
-    borderlessHeader
     scrollable={false}
     footer={hasSelection ? selectionFooter : undefined}
   >

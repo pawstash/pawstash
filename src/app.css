@@ -311,8 +311,8 @@
     --modal-title-content-gap: 16px;
     --modal-content-footer-gap: 24px;
     --modal-title-size: var(--type-title-lg-size);
-    --modal-close-size: 32px;
-    --modal-close-icon: 20px;
+    --modal-close-size: 40px;
+    --modal-close-icon: 24px;
     --modal-scrim: rgba(0, 0, 0, 0.72);
     --modal-shadow: 0 24px 64px rgba(0, 0, 0, var(--shadow-alpha));
     --modal-hero-box: 56px;
