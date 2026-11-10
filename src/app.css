@@ -178,6 +178,7 @@
   :root {
     --sidebar-width-expanded: 176px;
     --sidebar-width-collapsed: 56px;
+    --settings-nav-width: 300px;
     --mac-header-width: calc(16px + 52px + 8px);
     --mobile-nav-height: 64px;
     --dock-margin: 12px;

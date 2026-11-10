@@ -1,3 +1,10 @@
+<script lang="ts" module>
+  export interface Crumb {
+    label: string;
+    onclick?: () => void;
+  }
+</script>
+
 <script lang="ts">
   import { getContext, type Snippet } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
@@ -10,10 +17,12 @@
   import SelectionBar from './SelectionBar.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
+  import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
   import IconSettings from '~icons/fluent/settings-24-regular';
 
   interface Props {
     title?: string;
+    trail?: Crumb[];
     heading?: Snippet<[boolean]>;
     titleAfter?: number;
     titleTrigger?: HTMLElement | null;
@@ -31,6 +40,7 @@
 
   let {
     title,
+    trail,
     heading,
     titleAfter = 0,
     titleTrigger = null,
@@ -62,7 +72,16 @@
   let triggerPassed = $state(false);
   let titleShown = $derived(titleTrigger ? triggerPassed : scrollTop >= titleAfter);
   let condensed = $derived(Boolean(titleTrigger && triggerPassed && title));
-  let hasHeading = $derived(Boolean(heading || title));
+  let hasHeading = $derived(Boolean(trail?.length || heading || title));
+  let shownTrail = $derived.by(() => {
+    if (!trail?.length) return [];
+    if (!isTouch || titleShown || trail.length < 2) return trail;
+    return trail.slice(0, -1);
+  });
+  let lastTrailIndex = $derived((trail?.length ?? 0) - 1);
+  let trailParents = $derived(trail ? trail.slice(0, -1) : []);
+  let trailCurrent = $derived(trail?.[trail.length - 1]);
+  let trailStacked = $derived(Boolean(isTouch && titleShown && trail && trail.length > 1));
   let viewsRow = $derived(isTouch && hasHeading && Boolean(views));
 
   $effect(() => {
@@ -128,7 +147,42 @@
       <IconArrowLeft />
     </Button>
   {/if}
-  {#if heading}
+  {#if shownTrail.length}
+    <nav class="bar-trail" class:is-stacked={trailStacked} aria-label={i18n.t('nav.breadcrumb')}>
+      {#if trailStacked}
+        <span class="bar-trail__parents">
+          {#each trailParents as crumb, index (index)}
+            {#if index > 0}
+              <span class="bar-trail__sep is-small" aria-hidden="true"><IconChevronRight /></span>
+            {/if}
+            {#if crumb.onclick}
+              <button type="button" class="bar-trail__parent" onclick={crumb.onclick}>{crumb.label}</button>
+            {:else}
+              <span class="bar-trail__parent">{crumb.label}</span>
+            {/if}
+          {/each}
+        </span>
+        <span class="bar-trail__title" aria-current="page">{trailCurrent?.label}</span>
+      {:else}
+        {#each shownTrail as crumb, index (index)}
+          {#if index > 0}
+            <span class="bar-trail__sep" aria-hidden="true"><IconChevronRight /></span>
+          {/if}
+          {#if crumb.onclick}
+            <button type="button" class="bar-trail__crumb" onclick={crumb.onclick}>{crumb.label}</button>
+          {:else}
+            <span
+              class="bar-trail__crumb"
+              class:is-current={index === lastTrailIndex}
+              aria-current={index === lastTrailIndex ? 'page' : undefined}
+            >
+              {crumb.label}
+            </span>
+          {/if}
+        {/each}
+      {/if}
+    </nav>
+  {:else if heading}
     <div class="bar-heading">{@render heading(condensed)}</div>
     {#if condensed}
       <h1 class="bar-title is-swapped">{title}</h1>
@@ -221,7 +275,7 @@
     min-width: 0;
     box-sizing: border-box;
     color: var(--text-primary);
-    --control-icon-size: 20px;
+    --control-icon-size: 24px;
   }
 
   .top-app-bar.is-touch {
@@ -263,6 +317,131 @@
     align-items: center;
     min-width: 0;
     transition: margin var(--duration-fast) var(--ease-standard);
+  }
+
+  .bar-trail {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .bar-trail__crumb {
+    min-width: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: var(--type-title-lg-size);
+    line-height: var(--type-title-lg-line);
+    font-weight: 400;
+    text-align: start;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+      background-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+
+  .bar-trail__crumb:not(.is-current) {
+    flex: 0 4 auto;
+    color: var(--text-secondary);
+  }
+
+  .bar-trail__crumb.is-current {
+    flex: 0 1 auto;
+  }
+
+  button.bar-trail__crumb:hover {
+    background: var(--state-layer-hover);
+    color: var(--text-primary);
+  }
+
+  .bar-trail__sep {
+    display: flex;
+    align-self: center;
+    flex-shrink: 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+    opacity: 0.6;
+  }
+
+  .bar-trail__sep.is-small {
+    font-size: 12px;
+  }
+
+  .bar-trail.is-stacked {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0;
+    animation: trail-stack-in var(--duration-normal) var(--ease-expo);
+  }
+
+  @keyframes trail-stack-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar-trail.is-stacked {
+      animation: none;
+    }
+  }
+
+  .bar-trail__parents {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .bar-trail__parent {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 2px 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-display);
+    font-size: var(--type-label-md-size);
+    line-height: var(--type-label-md-line);
+    font-weight: 500;
+    text-align: start;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bar-trail__parent::after {
+    content: '';
+    position: absolute;
+    inset: -10px 0;
+  }
+
+  button.bar-trail__parent:hover {
+    color: var(--text-primary);
+  }
+
+  .bar-trail__title {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: var(--type-title-lg-size);
+    line-height: var(--type-title-lg-line);
+    font-weight: 400;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .bar-views {
@@ -322,6 +501,10 @@
     margin-inline-end: 16px;
   }
 
+  .top-app-bar.is-pointer .bar-trail {
+    margin-inline: -6px 16px;
+  }
+
   .top-app-bar .bar-heading:has(+ .bar-title) {
     flex-shrink: 0;
     margin-inline-end: 8px;
@@ -379,6 +562,11 @@
     gap: 4px;
     height: var(--app-bar-height);
     padding-inline: 16px 4px;
+  }
+
+  .top-app-bar.is-touch .bar-trail__crumb {
+    min-height: 40px;
+    padding-block: 8px;
   }
 
   .bar-row.has-back {

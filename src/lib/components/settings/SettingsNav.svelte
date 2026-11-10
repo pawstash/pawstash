@@ -4,11 +4,11 @@
   import { i18n } from '$lib/i18n';
   import { scrollable } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
+  import SettingItem from '$lib/components/ui/SettingItem.svelte';
   import WindowControls from '$lib/components/layout/WindowControls.svelte';
-  import NavItem from '$lib/components/layout/NavItem.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
-  import { SECTION_GROUPS, navSectionOf, sectionMeta } from './sections';
-  import VersionLine from './VersionLine.svelte';
+  import SettingsGroup from './SettingsGroup.svelte';
+  import { SECTION_GROUPS, navSectionOf, sectionMeta, sectionDescription } from './sections';
 
   let active = $derived(
     navigationState.route.name === 'settings' ? navSectionOf(navigationState.route.section) : null
@@ -27,8 +27,6 @@
     <h1 class="settings-nav__title">{i18n.t('nav.settings')}</h1>
   </div>
 
-  <div class="settings-nav__divider" aria-hidden="true"></div>
-
   <div
     class="settings-nav__scroll"
     data-overlayscrollbars-initialize
@@ -36,14 +34,16 @@
     data-tauri-drag-region="deep"
   >
     <div class="settings-nav__list">
-      {#each SECTION_GROUPS as group}
-        <div class="settings-nav__group">
+      {#each SECTION_GROUPS as group, index (`group-${index}`)}
+        <SettingsGroup>
           {#each group as id (id)}
             {@const meta = sectionMeta(id)}
-            <NavItem
-              label={i18n.t(meta.labelKey)}
+            <SettingItem
+              title={i18n.t(meta.labelKey)}
+              summary={sectionDescription(id) || undefined}
               icon={meta.icon}
               iconActive={meta.iconActive}
+              shapeSeed={id}
               active={active === id}
               onclick={() => {
                 if (navigationState.route.name !== 'settings' || navigationState.route.section !== id) {
@@ -52,13 +52,9 @@
               }}
             />
           {/each}
-        </div>
+        </SettingsGroup>
       {/each}
     </div>
-  </div>
-
-  <div class="settings-nav__footer">
-    <VersionLine inset={0} />
   </div>
 </nav>
 
@@ -67,10 +63,10 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    width: calc(var(--sidebar-width-expanded) + var(--edge-left, 0px));
+    width: calc(var(--settings-nav-width) + var(--edge-left, 0px));
     height: 100%;
     padding: var(--edge-top, 0px) 0 var(--edge-bottom, 0px) var(--edge-left, 0px);
-    background: var(--chrome-surface);
+    background: transparent;
   }
 
   .settings-nav__header {
@@ -81,7 +77,7 @@
     height: var(--toolbar-height);
     padding-inline: 8px 12px;
     --control-height: var(--control-height-base);
-    --control-icon-size: var(--control-icon-base);
+    --control-icon-size: 24px;
   }
 
   .settings-nav.is-mac .settings-nav__header {
@@ -97,13 +93,6 @@
     font-weight: 500;
   }
 
-  .settings-nav__divider {
-    flex-shrink: 0;
-    height: 1px;
-    margin: 0 12px 10px;
-    background: rgba(var(--surface-tint-rgb), 0.08);
-  }
-
   .settings-nav__scroll {
     flex: 1 1 0;
     min-height: 0;
@@ -112,19 +101,7 @@
   .settings-nav__list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 0 6px 16px;
-  }
-
-  .settings-nav__group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .settings-nav__footer {
-    flex-shrink: 0;
-    margin: 0 12px;
-    border-top: 1px solid rgba(var(--surface-tint-rgb), 0.08);
+    gap: 24px;
+    padding: 8px 8px 16px;
   }
 </style>

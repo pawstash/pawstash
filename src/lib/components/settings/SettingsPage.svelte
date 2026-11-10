@@ -7,6 +7,7 @@
   import { syncState } from '$lib/state/syncState.svelte';
   import { i18n } from '$lib/i18n';
   import PageShell from '$lib/components/layout/PageShell.svelte';
+  import type { Crumb } from '$lib/components/layout/TopAppBar.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
   import { searchSettings, revealSetting, type SettingMatch } from './settingsSearch';
   import { notify } from '$lib/utils/toast';
@@ -25,7 +26,7 @@
     providerIdOf,
     sectionLabel,
     sectionMeta,
-    sectionSummary,
+    sectionDescription,
     type SectionId
   } from './sections';
   import AppearanceSection from './sections/AppearanceSection.svelte';
@@ -66,6 +67,13 @@
   let isRootList = $derived(!section);
   let title = $derived(section && !searching ? sectionLabel(section) : i18n.t('nav.settings'));
   let SectionView = $derived(isSectionId(section) ? SECTIONS[section] : null);
+  let trail = $derived.by<Crumb[]>(() => {
+    if (searching || !section || !providerId) return [];
+    return [
+      { label: sectionLabel('providers'), onclick: () => navigationState.openSettings('providers') },
+      { label: title }
+    ];
+  });
   let canReset = $derived(Boolean(section) && sectionIsResettable(section!));
   let confirmReset = $state(false);
   let pageMenu = $derived<MenuItem[]>(
@@ -106,9 +114,18 @@
   });
 
   function back() {
-    if (layoutState.isMobile && isRootList) navigationState.exitSettings();
-    else if (providerId && !navigationState.canGoBack) navigationState.replaceRoute({ name: 'settings', section: 'providers' });
-    else navigationState.back();
+    if (layoutState.isMobile && isRootList) {
+      navigationState.exitSettings();
+      return;
+    }
+    if (!navigationState.canGoBack) {
+      navigationState.replaceRoute({
+        name: 'settings',
+        section: providerId ? 'providers' : layoutState.isMobile ? undefined : DEFAULT_SECTION
+      });
+      return;
+    }
+    navigationState.back();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -125,8 +142,9 @@
 
 <PageShell
   {title}
+  {trail}
   largeTitle
-  back={layoutState.isMobile || providerId ? back : false}
+  back={layoutState.isMobile ? back : false}
   hideOnScroll={false}
   menu={pageMenu}
   scrollKey={navigationState.entryKey}
@@ -140,7 +158,7 @@
     />
   {/snippet}
 
-  <div class="settings-body" data-control-size="base">
+  <div class="settings-body" data-control-size={layoutState.isMobile ? 'md' : 'base'}>
     {#if searching}
       {#if resultGroups.length === 0}
         <EmptyState icon={IconSearch} title={i18n.t('settings.search_empty_title')} description={i18n.t('settings.search_empty_desc', { query: searchQuery.trim() })} />
@@ -159,6 +177,7 @@
           title={i18n.t('profile.title')}
           summary={syncStatusText()}
           icon={syncState.status.configured ? IconCloudSync : IconPerson}
+          shapeSeed="profile"
           onclick={() => navigationState.navigateRoot('profile')}
         />
       </SettingsGroup>
@@ -167,8 +186,10 @@
           {#each group as id (id)}
             <SettingItem
               title={i18n.t(sectionMeta(id).labelKey)}
-              summary={sectionSummary(id) || undefined}
+              summary={sectionDescription(id) || undefined}
               icon={sectionMeta(id).icon}
+              iconActive={sectionMeta(id).iconActive}
+              shapeSeed={id}
               onclick={() => navigationState.openSettings(id)}
             />
           {/each}
@@ -180,6 +201,7 @@
             title={link.label}
             summary={i18n.t(`settings.community_${link.id}`)}
             icon={link.icon}
+            shapeSeed={link.id}
             external
             onclick={() => openCommunity(link)}
           />

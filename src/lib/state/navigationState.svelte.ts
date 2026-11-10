@@ -181,6 +181,17 @@ export class NavigationState {
       history.back();
       return true;
     }
+    if (this.route.name === 'settings') {
+      if (this.route.section) {
+        this.replaceRoute({
+          name: 'settings',
+          section: this.route.section.startsWith('provider-') ? 'providers' : undefined
+        });
+      } else {
+        this.navigateRoot('feed');
+      }
+      return true;
+    }
     return false;
   }
 

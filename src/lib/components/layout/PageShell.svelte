@@ -9,10 +9,12 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import PullToRefresh from '$lib/components/ui/PullToRefresh.svelte';
   import TopAppBar from './TopAppBar.svelte';
+  import type { Crumb } from './TopAppBar.svelte';
   import type { MenuItem } from './OverflowMenu.svelte';
 
   interface Props {
     title?: string;
+    trail?: Crumb[];
     heading?: Snippet<[boolean]>;
     titleAfter?: number;
     titleTrigger?: HTMLElement | null;
@@ -38,6 +40,7 @@
 
   let {
     title,
+    trail,
     heading,
     titleAfter,
     titleTrigger,
@@ -83,6 +86,7 @@
 >
   <TopAppBar
     {title}
+    {trail}
     {heading}
     titleAfter={showLargeTitle ? largeTitleHeight : titleAfter}
     {titleTrigger}

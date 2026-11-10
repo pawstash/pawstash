@@ -1,13 +1,9 @@
 import type { Component } from 'svelte';
-import { i18n, LOCALES } from '$lib/i18n';
+import { i18n } from '$lib/i18n';
 import { themeState } from '$lib/theme/themeState.svelte';
 import { backgroundState, type BackgroundType } from '$lib/theme/backgroundState.svelte';
 import { providerState } from '$lib/state/providerState.svelte';
-import { syncStatusText } from '$lib/utils/syncStatus';
-import { formatBytes } from '$lib/utils/formatters';
 import { formatProviderName } from '$lib/utils/media';
-import { APP_VERSION } from '$lib/version';
-import { settingsController } from './settingsController.svelte';
 import IconAppearance from '~icons/fluent/paint-brush-24-regular';
 import IconAppearanceFilled from '~icons/fluent/paint-brush-24-filled';
 import IconInterface from '~icons/fluent/phone-laptop-24-regular';
@@ -117,31 +113,6 @@ export function sectionLabel(section: string): string {
   return isSectionId(section) ? i18n.t(META[section].labelKey) : section;
 }
 
-export function sectionSummary(id: SectionId): string {
-  const settings = settingsController.settings;
-  switch (id) {
-    case 'appearance':
-      return `${i18n.t(`settings.color_mode_${themeState.tokens.colorMode}`)} · ${backgroundLabel(backgroundState.settings.type)}`;
-    case 'interface':
-      return LOCALES.find((locale) => locale.code === i18n.currentLocale)?.nativeName ?? i18n.currentLocale;
-    case 'grid':
-      return `${settings.grid_scale}%`;
-    case 'providers':
-      return providerState.providers
-        .filter((p) => p.enabled)
-        .map((p) => formatProviderName(p.name || p.id))
-        .join(', ');
-    case 'network':
-      return i18n.t(`settings.proxy_${settings.proxy_mode}`);
-    case 'downloads':
-      return settings.download_dir || 'Downloads/Pawstash';
-    case 'cache':
-      return formatBytes(settings.cache_max_mb * 1024 * 1024, 0);
-    case 'sync':
-      return syncStatusText();
-    case 'about':
-      return `v${APP_VERSION}`;
-    default:
-      return '';
-  }
+export function sectionDescription(id: SectionId): string {
+  return i18n.t(`settings.section_desc_${id}`);
 }
