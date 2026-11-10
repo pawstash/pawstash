@@ -470,7 +470,7 @@
 {/snippet}
 
 {#snippet modalFooter()}
-  <div class="dialog-actions sheet-footer-actions">
+  <div class="dialog-actions">
     {#if isEditing}
       <Button
         variant="ghost"
@@ -535,7 +535,7 @@
       {isOpen}
       title={titleText}
       size="lg"
-      borderlessFooter={true}
+      borderlessFooter
       onclose={handleClose}
     >
       {#snippet children()}
@@ -761,27 +761,6 @@
   :global(.bottom-sheet) .sub-modal-body :global(.number-stepper__button) {
     width: 28px !important;
     height: 28px !important;
-  }
-
-  :global(.bottom-sheet) .sheet-footer-actions {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    justify-content: flex-end !important;
-    gap: 8px !important;
-    width: 100% !important;
-  }
-
-  :global(.bottom-sheet) .sheet-footer-actions :global(.btn) {
-    flex: 1 1 0% !important;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    height: 40px !important;
-    padding: 0 14px !important;
-    font-size: 13.5px !important;
-    white-space: nowrap !important;
   }
 
   @media (max-width: 500px) {

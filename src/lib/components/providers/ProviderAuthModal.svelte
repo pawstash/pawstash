@@ -131,15 +131,12 @@
       <div class="auth-fields">
         {#each schema.auth_fields as field (field.key)}
           <div class="auth-field">
-            <span id={`auth-field-${field.key}`} class="auth-label">
-              {i18n.t(field.label_key)}
-              {#if field.required}<span class="auth-required" aria-hidden="true">*</span>{/if}
-            </span>
             <Input
               type={field.field_type === 'password' ? 'password' : 'text'}
               value={formData[field.key] || ''}
+              label={i18n.t(field.label_key)}
+              required={field.required}
               placeholder={field.placeholder || ''}
-              labelledby={`auth-field-${field.key}`}
               oninput={(e) => {
                 formData[field.key] = (e.target as HTMLInputElement).value;
               }}
@@ -252,12 +249,13 @@
       ? i18n.t('settings.auth_modal_title', { provider: providerName })
       : i18n.t('settings.auth_sync_prompt_title')}
     size="sm"
+    borderlessFooter
     {onclose}
   >
     <div class="modal-confirm-layout">
       {@render authContent()}
-      {@render authActions()}
     </div>
+    {#snippet footer()}{@render authActions()}{/snippet}
   </Modal>
 {/if}
 
@@ -272,19 +270,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-
-  .auth-label {
-    padding-inline: 4px;
-    color: var(--text-secondary);
-    font-size: var(--type-label-lg-size);
-    line-height: var(--type-label-lg-line);
-    font-weight: 500;
-  }
-
-  .auth-required {
-    margin-inline-start: 2px;
-    color: var(--status-error);
   }
 
   .auth-help {

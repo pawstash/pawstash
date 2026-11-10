@@ -9,6 +9,8 @@
 
   interface Props {
     value?: string;
+    label?: string;
+    required?: boolean;
     placeholder?: string;
     type?: string;
     autocomplete?: 'username' | 'current-password' | 'new-password' | 'off';
@@ -37,6 +39,8 @@
 
   let {
     value = $bindable(''),
+    label,
+    required = false,
     placeholder = '',
     type = 'text',
     autocomplete,
@@ -67,6 +71,8 @@
   let effectiveType = $derived(
     type === 'password' ? (isPasswordVisible ? 'text' : 'password') : type
   );
+  let inputId = $props.id();
+  let filled = $derived(value.length > 0);
 
   function handleClear(e: MouseEvent) {
     e.stopPropagation();
@@ -85,6 +91,8 @@
 
 <div
   class="input-box {size ? `size-${size}` : ''} {extraClass}"
+  class:has-label={Boolean(label)}
+  class:is-filled={filled}
   class:is-disabled={disabled}
   class:is-readonly={readonly}
 >
@@ -98,25 +106,35 @@
     </div>
   {/if}
 
-  <!-- svelte-ignore a11y_autofocus -->
-  <input
-    bind:this={ref}
-    type={effectiveType}
-    {placeholder}
-    {disabled}
-    {readonly}
-    {autocomplete}
-    {name}
-    {autofocus}
-    aria-labelledby={labelledby}
-    aria-describedby={describedby}
-    bind:value
-    {oninput}
-    {onchange}
-    {onblur}
-    {onkeydown}
-    class="native-input"
-  />
+  <div class="field-main">
+    {#if label}
+      <label class="floating-label" for={inputId}>
+        {label}
+        {#if required}<span class="floating-label__required" aria-hidden="true">*</span>{/if}
+      </label>
+    {/if}
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      bind:this={ref}
+      id={inputId}
+      type={effectiveType}
+      {placeholder}
+      {disabled}
+      {readonly}
+      {autocomplete}
+      {name}
+      {autofocus}
+      aria-labelledby={labelledby}
+      aria-describedby={describedby}
+      aria-required={required || undefined}
+      bind:value
+      {oninput}
+      {onchange}
+      {onblur}
+      {onkeydown}
+      class="native-input"
+    />
+  </div>
 
   <div class="right-actions">
     {#if clearable && value && !disabled && !readonly}
@@ -237,6 +255,68 @@
     --control-font-size: var(--control-font-lg, 15px);
     --control-icon-size: var(--control-icon-lg, 22px);
     --control-padding-x: var(--control-padding-lg, 20px);
+  }
+
+  .input-box.has-label {
+    height: calc(56px * var(--ui-scale, 1));
+  }
+
+  .field-main {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+  }
+
+  .input-box.has-label .native-input {
+    padding-top: calc(16px * var(--ui-scale, 1));
+  }
+
+  .floating-label {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 50%;
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: calc(15px * var(--ui-scale, 1));
+    line-height: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transform-origin: left center;
+    transition:
+      top var(--duration-fast) var(--ease-standard),
+      transform var(--duration-fast) var(--ease-expo),
+      color var(--duration-fast) var(--ease-standard);
+  }
+
+  .input-box.has-label:focus-within .floating-label,
+  .input-box.has-label.is-filled .floating-label {
+    top: calc(15px * var(--ui-scale, 1));
+    transform: translateY(-50%) scale(0.8);
+  }
+
+  .input-box.has-label:focus-within .floating-label {
+    color: var(--accent-primary);
+  }
+
+  .input-box.has-label:not(:focus-within):not(.is-filled) .native-input::placeholder {
+    color: transparent;
+  }
+
+  .floating-label__required {
+    margin-inline-start: 2px;
+    color: var(--status-error);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .floating-label {
+      transition: none;
+    }
   }
 
   .input-box :global(.left-icon svg) {

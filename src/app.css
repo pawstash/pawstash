@@ -1913,14 +1913,15 @@ html.is-paint-selecting * {
 }
 
 .bottom-sheet .dialog-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: var(--modal-actions-gap);
 }
 
 .bottom-sheet .dialog-actions .btn {
-  width: 100%;
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
+  margin-inline: 0;
   background-color: var(--surface-container-highest);
   color: var(--text-primary);
 }

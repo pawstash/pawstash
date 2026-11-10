@@ -467,9 +467,12 @@
   {@const stash = libraryState.selectedCollection}
   {@const stashName = stash ? libraryState.getStashDisplayName(stash) : ''}
   <div class="manage-stash">
-    <span class="floating-section-label">{i18n.t('library.stash_name')}</span>
     <form class="stash-rename-row" onsubmit={handleRenameStash}>
-      <Input bind:value={editStashName} placeholder={i18n.t('library.stash_name')} disabled={renamingPending}>
+      <Input
+        bind:value={editStashName}
+        label={i18n.t('library.stash_name')}
+        disabled={renamingPending}
+      >
         {#snippet right()}
           <button
             type="submit"
@@ -930,6 +933,7 @@
 
   .stash-rename-row {
     display: flex;
+    padding-block-start: 4px;
     padding-inline: max(0px, calc(var(--menu-inset) - 8px));
   }
 
