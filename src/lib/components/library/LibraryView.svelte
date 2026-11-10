@@ -42,7 +42,6 @@
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
-  import IconSearch from '~icons/fluent/search-24-regular';
   import IconEdit from '~icons/fluent/edit-24-regular';
   import IconBroom from '~icons/fluent/broom-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
@@ -582,11 +581,6 @@
       >
         <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
-        {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-        {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-        {/if}
       </Button>
     {/each}
   </div>
@@ -607,11 +601,6 @@
       >
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
-        {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-        {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-        {/if}
       </Button>
     {/each}
   </div>

@@ -1794,10 +1794,6 @@ html.is-paint-selecting * {
   flex: none;
 }
 
-.service-options .filter-chip.btn > svg.ml-auto {
-  display: none;
-}
-
 .service-options .filter-chip.btn span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1816,7 +1812,8 @@ html.is-paint-selecting * {
 }
 
 .service-options .filter-chip.btn.state-exclude {
-  color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 18%, var(--surface-container-highest));
+  color: var(--text-primary);
 }
 
 .service-options .filter-chip.btn.state-exclude span {

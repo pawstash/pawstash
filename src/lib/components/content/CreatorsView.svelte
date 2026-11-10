@@ -41,8 +41,6 @@
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconWarning from '~icons/fluent/warning-24-regular';
   import IconPeople from '~icons/fluent/people-24-regular';
-  import IconDismiss from '~icons/fluent/dismiss-24-regular';
-  import IconSearch from '~icons/fluent/search-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
@@ -386,11 +384,6 @@
           class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
         >
           <span>{cleanName}</span>
-          {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-          {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-          {/if}
         </Button>
       {/each}
     </div>
@@ -423,11 +416,6 @@
       >
         <ServiceIcon service={service} class="w-5 h-5" />
         <span>{service}</span>
-        {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-        {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-        {/if}
       </Button>
     {/each}
   </div>

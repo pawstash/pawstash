@@ -43,7 +43,6 @@
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconWarning from '~icons/fluent/warning-24-regular';
-  import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconHeartOff from '~icons/fluent/heart-broken-24-regular';
@@ -56,7 +55,6 @@
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconDraft from '~icons/fluent/drafts-24-regular';
   import IconPeople from '~icons/fluent/people-24-regular';
-  import IconSearch from '~icons/fluent/search-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-filled';
   import IconFolder from '~icons/fluent/folder-24-regular';
@@ -746,11 +744,6 @@
       >
         <ServiceIcon {service} class="w-5 h-5" />
         <span>{service}</span>
-        {#if state === 'include'}
-          <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-        {:else if state === 'exclude'}
-          <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-        {/if}
       </Button>
     {/each}
   </div>
@@ -771,11 +764,6 @@
         >
           <IconComponent class="w-5 h-5" />
           <span>{fmt.label()}</span>
-          {#if state === 'include'}
-            <IconSearch class="w-3.5 h-3.5 ml-auto text-[var(--status-success)] shrink-0" />
-          {:else if state === 'exclude'}
-            <IconDismiss class="w-3.5 h-3.5 ml-auto text-[var(--status-error)] shrink-0" />
-          {/if}
         </Button>
       {/each}
     </div>

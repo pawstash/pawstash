@@ -739,7 +739,8 @@ export function isPostFormatUnknown(post: Post): boolean {
 export function matchesPostFormatFilter(post: Post, filterMap: FilterMap): boolean {
   const inner = innerFormatsState.of(post);
   const formats = inner.length > 0 ? [...getPostFormats(post), ...inner] : getPostFormats(post);
-  return matchesTriStateFilter(formats, filterMap, inner.length > 0 || !isPostFormatUnknown(post));
+  // Scraped popular cards have no files yet, but their title/tags still identify a format.
+  return matchesTriStateFilter(formats, filterMap, formats.length > 0 || !isPostFormatUnknown(post));
 }
 
 export function matchesPostFormat(post: Post, format: string): boolean {
