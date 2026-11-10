@@ -18,6 +18,19 @@ export function ripple(node: HTMLElement, enabled = true) {
 
   node.style.overflow = 'hidden';
 
+  // Compact sidebar rows let the 40px shape spill past the pill, so the ripple gets its own clipped layer.
+  let layer: HTMLSpanElement | null = null;
+
+  function rippleLayer(): HTMLSpanElement {
+    if (!layer) {
+      layer = document.createElement('span');
+      layer.style.cssText =
+        'position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none;';
+      node.appendChild(layer);
+    }
+    return layer;
+  }
+
   function spawn(e: PointerEvent) {
     if (window.getComputedStyle(node).position === 'static') {
       node.style.position = 'relative';
@@ -40,7 +53,7 @@ export function ripple(node: HTMLElement, enabled = true) {
       animation:_rpl-expand 0.45s cubic-bezier(0.2,0.9,0.3,1) forwards,
                 _rpl-fade 0.4s 0.2s ease-out forwards;
     `;
-    node.appendChild(el);
+    rippleLayer().appendChild(el);
     el.addEventListener('animationend', (ev) => {
       if (ev.animationName === '_rpl-fade') el.remove();
     }, { once: true });
@@ -50,6 +63,8 @@ export function ripple(node: HTMLElement, enabled = true) {
   return {
     destroy() {
       node.removeEventListener('pointerdown', spawn);
+      layer?.remove();
+      layer = null;
     },
   };
 }

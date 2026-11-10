@@ -17,6 +17,10 @@
   import IconLibrary from '~icons/fluent/library-24-regular';
   import IconLibraryFilled from '~icons/fluent/library-24-filled';
   import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
+  import MaterialShape from '$lib/components/ui/MaterialShape.svelte';
+  import SwapIcon from '$lib/components/ui/SwapIcon.svelte';
+  import { marquee } from '$lib/actions/marquee';
+  import { activeMaterialShapeFor } from '$lib/utils/materialShapes';
   import IconDownloads from '~icons/fluent/arrow-download-24-regular';
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
   import IconSettings from '~icons/fluent/settings-24-regular';
@@ -75,8 +79,14 @@
     };
   });
 
-  let profileName = $derived(syncState.status.configured ? i18n.t('sync.title') : i18n.t('profile.title'));
-  let profileSub = $derived(syncStatusText());
+  let profileName = $derived(i18n.t('profile.title_short'));
+  let syncPresentation = $derived.by(() => {
+    if (syncState.isSyncing) return { kind: 'syncing', label: syncStatusText() };
+    if (syncState.status.last_error) return { kind: 'error', label: i18n.t('sync.sync_failed') };
+    if (!syncState.status.configured) return { kind: 'local', label: i18n.t('profile.offline_session') };
+    if (!syncState.status.unlocked) return { kind: 'locked', label: i18n.t('sync.locked') };
+    return { kind: 'synced', label: i18n.t('sync.status_ready') };
+  });
 
   function hasProgressRing(id: string): boolean {
     return id === 'downloads' && downloadState.activeDownloadsCount > 0;
@@ -159,24 +169,32 @@
         class:active={activeRoot === 'profile'}
         aria-label={profileName}
         onclick={() => navigationState.navigateRoot('profile')}
-        use:tooltip={isCompact ? { text: `${profileName} · ${profileSub}`, placement: 'right' } : undefined}
+        use:tooltip={isCompact ? { text: `${profileName} · ${syncPresentation.label}`, placement: 'right' } : undefined}
       >
         <div
           class="sidebar-icon relative"
+          class:active={activeRoot === 'profile'}
           class:has-progress={syncState.isSyncing}
         >
+          <MaterialShape
+            name={activeRoot === 'profile' ? activeMaterialShapeFor('profile') : 'circle'}
+            size={40}
+            class="sidebar-shape"
+          />
           {#if syncState.isSyncing}
             <ProgressRing value={syncState.progress} variant="segmented" size={32} />
           {/if}
-          {#if syncState.status.configured || syncState.isSyncing}
-            <IconCloudSync />
-          {:else}
-            <IconUser />
-          {/if}
+          <SwapIcon
+            icon={syncState.status.configured || syncState.isSyncing ? IconCloudSync : IconUser}
+            size={24}
+          />
         </div>
         <span class="sidebar-label profile-label">
           <span class="profile-name">{profileName}</span>
-          <span class="profile-sub">{profileSub}</span>
+          <span class="profile-sub">
+            <span class="sync-dot" data-state={syncPresentation.kind} aria-hidden="true"></span>
+            <span class="profile-sub__text">{syncPresentation.label}</span>
+          </span>
         </span>
       </button>
       <div class="profile-divider"></div>
@@ -198,21 +216,26 @@
               class:active={isActive}
               class:has-progress={hasProgressRing(item.id)}
             >
+              <MaterialShape
+                name={isActive ? activeMaterialShapeFor(item.id) : 'circle'}
+                size={40}
+                class="sidebar-shape"
+              />
               {#if hasProgressRing(item.id)}
                 <ProgressRing value={downloadState.activeProgress} size={32} />
               {/if}
-              {#if isActive}
-                <item.iconActive />
-              {:else}
-                <item.icon />
-              {/if}
+              <SwapIcon icon={item.icon} iconActive={item.iconActive} active={isActive} size={24} />
 
               {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
                 <span class="sidebar-badge">{item.badge()}</span>
               {/if}
             </div>
 
-            <span class="sidebar-label" class:active={isActive}>
+            <span
+              class="sidebar-label"
+              class:active={isActive}
+              use:marquee={{ trigger: '.sidebar-btn', active: isActive }}
+            >
               <StableWeightLabel text={title} />
             </span>
           </button>
@@ -231,9 +254,9 @@
             use:tooltip={isCompact ? { text: link.label, placement: 'right' } : undefined}
           >
             <div class="sidebar-icon">
-              <link.icon />
+              <SwapIcon icon={link.icon} size={24} />
             </div>
-            <span class="sidebar-label">{link.label}</span>
+            <span class="sidebar-label" use:marquee={{ trigger: '.sidebar-btn' }}>{link.label}</span>
           </button>
         {/each}
       </div>
@@ -252,11 +275,18 @@
     margin-bottom: 8px;
     flex-shrink: 0;
     --control-height: var(--control-height-base);
-    --control-icon-size: var(--control-icon-base);
+    --control-icon-size: 24px;
   }
 
   .sidebar-top > :global(.sidebar-toggle) {
     margin-inline-start: auto;
+    opacity: 0.45;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .sidebar-top > :global(.sidebar-toggle):hover,
+  .sidebar-top > :global(.sidebar-toggle):focus-visible {
+    opacity: 1;
   }
 
   .sidebar-expand-overlay {
@@ -379,8 +409,9 @@
   }
 
   .sidebar-aside.compact .profile-btn {
-    padding-right: 11px !important;
+    padding-inline: 10px !important;
     gap: 0 !important;
+    overflow: visible !important;
   }
 
   .profile-label {
@@ -411,16 +442,48 @@
   }
 
   .profile-sub {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 10px;
     font-weight: 400;
     color: var(--text-secondary);
     letter-spacing: 0.02em;
     text-transform: none;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     width: 100%;
     min-width: 0;
+  }
+
+  .profile-sub__text {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .sync-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+
+  .sync-dot[data-state='synced'] {
+    background: var(--status-success);
+  }
+
+  .sync-dot[data-state='syncing'] {
+    background: var(--accent-primary);
+  }
+
+  .sync-dot[data-state='locked'] {
+    background: var(--status-warning);
+  }
+
+  .sync-dot[data-state='error'] {
+    background: var(--status-error);
   }
 
   .profile-divider {
@@ -561,9 +624,15 @@
     background: var(--state-layer-pressed);
   }
 
-  .sidebar-aside.compact .sidebar-btn {
-    padding-right: 11px;
+  .sidebar-aside.compact .sidebar-btn.active,
+  .sidebar-aside.compact .sidebar-btn.active:hover {
+    background: transparent;
+  }
+
+  .sidebar-aside.compact .sidebar-btn:not(.logo-btn) {
+    padding-inline: 10px;
     gap: 0;
+    overflow: visible !important;
   }
 
   .sidebar-icon {
@@ -572,20 +641,47 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     opacity: 0.65;
     transition: opacity 200ms ease;
     pointer-events: none;
   }
 
-  .sidebar-icon :global(svg:not(.progress-ring)) {
-    width: 22px;
-    height: 22px;
+  .sidebar-icon :global(svg:not(.progress-ring):not(.sidebar-shape)) {
+    width: 24px;
+    height: 24px;
     transition: transform var(--duration-normal) var(--ease-expo);
   }
 
-  .sidebar-icon.has-progress :global(svg:not(.progress-ring)) {
+  .sidebar-icon :global(.sidebar-shape) {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 40px;
+    transform: translate(-50%, -50%) scale(0.62);
+    transform-origin: center;
+    transform-box: fill-box;
+    color: var(--accent-container);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity var(--duration-normal) var(--ease-standard),
+      transform var(--duration-normal) var(--ease-expo),
+      color var(--duration-normal) var(--ease-standard);
+  }
+
+  .sidebar-aside:not(.compact) .sidebar-icon :global(.sidebar-shape) {
+    display: none;
+  }
+
+  .sidebar-icon.active :global(.sidebar-shape) {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+
+  .sidebar-icon.has-progress :global(svg:not(.progress-ring):not(.sidebar-shape)) {
     transform: scale(0.74);
   }
 

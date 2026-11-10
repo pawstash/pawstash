@@ -591,7 +591,8 @@
   },
   "profile": {
     "offline_session": "Локальное хранилище",
-    "title": "Профиль и аккаунты"
+    "title": "Профиль и аккаунты",
+    "title_short": "Аккаунт"
   },
   "providers": {
     "title": "Источники"

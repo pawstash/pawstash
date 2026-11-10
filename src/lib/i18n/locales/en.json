@@ -545,7 +545,8 @@
   },
   "profile": {
     "offline_session": "Local vault",
-    "title": "Profile & accounts"
+    "title": "Profile & accounts",
+    "title_short": "Account"
   },
   "providers": {
     "title": "Sources"
