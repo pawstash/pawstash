@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Component, Snippet } from 'svelte';
+  import { onMount } from 'svelte';
   import { ripple } from '$lib/motion';
   import StableWeightLabel from './StableWeightLabel.svelte';
 
@@ -37,9 +38,70 @@
   }: Props<any> = $props();
 
   let buttons: HTMLButtonElement[] = [];
+  let group: HTMLDivElement;
+  let indicator: HTMLSpanElement;
+  let ready = $state(false);
+  let suppressUntil = 0;
 
   let activeIndex = $derived(options.findIndex((option) => option.value === value));
   let accessibleLabel = $derived(ariaLabel || options.map((option) => option.label).join(', '));
+  let activeHasAddon = $derived.by(() => {
+    if (!addon) return false;
+    if (!hasAddon) return true;
+    const option = options[activeIndex];
+    return option ? hasAddon(option) : false;
+  });
+
+  function measure() {
+    const button = buttons[activeIndex];
+    if (!group || !indicator || !button) return;
+    const groupRect = group.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+
+    let shift = 0;
+    const addonEl = group.querySelector<HTMLElement>('.choice-group__addon');
+    const addonSegment = addonEl?.closest('.choice-group__segment');
+    const activeSegment = button.closest('.choice-group__segment');
+    if (addonEl && addonSegment && activeSegment) {
+      const segments = Array.from(group.children);
+      if (segments.indexOf(addonSegment) < segments.indexOf(activeSegment)) {
+        shift = -addonEl.getBoundingClientRect().width;
+      }
+    }
+
+    indicator.style.transform = `translate(${buttonRect.left - groupRect.left + shift}px, ${buttonRect.top - groupRect.top}px)`;
+    indicator.style.width = `${buttonRect.width}px`;
+    indicator.style.height = `${buttonRect.height}px`;
+    if (!ready) requestAnimationFrame(() => (ready = true));
+  }
+
+  function scheduleMeasure(force = false) {
+    requestAnimationFrame(() => {
+      if (!force && performance.now() < suppressUntil) return;
+      measure();
+    });
+  }
+
+  $effect(() => {
+    void activeIndex;
+    void options.length;
+    void activeHasAddon;
+    suppressUntil = performance.now() + 260;
+    scheduleMeasure(true);
+    const timer = setTimeout(() => {
+      suppressUntil = 0;
+      measure();
+    }, 280);
+    return () => clearTimeout(timer);
+  });
+
+  onMount(() => {
+    scheduleMeasure(true);
+    const observer = new ResizeObserver(() => scheduleMeasure());
+    observer.observe(group);
+    for (const button of buttons) observer.observe(button);
+    return () => observer.disconnect();
+  });
 
   function select(index: number) {
     const option = options[index];
@@ -67,41 +129,52 @@
 
 <div
   class="choice-group align-{align} {extraClass}"
+  class:is-disabled={disabled}
   role="radiogroup"
   aria-label={accessibleLabel}
+  bind:this={group}
 >
+  <span
+    class="choice-group__indicator"
+    class:is-ready={ready}
+    class:has-addon={activeHasAddon}
+    bind:this={indicator}
+    aria-hidden="true"
+  ></span>
   {#each options as option, index}
     {@const isActive = option.value === value}
     {@const withAddon = Boolean(addon) && (hasAddon ? hasAddon(option) : true)}
-    <button
-      bind:this={buttons[index]}
-      type="button"
-      use:ripple
-      class="choice-group__option"
-      class:is-active={isActive}
-      class:has-addon={isActive && withAddon}
-      role="radio"
-      aria-checked={isActive}
-      title={option.title}
-      tabindex={isActive || (activeIndex === -1 && index === 0) ? 0 : -1}
-      data-choice-value={String(option.value)}
-      {disabled}
-      onclick={() => select(index)}
-      onkeydown={(event) => handleKeydown(event, index)}
-    >
-      {#if option.icon}
-        <option.icon />
+    <div class="choice-group__segment">
+      <button
+        bind:this={buttons[index]}
+        type="button"
+        use:ripple
+        class="choice-group__option"
+        class:is-active={isActive}
+        class:has-addon={isActive && withAddon}
+        role="radio"
+        aria-checked={isActive}
+        title={option.title}
+        tabindex={isActive || (activeIndex === -1 && index === 0) ? 0 : -1}
+        data-choice-value={String(option.value)}
+        {disabled}
+        onclick={() => select(index)}
+        onkeydown={(event) => handleKeydown(event, index)}
+      >
+        {#if option.icon}
+          <option.icon />
+        {/if}
+        <StableWeightLabel text={option.label} reserveWeight="500" />
+        {#if showCount(option)}
+          <span class="choice-group__count">{option.count}</span>
+        {/if}
+      </button>
+      {#if withAddon && addon}
+        <div class="choice-group__addon" class:is-open={isActive} inert={!isActive}>
+          {@render addon()}
+        </div>
       {/if}
-      <StableWeightLabel text={option.label} reserveWeight="500" />
-      {#if showCount(option)}
-        <span class="choice-group__count">{option.count}</span>
-      {/if}
-    </button>
-    {#if withAddon && addon}
-      <div class="choice-group__addon" class:is-open={isActive} inert={!isActive}>
-        {@render addon()}
-      </div>
-    {/if}
+    </div>
   {/each}
 </div>
 
@@ -110,6 +183,7 @@
     --choice-inset: 3px;
     --choice-height: var(--control-height, 40px);
 
+    position: relative;
     display: inline-flex;
     align-items: stretch;
     flex-shrink: 0;
@@ -124,8 +198,47 @@
     white-space: nowrap;
   }
 
+  .choice-group.is-disabled {
+    opacity: 0.38;
+    pointer-events: none;
+  }
+
+  .choice-group__indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    width: 0;
+    height: 0;
+    border-radius: var(--radius-full);
+    background: var(--text-primary);
+    pointer-events: none;
+  }
+
+  .choice-group__indicator.is-ready {
+    transition:
+      transform var(--duration-normal) var(--ease-expo),
+      width var(--duration-normal) var(--ease-expo),
+      height var(--duration-normal) var(--ease-expo),
+      border-radius var(--duration-normal) var(--ease-expo),
+      background-color var(--duration-normal) var(--ease-standard);
+  }
+
+  .choice-group__indicator.has-addon {
+    border-start-end-radius: var(--radius-xs);
+    border-end-end-radius: var(--radius-xs);
+  }
+
+  .choice-group__segment {
+    display: flex;
+    align-items: stretch;
+    flex: none;
+    min-width: 0;
+  }
+
   .choice-group__option {
     position: relative;
+    z-index: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -155,25 +268,26 @@
   .choice-group__addon {
     --choice-addon-width: calc(var(--choice-height) - 2 * var(--choice-inset) + 6px);
 
+    position: relative;
+    z-index: 1;
     display: inline-flex;
     align-items: stretch;
     flex: none;
     max-width: 0;
-    margin-inline-start: -2px;
     overflow: hidden;
     border-radius: var(--radius-xs) var(--radius-full) var(--radius-full) var(--radius-xs);
-    background: color-mix(in srgb, var(--text-primary) 12%, var(--surface-container-highest));
-    color: var(--text-primary);
+    background: var(--text-primary);
+    color: var(--surface-container-low);
+    --state-layer-hover: color-mix(in srgb, var(--surface-container-low) 12%, transparent);
+    --ripple-color: color-mix(in srgb, var(--surface-container-low) 16%, transparent);
     opacity: 0;
     transition:
       max-width var(--duration-normal) var(--ease-expo),
-      margin var(--duration-normal) var(--ease-expo),
       opacity var(--duration-fast) var(--ease-standard);
   }
 
   .choice-group__addon.is-open {
     max-width: var(--choice-addon-width);
-    margin-inline-start: 0;
     opacity: 1;
   }
 
@@ -190,8 +304,7 @@
   }
 
   .choice-group__option.is-active {
-    background: var(--choice-active-bg);
-    color: var(--choice-active-text);
+    color: var(--surface-container-low);
   }
 
   .choice-group__option :global(svg) {
@@ -215,6 +328,11 @@
     width: 100%;
   }
 
+  :global([data-layout='mobile']) .choice-group:not(.align-left) .choice-group__segment {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   :global([data-layout='mobile']) .choice-group:not(.align-left) .choice-group__option {
     flex: 1 1 0;
     min-width: 0;
@@ -222,7 +340,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .choice-group__option,
-    .choice-group__addon {
+    .choice-group__addon,
+    .choice-group__indicator.is-ready {
       transition: none;
     }
   }
