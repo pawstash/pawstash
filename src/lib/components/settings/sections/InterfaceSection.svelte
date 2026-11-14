@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { uiScaleState } from '$lib/state/uiScaleState.svelte';
   import { i18n } from '$lib/i18n';
+  import { missingFontFamily } from '$lib/utils/fonts';
   import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '$lib/theme/tokens';
   import type { AppSettings } from '$lib/types/config';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
@@ -19,6 +21,36 @@
   let settings = $derived(ctl.settings);
   let panicEnabled = $derived(settings.panic_button_enabled ?? settings.boss_key_enabled ?? true);
   let panicShortcut = $derived(settings.panic_button_shortcut || settings.boss_key_shortcut || 'H');
+
+  let fontTimer: ReturnType<typeof setTimeout> | undefined;
+  let missingFont = $derived.by(() => {
+    const value = themeState.tokens.fontFamily?.trim();
+    return value ? missingFontFamily(value) : null;
+  });
+
+  function commitFont(value: string) {
+    clearTimeout(fontTimer);
+    fontTimer = undefined;
+    themeState.setFontFamily(value);
+  }
+
+  function handleFontInput(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    clearTimeout(fontTimer);
+    fontTimer = setTimeout(() => {
+      fontTimer = undefined;
+      themeState.setFontFamily(value);
+    }, 220);
+  }
+
+  function handleFontKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commitFont((event.target as HTMLInputElement).value);
+    (event.target as HTMLInputElement).blur();
+  }
+
+  onDestroy(() => clearTimeout(fontTimer));
 </script>
 
 <SettingsGroup label={i18n.t('settings.group_text')}>
@@ -32,12 +64,18 @@
     onchange={(locale) => i18n.setLocale(locale as typeof i18n.currentLocale)}
   />
 
-  <SettingItem title={i18n.t('settings.font_family')} description={i18n.t('settings.font_family_desc')}>
+  <SettingItem
+    title={i18n.t('settings.font_family')}
+    description={i18n.t('settings.font_family_desc')}
+    warning={missingFont ? i18n.t('settings.font_family_missing', { font: missingFont }) : undefined}
+  >
     <Input
       value={themeState.tokens.fontFamily || ''}
       placeholder={i18n.t('settings.font_family_placeholder')}
       clearable={true}
-      onchange={(event) => themeState.setFontFamily((event.target as HTMLInputElement).value)}
+      oninput={handleFontInput}
+      onchange={(event) => commitFont((event.target as HTMLInputElement).value)}
+      onkeydown={handleFontKeydown}
     />
   </SettingItem>
 </SettingsGroup>

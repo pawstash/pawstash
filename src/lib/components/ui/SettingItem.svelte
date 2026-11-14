@@ -13,6 +13,7 @@
     title: string;
     description?: string;
     summary?: string;
+    warning?: string;
     icon?: Component;
     iconActive?: Component;
     shapeSeed?: string;
@@ -33,6 +34,7 @@
     title,
     description = '',
     summary,
+    warning,
     icon: Icon,
     iconActive: IconActive,
     shapeSeed,
@@ -94,6 +96,9 @@
       {#if supporting}
         <span class="setting-item__description">{supporting}</span>
       {/if}
+    {/if}
+    {#if warning}
+      <span class="setting-item__warning">{warning}</span>
     {/if}
   </span>
 {/snippet}
@@ -307,6 +312,13 @@
     overflow-wrap: break-word;
   }
 
+  .setting-item__warning {
+    color: var(--status-warning-ink);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    overflow-wrap: break-word;
+  }
+
   .setting-item__trailing {
     display: grid;
     place-items: center;
@@ -373,7 +385,8 @@
     line-height: var(--type-body-lg-line);
   }
 
-  :global([data-layout='mobile']) .setting-item__description {
+  :global([data-layout='mobile']) .setting-item__description,
+  :global([data-layout='mobile']) .setting-item__warning {
     font-size: var(--type-body-md-size);
     line-height: var(--type-body-md-line);
   }

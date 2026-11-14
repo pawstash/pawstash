@@ -425,6 +425,7 @@
     --status-success: #10b981;
     --status-error: #f43f5e;
     --status-warning: #f59e0b;
+    --status-warning-ink: var(--status-warning);
     --on-status: #ffffff;
 
     --choice-active-bg: var(--accent-container);
@@ -2077,6 +2078,7 @@ html.webkitgtk .grid-tile-media.placeholder-blur {
 /* Light theme: the viewer backdrop follows the page surface, so the media chrome flips
    to page ink and light fades instead of forcing white-on-black. */
 html.light {
+  --status-warning-ink: #92400e;
   --player-backdrop: var(--surface);
   --player-ink: var(--text-primary);
   --player-ink-secondary: var(--text-secondary);

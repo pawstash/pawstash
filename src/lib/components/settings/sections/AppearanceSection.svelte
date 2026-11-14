@@ -2,7 +2,8 @@
   import { themeState } from '$lib/theme/themeState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
-  import { COLOR_MODES, PRESET_QUADRANTS, SCHEME_VARIANTS, generateAccentPalette, type ContrastLevel } from '$lib/theme/palette';
+  import { COLOR_MODES, PRESET_QUADRANTS, SCHEME_VARIANTS, type ContrastLevel } from '$lib/theme/palette';
+  import { generateAccentPalette } from '$lib/theme/paletteEngine';
   import type { AccentColor } from '$lib/theme/tokens';
   import type { AppSettings } from '$lib/types/config';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';

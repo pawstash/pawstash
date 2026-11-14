@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { type as osType, version as osVersion } from '@tauri-apps/plugin-os';
-import { computeAcrylicTintRgb } from './palette';
 import { logger } from '$lib/utils/logger';
 
 export type BackgroundType =
@@ -117,7 +116,7 @@ export class BackgroundState {
   setAcrylicTint(acrylicTint: boolean) {
     this.settings.acrylicTint = acrylicTint;
     this.save();
-    windowTint(this.settings.acrylicOpacity);
+    void windowTint(this.settings.acrylicOpacity);
     if (this.settings.type === 'acrylic') {
       void this.applyWindowEffect('acrylic');
     }
@@ -126,7 +125,7 @@ export class BackgroundState {
   setAcrylicOpacity(acrylicOpacity: number) {
     this.settings.acrylicOpacity = acrylicOpacity;
     this.save();
-    windowTint(acrylicOpacity);
+    void windowTint(acrylicOpacity);
     if (this.settings.type === 'acrylic') {
       void this.applyWindowEffect('acrylic');
     }
@@ -172,7 +171,7 @@ export class BackgroundState {
     try {
       await invoke('set_window_effect', {
         effectType: forColorMode(effectType),
-        tint: windowTint(this.settings.acrylicOpacity)
+        tint: await windowTint(this.settings.acrylicOpacity)
       });
     } catch (e) {
       logger.warn('Native window effect not supported on this platform', e);
@@ -231,8 +230,11 @@ const LIGHT_EFFECT_TWINS: Record<string, string> = {
   tabbed: 'tabbed-light'
 };
 
-function windowTint(acrylicOpacity: number = defaultAcrylicOpacity()): [number, number, number, number] | undefined {
+async function windowTint(
+  acrylicOpacity: number = defaultAcrylicOpacity()
+): Promise<[number, number, number, number] | undefined> {
   if (typeof document === 'undefined') return undefined;
+  const { computeAcrylicTintRgb } = await import('./paletteEngine');
   const styles = getComputedStyle(document.documentElement);
   const isDark = document.documentElement.classList.contains('dark');
   const accent = styles.getPropertyValue('--accent-primary').trim() || '#d69085';

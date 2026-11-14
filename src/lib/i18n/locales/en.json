@@ -767,6 +767,7 @@
     "dynamic_accent_desc": "On post and creator pages, take the accent from the cover image.",
     "font_family": "Font",
     "font_family_desc": "A font name, or several separated by commas. Leave empty for the system font.",
+    "font_family_missing": "Not installed: {font}. Using the system font.",
     "font_family_placeholder": "System",
     "get_help": "Get help",
     "get_help_desc": "Ask in the Telegram chat and attach the logs.",

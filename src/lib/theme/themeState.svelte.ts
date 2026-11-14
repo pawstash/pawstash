@@ -4,9 +4,8 @@ import {
   DEFAULT_COLOR_MODE,
   DEFAULT_CONTRAST_LEVEL,
   DEFAULT_SCHEME_VARIANT,
-  computeAcrylicTintRgb,
-  generateAccentPalette,
-  isAchromatic,
+  FALLBACK_LIGHT_PALETTE,
+  FALLBACK_PALETTE,
   type AccentPalette,
   type ColorMode,
   type ContrastLevel,
@@ -16,6 +15,34 @@ import { apiGetSystemAccentColor, apiSetWindowBackgroundColor } from '$lib/utils
 import { logger } from '$lib/utils/logger';
 
 const LEGACY_FONT_SCALES: Record<string, number> = { compact: 90, large: 110 };
+const PALETTE_CACHE_KEY = 'pawstash_theme_palette';
+const SYSTEM_FONT_STACK =
+  "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
+
+type PaletteEngine = typeof import('./paletteEngine');
+
+let enginePromise: Promise<PaletteEngine> | null = null;
+
+function loadPaletteEngine(): Promise<PaletteEngine> {
+  return (enginePromise ??= import('./paletteEngine'));
+}
+
+function readPaletteCache(): AccentPalette | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PALETTE_CACHE_KEY) || 'null');
+    if (
+      parsed &&
+      typeof parsed.primary === 'string' &&
+      typeof parsed.surface === 'string' &&
+      Array.isArray(parsed.quadrants) &&
+      parsed.quadrants.length === 4
+    ) {
+      return parsed as AccentPalette;
+    }
+  } catch {}
+  return null;
+}
 
 function measureTextZoom(): number {
   const sample = 'MMMMMMMMMM';
@@ -56,8 +83,12 @@ export class ThemeState {
   overrideAccent = $state<string | null>(null);
   systemPrefersDark = $state(true);
   private textZoom = 1;
+  private savedAccent: AccentColor | undefined;
   private legacyUiScale: number | null = null;
   private lastWindowBackground: string | null = null;
+  private engine = $state.raw<PaletteEngine | null>(null);
+  private cachedPalette: AccentPalette | null = null;
+  private paletteMemo: { key: string; palette: AccentPalette } | null = null;
 
   get isDark(): boolean {
     if (this.tokens.colorMode === 'system') return this.systemPrefersDark;
@@ -65,39 +96,43 @@ export class ThemeState {
   }
 
   get palette(): AccentPalette {
+    if (!this.engine) {
+      return this.cachedPalette ?? (this.isDark ? FALLBACK_PALETTE : FALLBACK_LIGHT_PALETTE);
+    }
+
     const { schemeVariant, contrastLevel } = this.tokens;
-    const dark = this.isDark;
-    if (this.overrideAccent) {
-      return generateAccentPalette(
-        this.overrideAccent,
-        undefined,
-        schemeVariant,
-        contrastLevel,
-        dark
-      );
-    }
-    if (this.tokens.accent === 'system' && this.systemPalette) {
-      return generateAccentPalette(
-        this.systemPalette.primary,
-        this.systemPalette.quadrants,
-        schemeVariant,
-        contrastLevel,
-        dark
-      );
-    }
-    return generateAccentPalette(
-      this.tokens.accent,
-      undefined,
+    const source =
+      this.overrideAccent ??
+      (this.tokens.accent === 'system' && this.systemPalette
+        ? this.systemPalette.primary
+        : this.tokens.accent);
+    const quadrants =
+      !this.overrideAccent && this.tokens.accent === 'system'
+        ? this.systemPalette?.quadrants
+        : undefined;
+    const key = `${source}|${quadrants?.join(',') ?? ''}|${schemeVariant}|${contrastLevel}|${this.isDark}`;
+    if (this.paletteMemo?.key === key) return this.paletteMemo.palette;
+
+    const palette = this.engine.generateAccentPalette(
+      source,
+      quadrants,
       schemeVariant,
       contrastLevel,
-      dark
+      this.isDark
     );
+    this.paletteMemo = { key, palette };
+    return palette;
   }
 
   get schemeIsForcedNeutral(): boolean {
     const source = this.overrideAccent ?? this.tokens.accent;
-    if (source === 'system') return false;
-    return this.tokens.schemeVariant !== 'monochrome' && isAchromatic(source);
+    if (source === 'system' || !this.engine) return false;
+    return this.tokens.schemeVariant !== 'monochrome' && this.engine.isAchromatic(source);
+  }
+
+  private async ensureEngine(): Promise<PaletteEngine> {
+    this.engine ??= await loadPaletteEngine();
+    return this.engine;
   }
 
   reset() {
@@ -125,6 +160,7 @@ export class ThemeState {
 
   async fetchSystemPalette() {
     try {
+      const engine = await this.ensureEngine();
       const res = await apiGetSystemAccentColor();
       if (res) {
         if (res.startsWith('{')) {
@@ -138,7 +174,7 @@ export class ThemeState {
           ];
           this.systemPalette = { primary, quadrants };
         } else if (res.startsWith('#')) {
-          const pal = generateAccentPalette(res);
+          const pal = engine.generateAccentPalette(res);
           this.systemPalette = { primary: res, quadrants: pal.quadrants };
         }
       }
@@ -147,14 +183,13 @@ export class ThemeState {
     }
   }
 
-  async init() {
-    let savedAccent: AccentColor | undefined;
+  init() {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('pawstash_theme_settings');
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          savedAccent = parsed.accent;
+          this.savedAccent = parsed.accent;
           if ('sidebarWidthPx' in parsed) {
             delete parsed.sidebarWidthPx;
             localStorage.setItem('pawstash_theme_settings', JSON.stringify(parsed));
@@ -174,21 +209,26 @@ export class ThemeState {
       }
     }
 
+    this.cachedPalette = readPaletteCache();
     this.watchSystemColorScheme();
-    await this.fetchSystemPalette();
     if (typeof document !== 'undefined') this.textZoom = measureTextZoom();
 
-    if (!savedAccent && this.systemPalette) {
-      this.tokens.accent = 'system';
-    }
+    if (typeof window !== 'undefined') this.applyCssTokens();
+  }
 
-    if (typeof window !== 'undefined') {
-      this.applyCssTokens();
+  async upgradePalette() {
+    try {
+      await this.ensureEngine();
+      await this.fetchSystemPalette();
+      if (!this.savedAccent && this.systemPalette) this.tokens.accent = 'system';
+      if (typeof window !== 'undefined') this.applyCssTokens();
+    } catch (e) {
+      logger.warn('Could not load the colour engine, keeping the default palette', e);
     }
   }
 
   setOverrideAccent(color: string) {
-    if (!color) return;
+    if (!color || this.overrideAccent === color) return;
     this.overrideAccent = color;
     this.applyCssTokens();
     this.refreshWindowEffect();
@@ -204,7 +244,21 @@ export class ThemeState {
 
   setFontFamily(fontFamily: string) {
     this.tokens.fontFamily = fontFamily;
-    this.applyCssTokens();
+    this.applyFontTokens();
+    this.save();
+  }
+
+  private applyFontTokens() {
+    const root = document.documentElement;
+    const userFont = this.tokens.fontFamily?.trim();
+    if (!userFont) {
+      root.style.removeProperty('--font-sans');
+      root.style.removeProperty('--font-display');
+      return;
+    }
+    const fullStack = `${userFont}, ${SYSTEM_FONT_STACK}`;
+    root.style.setProperty('--font-sans', fullStack);
+    root.style.setProperty('--font-display', fullStack);
   }
 
   setAccent(accent: AccentColor) {
@@ -276,6 +330,8 @@ export class ThemeState {
     root.style.setProperty('--radius-xl', radius.xl);
 
     const pal = this.palette;
+    if (this.engine) this.cachedPalette = pal;
+    this.savePalette(pal);
     root.style.setProperty('--accent-primary', pal.primary);
     root.style.setProperty('--accent-primary-hover', pal.primaryHover);
     root.style.setProperty('--accent-on-primary', pal.onPrimary);
@@ -315,8 +371,10 @@ export class ThemeState {
     root.style.setProperty('--outline-variant', pal.outlineVariant);
     root.style.setProperty('--bg-dropdown', containerHigh);
 
-    const acrylicRgb = computeAcrylicTintRgb(pal.primary, this.isDark);
-    root.style.setProperty('--acrylic-tint-rgb', `${acrylicRgb.r}, ${acrylicRgb.g}, ${acrylicRgb.b}`);
+    const acrylicRgb = this.engine?.computeAcrylicTintRgb(pal.primary, this.isDark);
+    if (acrylicRgb) {
+      root.style.setProperty('--acrylic-tint-rgb', `${acrylicRgb.r}, ${acrylicRgb.g}, ${acrylicRgb.b}`);
+    }
 
     const hairline = { '-1': [0.06, 0.14], '0': [0.08, 0.18], '0.5': [0.16, 0.3], '1': [0.28, 0.45] }[
       String(this.tokens.contrastLevel)
@@ -348,16 +406,7 @@ export class ThemeState {
     root.style.setProperty('--bg-base', surface);
     this.syncWindowBackground(surface);
 
-    const userFont = this.tokens.fontFamily?.trim();
-    if (userFont) {
-      const systemStack = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
-      const fullStack = `${userFont}, ${systemStack}`;
-      root.style.setProperty('--font-sans', fullStack);
-      root.style.setProperty('--font-display', fullStack);
-    } else {
-      root.style.removeProperty('--font-sans');
-      root.style.removeProperty('--font-display');
-    }
+    this.applyFontTokens();
   }
 
   private syncWindowBackground(color: string) {
@@ -372,6 +421,13 @@ export class ThemeState {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('pawstash_theme_settings', JSON.stringify(this.tokens));
     }
+  }
+
+  private savePalette(palette: AccentPalette) {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(PALETTE_CACHE_KEY, JSON.stringify(palette));
+    } catch {}
   }
 }
 
