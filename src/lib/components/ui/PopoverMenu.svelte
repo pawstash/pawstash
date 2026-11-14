@@ -18,6 +18,7 @@
     width?: string;
     class?: string;
     menuClass?: string;
+    keepOpen?: boolean;
     anchorEl?: HTMLElement | null;
     trigger?: Snippet<[{ toggle: (e: MouseEvent) => void; open: boolean; active: boolean }]>;
     children?: Snippet<[{ close: () => void }]>;
@@ -34,6 +35,7 @@
     width = 'min(330px, calc(100vw - 32px))',
     class: extraClass = '',
     menuClass = '',
+    keepOpen = false,
     anchorEl,
     trigger,
     children
@@ -42,6 +44,18 @@
   let rootEl = $state<HTMLDivElement>();
   let dropdownEl = $state<HTMLDivElement | null>(null);
   let cleanupAutoUpdate: (() => void) | null = null;
+  let wasOpen = false;
+
+  $effect(() => {
+    if (open) {
+      wasOpen = true;
+      return;
+    }
+    if (!wasOpen) return;
+    wasOpen = false;
+    const trigger = rootEl?.querySelector<HTMLElement>('button');
+    if (trigger?.isConnected) trigger.focus();
+  });
 
   function toggle(event: MouseEvent) {
     event.stopPropagation();
@@ -161,6 +175,7 @@
       use:scrollable={{ overflowX: 'hidden' }}
       bind:this={dropdownEl}
       class="popover-menu-dropdown floating-surface popover-portal {menuClass || 'unified-filter-menu'}"
+      data-portal-keep-open={keepOpen ? '' : undefined}
       style:--popover-menu-width={width}
       style="position: fixed; visibility: hidden; z-index: 10000;"
       role="menu"

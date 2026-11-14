@@ -11,6 +11,8 @@ interface HostRecord {
   node: HTMLElement;
   autoplay: boolean;
   resume: boolean;
+  priority: boolean;
+  controls: boolean;
   onActive?: (active: boolean) => void;
 }
 
@@ -33,6 +35,7 @@ const MAX_PARKED = 4;
 function createElement(kind: MediaElementKind, src: string): HTMLMediaElement {
   const element = document.createElement(kind);
   element.controls = true;
+  element.setAttribute('controlsList', 'nofullscreen nodownload');
   element.preload = 'auto';
   element.setAttribute('playsinline', '');
   element.src = src;
@@ -75,6 +78,10 @@ class MediaElementRegistry {
       autoplay?: boolean;
       resume?: boolean;
       poster?: string;
+      /** Viewer and mini player hosts outrank inline page hosts: a background gallery must not take the picture back. */
+      priority?: boolean;
+      /** Native controls are noise under a 320px mini player; the dock draws its own. */
+      controls?: boolean;
       onActive?: (active: boolean) => void;
     } = {}
   ): () => void {
@@ -90,6 +97,8 @@ class MediaElementRegistry {
       node,
       autoplay: options.autoplay ?? false,
       resume: options.resume ?? true,
+      priority: options.priority ?? false,
+      controls: options.controls ?? true,
       onActive: options.onActive
     };
     entry.hosts.push(record);
@@ -205,6 +214,14 @@ class MediaElementRegistry {
 
   private activate(entry: MediaEntry, next: HostRecord) {
     const previous = entry.active;
+
+    // A page host may register while the mini player or viewer owns the element: keep the
+    // picture where the user put it and let this host take over when the owner unmounts.
+    if (previous && previous !== next && previous.priority && !next.priority) {
+      entry.lastActiveAt = Date.now();
+      return;
+    }
+
     if (previous && previous !== next) previous.onActive?.(false);
 
     const element = entry.element;
@@ -214,6 +231,7 @@ class MediaElementRegistry {
 
     entry.active = next;
     element.preload = 'auto';
+    element.controls = next.controls;
     if (element.parentElement !== next.node) next.node.appendChild(element);
 
     if (time > 0 && Math.abs(element.currentTime - time) > 1) {

@@ -9,12 +9,17 @@
     poster?: string;
     autoplay?: boolean;
     resume?: boolean;
+    priority?: boolean;
+    controls?: boolean;
     onmedia?: (element: HTMLMediaElement) => void;
     onloadedmetadata?: (event: Event) => void;
     ontimeupdate?: (event: Event) => void;
     onplaying?: (event: Event) => void;
     onplay?: (event: Event) => void;
     onpause?: (event: Event) => void;
+    onwaiting?: (event: Event) => void;
+    onstalled?: (event: Event) => void;
+    oncanplay?: (event: Event) => void;
     onended?: (event: Event) => void;
     onerror?: (event: Event) => void;
   }
@@ -26,12 +31,17 @@
     poster,
     autoplay = false,
     resume = true,
+    priority = false,
+    controls = true,
     onmedia,
     onloadedmetadata,
     ontimeupdate,
     onplaying,
     onplay,
     onpause,
+    onwaiting,
+    onstalled,
+    oncanplay,
     onended,
     onerror
   }: Props = $props();
@@ -54,6 +64,8 @@
       {
         autoplay: untrack(() => autoplay),
         resume: untrack(() => resume),
+        priority: untrack(() => priority),
+        controls: untrack(() => controls),
         poster: untrack(() => poster),
         onActive: (value) => {
           active = value;
@@ -93,6 +105,9 @@
       ['playing', onplaying],
       ['play', onplay],
       ['pause', onpause],
+      ['waiting', onwaiting],
+      ['stalled', onstalled],
+      ['canplay', oncanplay],
       ['ended', onended],
       ['error', onerror]
     ];
