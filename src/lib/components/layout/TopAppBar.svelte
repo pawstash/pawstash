@@ -12,7 +12,6 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import Button from '$lib/components/ui/Button.svelte';
-  import WindowControls from './WindowControls.svelte';
   import OverflowMenu, { type MenuItem } from './OverflowMenu.svelte';
   import SelectionBar from './SelectionBar.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -225,9 +224,6 @@
       {/if}
       <div class="bar-spacer"></div>
       {@render trailing(true)}
-    {/if}
-    {#if showWindowControls}
-      <WindowControls variant="windows" />
     {/if}
   </header>
 {:else}
@@ -519,7 +515,7 @@
   }
 
   .top-app-bar.is-pointer.has-window-controls .bar-actions {
-    margin-inline-end: 12px;
+    margin-inline-end: calc(var(--window-control-width) * 3 + 12px);
   }
 
   .top-app-bar.is-pointer :global(.bar-back) {

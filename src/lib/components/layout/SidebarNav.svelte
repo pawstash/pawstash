@@ -28,7 +28,6 @@
   import IconPanelExpand from '~icons/fluent/panel-left-expand-24-regular';
   import IconPanelContract from '~icons/fluent/panel-left-contract-24-regular';
   import Button from '$lib/components/ui/Button.svelte';
-  import WindowControls from './WindowControls.svelte';
   import { syncStatusText } from '$lib/utils/syncStatus';
   import IconUser from '~icons/fluent/person-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
@@ -112,9 +111,7 @@
   {/snippet}
 
   {#if isMacStyle}
-    <div class="sidebar-header" data-tauri-drag-region="deep">
-      <WindowControls variant="macos" />
-    </div>
+    <div class="sidebar-header" data-tauri-drag-region="deep"></div>
   {/if}
 
   <div

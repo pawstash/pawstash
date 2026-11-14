@@ -5,7 +5,6 @@
   import { scrollable } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
-  import WindowControls from '$lib/components/layout/WindowControls.svelte';
   import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import SettingsGroup from './SettingsGroup.svelte';
   import { SECTION_GROUPS, navSectionOf, sectionMeta, sectionDescription } from './sections';
@@ -18,9 +17,6 @@
 
 <nav class="settings-nav" class:is-mac={isMacStyle} aria-label={i18n.t('nav.settings')} data-tauri-drag-region>
   <div class="settings-nav__header" data-tauri-drag-region="deep">
-    {#if isMacStyle}
-      <WindowControls variant="macos" />
-    {/if}
     <Button variant="ghost" class="btn-icon" aria-label={i18n.t('nav.back')} onclick={() => navigationState.exitSettings()}>
       <IconArrowLeft />
     </Button>
