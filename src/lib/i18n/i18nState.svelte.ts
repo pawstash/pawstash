@@ -1,6 +1,3 @@
-import ru from './locales/ru.json';
-import en from './locales/en.json';
-
 export type Locale = 'ru' | 'en';
 
 export interface LocaleConfig {
@@ -19,7 +16,11 @@ type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>> & { other: strin
 type Vars = Record<string, string | number>;
 type Formatter = Intl.NumberFormat | Intl.DateTimeFormat | Intl.PluralRules | Intl.RelativeTimeFormat;
 
-const translations: Record<Locale, Messages> = { ru, en };
+const LOCALE_LOADERS: Record<Locale, () => Promise<{ default: Messages }>> = {
+  ru: () => import('./locales/ru.json'),
+  en: () => import('./locales/en.json')
+};
+const translations: Partial<Record<Locale, Messages>> = {};
 const FALLBACK_LOCALE: Locale = 'en';
 const LOCALE_TAGS: Record<Locale, string> = { ru: 'ru-RU', en: 'en-US' };
 const RUSSIAN_SPEAKING = new Set(['ru', 'uk', 'be', 'kk']);
@@ -62,32 +63,58 @@ export class I18nState {
 
   private formatCache = new Map<string, Formatter>();
   private missingReported = new Set<string>();
+  private loading = new Map<Locale, Promise<void>>();
 
   get tag(): string {
     return LOCALE_TAGS[this.currentLocale];
   }
 
-  init() {
-    if (typeof localStorage === 'undefined') return;
-    const saved = localStorage.getItem(STORAGE_KEY);
-    this.currentLocale = saved && saved in translations ? (saved as Locale) : detectLocale();
-    document.documentElement.lang = this.currentLocale;
+  private load(locale: Locale): Promise<void> {
+    const pending = this.loading.get(locale);
+    if (pending) return pending;
+    const promise = LOCALE_LOADERS[locale]().then((module) => {
+      translations[locale] = module.default;
+    });
+    this.loading.set(locale, promise);
+    return promise;
   }
 
-  setLocale(locale: Locale) {
-    if (!(locale in translations)) return;
+  async init() {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+    const locale = saved === 'ru' || saved === 'en' ? saved : detectLocale();
+    try {
+      await this.load(locale);
+    } catch {
+      await this.load(FALLBACK_LOCALE);
+    }
+    this.currentLocale = translations[locale] ? locale : FALLBACK_LOCALE;
+    if (typeof document !== 'undefined') document.documentElement.lang = this.currentLocale;
+  }
+
+  async setLocale(locale: Locale) {
+    if (!(locale in LOCALE_LOADERS)) return;
+    try {
+      await this.load(locale);
+    } catch {
+      return;
+    }
     this.currentLocale = locale;
     document.documentElement.lang = locale;
     localStorage.setItem(STORAGE_KEY, locale);
   }
 
   has(key: string): boolean {
-    return lookup(translations[this.currentLocale], key) !== undefined;
+    const messages = translations[this.currentLocale];
+    return messages ? lookup(messages, key) !== undefined : false;
   }
 
   /** `count` picks the form when the message is a plural object. */
   t(key: string, vars?: Vars): string {
-    const entry = lookup(translations[this.currentLocale], key) ?? lookup(translations[FALLBACK_LOCALE], key);
+    const current = translations[this.currentLocale];
+    const fallback = translations[FALLBACK_LOCALE];
+    const entry =
+      (current && lookup(current, key)) ??
+      (fallback ? lookup(fallback, key) : undefined);
     if (entry === undefined) {
       if (import.meta.env.DEV && !this.missingReported.has(key)) {
         this.missingReported.add(key);

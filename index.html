@@ -5,8 +5,78 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Pawstash</title>
+    <style>
+      #boot-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #131313;
+        color: #e3e3e3;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-size: 22px;
+        font-weight: 400;
+        line-height: 28px;
+        pointer-events: none;
+        opacity: 1;
+        transition: opacity 200ms ease;
+      }
+      #boot-screen.is-hidden {
+        opacity: 0;
+      }
+      .boot-mark {
+        width: 48px;
+        height: 48px;
+        color: #e3e3e3;
+        opacity: .9;
+      }
+      .boot-mark svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .boot-track {
+        position: relative;
+        width: 88px;
+        height: 2px;
+        overflow: hidden;
+        border-radius: 9999px;
+        background: #2a2a2a;
+      }
+      .boot-track span {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 36px;
+        border-radius: inherit;
+        background: #ffb4a8;
+        animation: boot-slide 1.25s cubic-bezier(.45, 0, .55, 1) infinite;
+      }
+      @keyframes boot-slide {
+        0% { transform: translateX(-36px); }
+        100% { transform: translateX(88px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-track span { animation: none; transform: translateX(26px); }
+        #boot-screen { transition: none; }
+      }
+    </style>
   </head>
   <body class="bg-transparent overflow-hidden select-none font-sans text-ink">
+    <div id="boot-screen" role="status" aria-label="Loading Pawstash">
+      <div class="boot-mark" aria-hidden="true">
+        <svg viewBox="0 0 602 602" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(0, 8.5)">
+            <path fill="currentColor" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
+          </g>
+        </svg>
+      </div>
+      <div>Pawstash</div>
+      <div class="boot-track" aria-hidden="true"><span></span></div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

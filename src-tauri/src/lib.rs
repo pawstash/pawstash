@@ -52,12 +52,14 @@ fn setup_platform() {}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup = std::time::Instant::now();
     setup_platform();
 
     logging::init_logging();
     let config_mgr = ConfigManager::new().expect("Failed to initialize SQLite settings");
     let settings = config_mgr.load().expect("Failed to load settings");
     net::apply_settings(&settings);
+    tracing::debug!(elapsed = ?startup.elapsed(), "Startup: settings ready");
 
     let mut context = tauri::generate_context!();
     if let Some(listener) = window_setup::apply(context.config_mut(), &settings) {
@@ -68,7 +70,6 @@ pub fn run() {
         ContentRepository::new(settings.cache_max_mb)
             .expect("Failed to initialize content repository"),
     );
-    let _ = content.set_cache_limit_mb(settings.cache_max_mb);
     let library = Arc::new(LibraryRepository::new().expect("Failed to initialize local library"));
     let content_index = Arc::new(
         db::content_index::ContentIndexRepository::new()
@@ -120,6 +121,7 @@ pub fn run() {
         )
         .expect("Failed to initialize archive support"),
     );
+    tracing::debug!(elapsed = ?startup.elapsed(), "Startup: repositories and clients ready");
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -147,10 +149,12 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            tracing::debug!(elapsed = ?startup.elapsed(), "Startup: setup started");
             commands::apply_ui_scale(app.handle(), &settings);
             let window_handle = app.handle().clone();
             let wh = window_handle.clone();
             app.listen("frontend-ready", move |_| {
+                tracing::debug!(elapsed = ?startup.elapsed(), "Startup: frontend reported ready");
                 if let Some(window) = wh.get_webview_window("main") {
                     let _ = window.show();
                     #[cfg(desktop)]
@@ -160,6 +164,28 @@ pub fn run() {
                     }
                 }
             });
+
+            {
+                let content = content.clone();
+                let cache_limit_mb = settings.cache_max_mb;
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                    let started = std::time::Instant::now();
+                    let result = tokio::task::spawn_blocking(move || {
+                        content.set_cache_limit_mb(cache_limit_mb)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(stats)) => tracing::debug!(
+                            elapsed = ?started.elapsed(),
+                            files = stats.file_count,
+                            "Startup: cache prune finished"
+                        ),
+                        Ok(Err(error)) => tracing::warn!(%error, "Startup: cache prune failed"),
+                        Err(error) => tracing::warn!(%error, "Startup: cache prune task failed"),
+                    }
+                });
+            }
 
             #[cfg(desktop)]
             {

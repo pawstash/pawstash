@@ -18,25 +18,40 @@
     settings: lazyView(() => import('$lib/components/settings/SettingsPage.svelte'))
   };
 
+  const overlays = {
+    viewer: lazyView(() => import('$lib/components/content/ViewerHost.svelte')),
+    subscription: lazyView(() => import('$lib/components/content/SubscriptionModal.svelte')),
+    unsubscribe: lazyView(() => import('$lib/components/content/UnsubscribeDialog.svelte')),
+    update: lazyView(() => import('$lib/components/ui/UpdateModal.svelte')),
+    notice: lazyView(() => import('$lib/components/ui/NoticeModal.svelte')),
+    settingsNav: lazyView(() => import('$lib/components/settings/SettingsNav.svelte')),
+    windowControls: lazyView(() => import('$lib/components/layout/WindowControls.svelte')),
+    toaster: lazyView(() => import('$lib/components/ui/Toaster.svelte')),
+    contextMenu: lazyView(() => import('$lib/components/ui/ContextMenu.svelte'))
+  };
+
   function preloadView(name: AppRoute['name']) {
     void views[name]();
   }
 
-  function preloadRemainingViews() {
+  function preloadAfterBoot() {
     for (const name of Object.keys(views) as AppRoute['name'][]) void views[name]();
+    for (const name of Object.keys(overlays) as (keyof typeof overlays)[]) void overlays[name]();
   }
 
-  function scheduleViewPreload() {
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(() => preloadRemainingViews(), { timeout: 4000 });
-    } else {
-      setTimeout(preloadRemainingViews, 1500);
-    }
+  function schedulePreload() {
+    setTimeout(() => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(preloadAfterBoot, { timeout: 8000 });
+      } else {
+        preloadAfterBoot();
+      }
+    }, 2500);
   }
 </script>
 
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { onBackButtonPress } from '@tauri-apps/api/app';
@@ -50,41 +65,68 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { syncState } from '$lib/state/syncState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-import WindowControls from '$lib/components/layout/WindowControls.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
   import { apiGetSettings, apiGetPendingDeepLink, apiSetAppHidden, apiShowMainWindow } from '$lib/utils/ipc';
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
   import MobileBottomNav from '$lib/components/layout/MobileBottomNav.svelte';
-  import SettingsNav from '$lib/components/settings/SettingsNav.svelte';
-  import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
-  import NoticeModal from '$lib/components/ui/NoticeModal.svelte';
   import { noticeState } from '$lib/state/noticeState.svelte';
   import { innerFormatsState } from '$lib/state/innerFormatsState.svelte';
   import { uiScaleState } from '$lib/state/uiScaleState.svelte';
   import { scaleIndicator } from '$lib/state/scaleState.svelte';
   import IconGrid from '~icons/fluent/grid-24-regular';
   import IconWindow from '~icons/fluent/window-24-regular';
-  import SubscriptionModal from '$lib/components/content/SubscriptionModal.svelte';
-  import UnsubscribeDialog from '$lib/components/content/UnsubscribeDialog.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { onboardingState } from '$lib/state/onboardingState.svelte';
   import { initFrontendLogging, logger } from '$lib/utils/logger';
   import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
   import { initRestartNotice } from '$lib/utils/restartNotice';
-  import Toaster from '$lib/components/ui/Toaster.svelte';
-  import ContextMenu from '$lib/components/ui/ContextMenu.svelte';
-  import ViewerHost from '$lib/components/content/ViewerHost.svelte';
+  import { dismissBootScreen } from '$lib/utils/bootScreen';
+  import { warmOverlayScrollbars } from '$lib/actions/scrollable';
+  import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { viewerState } from '$lib/state/viewerState.svelte';
 
   navigationState.init();
   preloadView(navigationState.route.name);
 
+  let uiReady = $state(false);
+
+  function initSecondaryState() {
+    const run = () => {
+      void libraryState.init().catch((error) => logger.warn('Failed to initialize library', error));
+      void downloadState.init().catch((error) => logger.warn('Failed to initialize downloads', error));
+      void subscriptionState.init().catch((error) => logger.warn('Failed to initialize subscriptions', error));
+      void accountState.refresh().catch((error) => logger.warn('Failed to check Pawchive session', error));
+      void syncState.init().catch((error) => logger.warn('Failed to initialize encrypted sync', error));
+      void innerFormatsState.init().catch((error) => logger.warn('Failed to load indexed post contents', error));
+      void providerState.loadProviders().catch((error) => logger.warn('Failed to load providers', error));
+      void creatorsState.init().catch((error) => logger.warn('Failed to initialize creators list', error));
+    };
+    if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 1500 });
+    else setTimeout(run, 120);
+  }
+
+  async function revealFirstFrame(waitFor: Promise<unknown>[]) {
+    await Promise.allSettled(waitFor);
+    await tick();
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+    dismissBootScreen();
+    uiReady = true;
+    void themeState.upgradePalette();
+    void warmOverlayScrollbars();
+    void emit('frontend-ready');
+    void apiShowMainWindow().catch((e) => logger.warn('Failed to show main window', e));
+    schedulePreload();
+    initSecondaryState();
+  }
+
   onMount(() => {
     initFrontendLogging();
-    themeState.init();
-    i18n.init();
+    void themeState.init();
     document.documentElement.classList.toggle('webkitgtk', layoutState.isLinux);
 
     const preventPinchZoom = (e: TouchEvent) => {
@@ -136,7 +178,7 @@ import WindowControls from '$lib/components/layout/WindowControls.svelte';
       });
     });
 
-    void apiGetSettings()
+    const settingsReady = apiGetSettings()
       .then((settings) => {
         configState.hydrate(settings);
         // Read once: transparency is fixed when the window is created.
@@ -153,24 +195,13 @@ import WindowControls from '$lib/components/layout/WindowControls.svelte';
         }
       })
       .catch((error) => logger.warn('Failed to load application settings', error));
-    void libraryState.init().catch((error) => logger.warn('Failed to initialize library', error));
-    void downloadState.init().catch((error) => logger.warn('Failed to initialize downloads', error));
-    void subscriptionState.init().catch((error) => logger.warn('Failed to initialize subscriptions', error));
-    void accountState.refresh().catch((error) => logger.warn('Failed to check Pawchive session', error));
-    void syncState.init().catch((error) => logger.warn('Failed to initialize encrypted sync', error));
-    void innerFormatsState.init().catch((error) => logger.warn('Failed to load indexed post contents', error));
+
     void uiScaleState.init().then(() => {
       const legacyScale = themeState.takeLegacyUiScale();
       if (legacyScale && !uiScaleState.percent) uiScaleState.set(legacyScale);
     });
-    void providerState.loadProviders().catch((error) => logger.warn('Failed to load providers', error));
-    void creatorsState.init().catch((error) => logger.warn('Failed to initialize creators list', error));
 
-    requestAnimationFrame(() => {
-      void emit('frontend-ready');
-      void apiShowMainWindow().catch((e) => logger.warn('Failed to show main window', e));
-      scheduleViewPreload();
-    });
+    void revealFirstFrame([settingsReady, views[navigationState.route.name]()]);
 
     return () => {
       document.removeEventListener('touchstart', preventPinchZoom);
@@ -217,17 +248,35 @@ import WindowControls from '$lib/components/layout/WindowControls.svelte';
   class="app-shell h-screen w-screen flex overflow-hidden select-none text-[var(--text-primary)] font-sans relative"
 >
   <BackgroundProvider />
-  <Toaster />
-  <ContextMenu />
 
-  {#if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'windows'}
-    <div class="app-window-controls is-windows">
-      <WindowControls variant="windows" />
-    </div>
-  {:else if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'macos'}
-    <div class="app-window-controls is-macos">
-      <WindowControls variant="macos" />
-    </div>
+  {#if uiReady || contextMenuState.open}
+    {#await overlays.contextMenu() then viewModule}
+      {@const ContextMenu = viewModule.default}
+      <ContextMenu />
+    {/await}
+  {/if}
+
+  {#if uiReady}
+    {#await overlays.toaster() then viewModule}
+      {@const Toaster = viewModule.default}
+      <Toaster />
+    {/await}
+
+    {#if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'windows'}
+      <div class="app-window-controls is-windows">
+        {#await overlays.windowControls() then viewModule}
+          {@const WindowControls = viewModule.default}
+          <WindowControls variant="windows" />
+        {/await}
+      </div>
+    {:else if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'macos'}
+      <div class="app-window-controls is-macos">
+        {#await overlays.windowControls() then viewModule}
+          {@const WindowControls = viewModule.default}
+          <WindowControls variant="macos" />
+        {/await}
+      </div>
+    {/if}
   {/if}
 
   {#if !layoutState.isMobile}
@@ -236,7 +285,10 @@ import WindowControls from '$lib/components/layout/WindowControls.svelte';
 
   <div class="app-content flex-1 flex overflow-hidden relative min-w-0">
     {#if !layoutState.isMobile && navigationState.route.name === 'settings'}
-      <SettingsNav />
+      {#await overlays.settingsNav() then viewModule}
+        {@const SettingsNav = viewModule.default}
+        <SettingsNav />
+      {/await}
     {/if}
     <main class="flex-1 flex overflow-hidden w-full h-full">
       {#key navigationState.entryKey}
@@ -306,17 +358,42 @@ import WindowControls from '$lib/components/layout/WindowControls.svelte';
     <MobileBottomNav />
   {/if}
 
-  <UpdateModal />
-  <NoticeModal />
-  <ViewerHost />
+  {#if updateState.modalOpen}
+    {#await overlays.update() then viewModule}
+      {@const UpdateModal = viewModule.default}
+      <UpdateModal />
+    {/await}
+  {/if}
+  {#if noticeState.current}
+    {#await overlays.notice() then viewModule}
+      {@const NoticeModal = viewModule.default}
+      <NoticeModal />
+    {/await}
+  {/if}
+  {#if uiReady || viewerState.isOpen}
+    {#await overlays.viewer() then viewModule}
+      {@const ViewerHost = viewModule.default}
+      <ViewerHost />
+    {/await}
+  {/if}
   {#if scaleIndicator.kind}
     <div class="scale-indicator" role="status">
       {#if scaleIndicator.kind === 'grid'}<IconGrid />{:else}<IconWindow />{/if}
       {i18n.t(scaleIndicator.kind === 'grid' ? 'settings.grid_scale_indicator' : 'settings.ui_scale_indicator', { percent: scaleIndicator.percent })}
     </div>
   {/if}
-  <SubscriptionModal />
-  <UnsubscribeDialog />
+  {#if subscriptionState.dialogOpen}
+    {#await overlays.subscription() then viewModule}
+      {@const SubscriptionModal = viewModule.default}
+      <SubscriptionModal />
+    {/await}
+  {/if}
+  {#if subscriptionState.unsubscribePromptOpen}
+    {#await overlays.unsubscribe() then viewModule}
+      {@const UnsubscribeDialog = viewModule.default}
+      <UnsubscribeDialog />
+    {/await}
+  {/if}
 </div>
 
 <style>
