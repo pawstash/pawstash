@@ -1,6 +1,6 @@
 <script lang="ts" generics="T extends string | number">
   import { i18n } from '$lib/i18n';
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import Select from '$lib/components/ui/Select.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import type { SortOption } from '$lib/utils/sort';
@@ -35,7 +35,7 @@
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
-        title={label}
+        use:tooltip={label}
         onclick={toggle}
       >
         <IconArrowSort />

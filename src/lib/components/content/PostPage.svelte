@@ -2639,7 +2639,7 @@
                           {@render sourceBadge(file)}
                         {/if}
                       </div>
-                      <div class="file-placeholder media-open-surface is-deferred-placeholder" title={i18n.t('post.file_not_saved_desc')}>
+                      <div class="file-placeholder media-open-surface is-deferred-placeholder" use:tooltip={i18n.t('post.file_not_saved_desc')}>
                         <IconWarning class="placeholder-icon" />
                         <p class="placeholder-text">{i18n.t('post.file_not_saved')}</p>
                       </div>

@@ -347,15 +347,15 @@
   </div>
 
   <div class="grid-tile-footer">
-    <h2 class="grid-tile-title" title={item.filename}>{item.filename}</h2>
+    <h2 class="grid-tile-title" use:tooltip={item.filename}>{item.filename}</h2>
     {#if postTitle}
-      <p class="download-post-title" title={postTitle}>{postTitle}</p>
+      <p class="download-post-title" use:tooltip={postTitle}>{postTitle}</p>
     {/if}
     {#if item.status !== 'completed'}
       <div
         class="grid-tile-author download-status-row"
         data-status={retryPending ? 'retrying' : item.status}
-        title={item.status === 'failed' ? item.error_message : undefined}
+        use:tooltip={item.status === 'failed' ? item.error_message : undefined}
       >
         {#if busy || retryPending}<IconLoading />{:else if item.status === 'failed' || item.status === 'missing'}<IconError />{:else}<IconDownload />{/if}
         <span class="grid-tile-author-name">{i18n.t(retryPending ? 'downloads.status_retrying' : `downloads.status_${item.status}`)}</span>

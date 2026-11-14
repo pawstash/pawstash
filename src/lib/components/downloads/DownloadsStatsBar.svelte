@@ -1,6 +1,7 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
   import { themeState } from '$lib/theme/themeState.svelte';
+  import { tooltip } from '$lib/motion';
   import { formatBytes, formatPercent } from '$lib/utils/formatters';
   import type { DownloadItem } from '$lib/types/download';
 
@@ -136,7 +137,7 @@
           <div
             class="storage-bar-segment"
             style="width: {cat.share}%; background-color: {cat.color};"
-            title="{cat.label}: {formatBytes(cat.bytes)} ({i18n.t('counts.files', { count: cat.count })}, {formatPercent(cat.share)})"
+            use:tooltip={`${cat.label}: ${formatBytes(cat.bytes)} (${i18n.t('counts.files', { count: cat.count })}, ${formatPercent(cat.share)})`}
           ></div>
         {/each}
       </div>

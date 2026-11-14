@@ -2024,11 +2024,20 @@ html.is-paint-selecting * {
   line-height: var(--type-body-sm-line);
   font-weight: 400;
   text-align: start;
+  white-space: pre-line;
   overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transform: scale(0.9);
   transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.app-tooltip.is-moving {
+  transition:
+    left 180ms var(--ease-standard),
+    top 180ms var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard),
     transform var(--duration-fast) var(--ease-standard);
 }
@@ -2051,7 +2060,9 @@ html.is-paint-selecting * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-tooltip {
+  .app-tooltip,
+  .app-tooltip.is-moving {
+    transition: none;
     transform: none;
   }
 }

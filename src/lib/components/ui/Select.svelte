@@ -4,7 +4,7 @@
   import { computePosition, autoUpdate, flip, shift, offset, size as floatingSize } from '@floating-ui/dom';
   import { FLOATING_EDGE, FLOATING_OFFSET } from '$lib/utils/floating';
   import { portal } from '$lib/actions/portal';
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import { i18n } from '$lib/i18n';
   import { notify } from '$lib/utils/toast';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
@@ -301,7 +301,7 @@
       aria-haspopup="listbox"
       aria-expanded={isOpen}
       aria-label={ariaLabel || selectedLabel}
-      title={ariaLabel || selectedLabel}
+      use:tooltip={ariaLabel || selectedLabel}
       {style}
     >
       {#if iconOnly}
@@ -400,7 +400,7 @@
                   class="create-action-btn confirm"
                   use:ripple
                   disabled={!newOptionName.trim() || creatingPending}
-                  title={i18n.t('common.confirm')}
+                  use:tooltip={i18n.t('common.confirm')}
                   aria-label={createLabel || i18n.t('common.confirm')}
                 >
                   <IconCheckmark />
@@ -411,7 +411,7 @@
                   use:ripple
                   onclick={cancelCreating}
                   disabled={creatingPending}
-                  title={i18n.t('common.cancel')}
+                  use:tooltip={i18n.t('common.cancel')}
                   aria-label={i18n.t('common.cancel')}
                 >
                   <IconDismiss />

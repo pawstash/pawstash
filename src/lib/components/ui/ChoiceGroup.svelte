@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component, Snippet } from 'svelte';
   import { onMount } from 'svelte';
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import StableWeightLabel from './StableWeightLabel.svelte';
 
   export interface ChoiceOption<T> {
@@ -154,7 +154,7 @@
         class:has-addon={isActive && withAddon}
         role="radio"
         aria-checked={isActive}
-        title={option.title}
+        use:tooltip={option.title}
         tabindex={isActive || (activeIndex === -1 && index === 0) ? 0 : -1}
         data-choice-value={String(option.value)}
         {disabled}

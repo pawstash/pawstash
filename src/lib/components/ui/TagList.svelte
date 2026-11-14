@@ -142,7 +142,7 @@
           handleClick(tag.name);
         }
       }}
-      title={`#${tag.name}${tag.count !== undefined ? ` (${tag.count})` : ''}`}
+      use:tooltip={`#${tag.name}${tag.count !== undefined ? ` (${tag.count})` : ''}`}
     >
       {@render tagBody(tag)}
     </button>
@@ -167,7 +167,7 @@
           handleClick('');
         }
       }}
-      title={effectiveAllLabel}
+      use:tooltip={effectiveAllLabel}
     >
       <span class="tag-label">
         <StableWeightLabel text={effectiveAllLabel} reserveWeight="var(--font-weight-semibold)" />

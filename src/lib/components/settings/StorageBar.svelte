@@ -2,6 +2,7 @@
   import { i18n } from '$lib/i18n';
   import { formatPercent } from '$lib/utils/formatters';
   import { themeState } from '$lib/theme/themeState.svelte';
+  import { tooltip } from '$lib/motion';
   import type { CacheStats } from '$lib/utils/ipc';
 
   interface Props {
@@ -90,7 +91,7 @@
     </span>
   </div>
 
-  <div class="storage-bar-track" title="{formatBytes(fileBytes)} / {formatBytes(maxBytes)}">
+  <div class="storage-bar-track" use:tooltip={`${formatBytes(fileBytes)} / ${formatBytes(maxBytes)}`}>
     {#if categories.length === 0}
       <div class="h-full w-full bg-veil/[0.04]"></div>
     {:else}
@@ -99,7 +100,7 @@
           <div
             class="storage-bar-segment"
             style="width: {cat.shareOfUsed}%; background-color: {cat.color};"
-            title="{cat.label}: {formatBytes(cat.bytes)} ({formatPercent(cat.shareOfUsed)})"
+            use:tooltip={`${cat.label}: ${formatBytes(cat.bytes)} (${formatPercent(cat.shareOfUsed)})`}
           ></div>
         {/each}
       </div>

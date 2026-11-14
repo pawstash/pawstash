@@ -149,7 +149,7 @@
         {#each tiles as { node, kind, meta }, index (node.id)}
           {@const Icon = NODE_KIND_ICONS[kind]}
           {@const thumb = thumbs[node.id]}
-          <span class="archive-tile" class:has-thumb={Boolean(thumb)} title={node.name}>
+          <span class="archive-tile" class:has-thumb={Boolean(thumb)} use:tooltip={node.name}>
             {#if thumb}
               <img src={thumb} alt="" decoding="async" />
               <span class="grid-tile-shade"></span>

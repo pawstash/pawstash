@@ -3,6 +3,7 @@
   import type { Comment } from '$lib/types/content';
   import type { CommentCloudLinks } from '$lib/types/cloud';
   import { i18n } from '$lib/i18n';
+  import { tooltip } from '$lib/motion';
   import { logger } from '$lib/utils/logger';
   import { apiFetchPostComments } from '$lib/utils/ipc';
   import { formatDate } from '$lib/utils/formatters';
@@ -129,7 +130,7 @@
       {/if}
       <span class="comment-date">{formatDate(comment.published)}</span>
       {#if comment.revisions && comment.revisions.length > 0}
-        <span class="comment-edited" title={comment.revisions.map((r) => `${formatDate(r.added)}: ${r.content}`).join('\n')}>
+        <span class="comment-edited" use:tooltip={comment.revisions.map((r) => `${formatDate(r.added)}: ${r.content}`).join('\n')}>
           ({i18n.t('post.edited')})
         </span>
       {/if}
