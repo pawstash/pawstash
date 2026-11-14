@@ -53,7 +53,8 @@
   import TagList from '$lib/components/ui/TagList.svelte';
   import PostGrid from './PostGrid.svelte';
   import RichContent from './RichContent.svelte';
-  import MediaViewer, { type MediaViewerItem } from './MediaViewer.svelte';
+  import { type MediaViewerItem } from './MediaViewer.svelte';
+  import { viewerState } from '$lib/state/viewerState.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
@@ -874,8 +875,6 @@
     if (url) void openExternalUrl(url);
   }
 
-  let isViewerOpen = $state(false);
-  let viewerActiveIndex = $state(0);
   let viewerItems = $derived.by((): MediaViewerItem[] =>
     fancards.map((card, idx) => {
       const ext = (card.ext || card.mime?.split('/').pop() || 'jpg').replace(/^\.+/, '');
@@ -891,8 +890,8 @@
   );
 
   function openFancardViewer(index: number) {
-    viewerActiveIndex = index;
-    isViewerOpen = true;
+    if (viewerItems.length === 0) return;
+    viewerState.open({ items: viewerItems, index });
   }
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
@@ -1529,13 +1528,6 @@
   </div>
 </PageShell>
 
-{#if isViewerOpen && viewerItems.length > 0}
-  <MediaViewer
-    items={viewerItems}
-    initialIndex={viewerActiveIndex}
-    onclose={() => isViewerOpen = false}
-  />
-{/if}
 
 {#snippet selectionActions()}
   <Select

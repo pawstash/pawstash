@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import type {
     ArchiveAttachment,
     ArchiveOpenResult,
@@ -18,10 +18,11 @@
   } from '$lib/types/cloud';
   import type { Post } from '$lib/types/content';
   import { isAutoRetryPending, type DownloadItem } from '$lib/types/download';
-  import MediaViewer, {
+  import {
     type MediaViewerItem,
     type MediaViewerKind
   } from '$lib/components/content/MediaViewer.svelte';
+  import { viewerState } from '$lib/state/viewerState.svelte';
   import { resolveLocalMediaUrl, cloudProviderName } from '$lib/utils/media';
   import { NODE_KIND_ICONS, archiveFolderName, cloudNodePath, nodeKindOf, type NodeKind } from '$lib/utils/cloudNodes';
   import { apiShowInFolder, apiUnlockArchive, openDownloadedFile } from '$lib/utils/ipc';
@@ -118,7 +119,6 @@
 
   let currentId = $state<string | null>(null);
   let selected = $state<Set<string>>(new Set());
-  let previewIndex = $state<number | null>(null);
   let viewport = $state<HTMLElement | null>(null);
   let queueing = $state(false);
   let viewPrefs = $state<Record<string, ViewMode>>(readViewPrefs());
@@ -236,7 +236,6 @@
         openKey = key;
         currentId = startFolder(index, initialFolderId);
         selected = new Set();
-        previewIndex = null;
       } else if (currentId && !index.byId.has(currentId)) {
         currentId = startFolder(index, null);
       }
@@ -250,7 +249,7 @@
   $effect(() => {
     if (!open) return;
     const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || selected.size === 0 || previewIndex !== null) return;
+      if (event.key !== 'Escape' || selected.size === 0 || viewerState.mode === 'full') return;
       event.preventDefault();
       event.stopPropagation();
       selected = new Set();
@@ -453,7 +452,9 @@
     setSelected(filesUnder(currentId), !allHereSelected);
   }
 
+  let viewerToken: number | null = null;
   let viewerNodes = $derived(locked ? [] : items.filter((node) => VIEWER_KINDS.has(nodeKind(node))));
+  onDestroy(() => viewerState.detachCallbacks(viewerToken ?? undefined));
 
   let viewerItems = $derived(
     viewerNodes.map((node): MediaViewerItem => {
@@ -485,7 +486,14 @@
     if (locked) return;
     const index = viewerNodes.findIndex((candidate) => candidate.id === node.id);
     if (index >= 0) {
-      previewIndex = index;
+      viewerToken = viewerState.open({
+        items: viewerItems,
+        index,
+        ondownload: (item) => {
+          const node = tree.byId.get(item.id);
+          if (node) void queueFiles([node]);
+        }
+      });
       return;
     }
     if (selectable) toggleNode(node);
@@ -945,18 +953,6 @@
   >
     {@render content()}
   </Modal>
-{/if}
-
-{#if previewIndex !== null && viewerItems.length > 0}
-  <MediaViewer
-    items={viewerItems}
-    initialIndex={previewIndex}
-    onclose={() => (previewIndex = null)}
-    ondownload={(item) => {
-      const node = tree.byId.get(item.id);
-      if (node) void queueFiles([node]);
-    }}
-  />
 {/if}
 
 <style>

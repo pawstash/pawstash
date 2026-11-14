@@ -29,7 +29,8 @@
   import DownloadQueueTile from './DownloadQueueTile.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
-  import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from '$lib/components/content/MediaViewer.svelte';
+  import { type MediaViewerItem, type MediaViewerKind } from '$lib/components/content/MediaViewer.svelte';
+  import { viewerState } from '$lib/state/viewerState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
@@ -174,9 +175,9 @@
   function getDownloadFormats(item: DownloadItem): string[] {
     const filename = (item.filename || '').toLowerCase();
     const formats: string[] = [];
-    if (/\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(filename)) formats.push('image');
-    if (/\.(mp4|mkv|webm|mov|avi|m4v)$/i.test(filename)) formats.push('video');
-    if (/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(filename)) formats.push('audio');
+    if (/\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i.test(filename)) formats.push('image');
+    if (/\.(avi|flv|m4v|mkv|mov|mp4|webm|wmv)$/i.test(filename)) formats.push('video');
+    if (/\.(aac|flac|m4a|mp3|ogg|opus|wav)$/i.test(filename)) formats.push('audio');
     if (/\.(txt|md|pdf|doc|docx|epub)$/i.test(filename)) formats.push('text');
     if (/\.(zip|rar|7z|tar|gz)$/i.test(filename)) formats.push('archive');
     if (/\b(wip|sketch|sketches|rough|draft|preview|doodle|lineart)\b/i.test(filename) || /\.(psd|clip)$/i.test(filename)) formats.push('wip');
@@ -223,7 +224,10 @@
   }));
   const handoff = new GridHandoff();
   $effect(() => handoff.sync(sortedDownloads.length > 0, downloadState.loading));
-  onDestroy(() => handoff.destroy());
+  onDestroy(() => {
+    handoff.destroy();
+    viewerState.detachCallbacks(viewerToken ?? undefined);
+  });
 
   let groupedDownloads = $derived.by(() => {
     const groups = new Map<string, DownloadGroup>();
@@ -242,12 +246,11 @@
     return { service: item.service, creatorId: item.creator_id, postId: item.post_id, key: downloadPostKey(item) };
   }
 
-  let viewerIndex = $state<number | null>(null);
-
+  let viewerToken: number | null = null;
   function mediaViewerKindFromFilename(filename: string): MediaViewerKind {
     const ext = filename.includes('.') ? (filename.split('.').pop() || '').toLowerCase() : '';
-    if (/^(avif|bmp|gif|jpe?g|png|webp)$/.test(ext)) return 'image';
-    if (/^(m4v|mkv|mov|mp4|webm)$/.test(ext)) return 'video';
+    if (/^(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/.test(ext)) return 'image';
+    if (/^(avi|flv|m4v|mkv|mov|mp4|webm|wmv)$/.test(ext)) return 'video';
     if (/^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(ext)) return 'audio';
     return 'file';
   }
@@ -292,7 +295,27 @@
     if (isMedia) {
       const targetIdx = viewerDownloads.findIndex((d) => d.id === item.id);
       if (targetIdx >= 0) {
-        viewerIndex = targetIdx;
+        viewerToken = viewerState.open({
+          items: viewerItems,
+          index: targetIdx,
+          onopenpost: (openedItem, index) => {
+            viewerState.close();
+            const target = viewerDownloads.find((d) => (d.media_id || d.id || d.filename) === openedItem.id) ?? viewerDownloads[index];
+            if (target) openPost(parseIdentity(target));
+          },
+          ondelete: async (deletedItem, index) => {
+            const target = viewerDownloads.find((d) => (d.media_id || d.id || d.filename) === deletedItem.id) ?? viewerDownloads[index];
+            if (!target) return;
+            try {
+              await downloadState.remove(target.id);
+            } catch (error) {
+              notify.error(i18n.t('downloads.action_error'), error);
+              return;
+            }
+            notify.success(i18n.t('downloads.remove'), { description: target.filename, glyph: 'removed' });
+            viewerState.removeAt(index);
+          }
+        });
         return;
       }
     }
@@ -301,7 +324,7 @@
   }
 
   function previewItem(items: DownloadItem[]) {
-    return items.find((item) => /\.(avif|bmp|gif|jpe?g|png|webp|m4v|mkv|mov|mp4|webm)(?:\?.*)?$/i.test(item.filename)) || items[0];
+    return items.find((item) => /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp|avi|flv|m4v|mkv|mov|mp4|webm|wmv)(?:\?.*)?$/i.test(item.filename)) || items[0];
   }
 
   function previewUrl(item?: DownloadItem) {
@@ -664,35 +687,6 @@
     {/if}
   </Button>
 {/snippet}
-
-{#if viewerIndex !== null && viewerItems.length > 0}
-  <MediaViewer
-    items={viewerItems}
-    initialIndex={viewerIndex}
-    onclose={() => viewerIndex = null}
-    onopenpost={(_, idx) => {
-      viewerIndex = null;
-      const d = viewerDownloads[idx];
-      if (d) {
-        openPost(parseIdentity(d));
-      }
-    }}
-    ondelete={async (_, idx) => {
-      const d = viewerDownloads[idx];
-      if (!d) return;
-      try {
-        await downloadState.remove(d.id);
-      } catch (error) {
-        notify.error(i18n.t('downloads.action_error'), error);
-        return;
-      }
-      notify.success(i18n.t('downloads.remove'), { description: d.filename, glyph: 'removed' });
-      if (viewerDownloads.length <= 1) {
-        viewerIndex = null;
-      }
-    }}
-  />
-{/if}
 
 <style>
   :global(.downloads-mode-choice) {
