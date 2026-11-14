@@ -55,7 +55,7 @@
   let active = $derived(['queued', 'resolving', 'downloading', 'verifying'].includes(item.status));
   let retryPending = $derived(isAutoRetryPending(item));
   let extension = $derived(item.filename.includes('.') ? (item.filename.split('.').pop() || '').toLowerCase() : '');
-  let mediaKind = $derived(/^(avif|bmp|gif|jpe?g|png|webp)$/.test(extension) ? 'image' : /^(m4v|mkv|mov|mp4|webm)$/.test(extension) ? 'video' : /^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(extension) ? 'audio' : 'file');
+  let mediaKind = $derived(/^(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/.test(extension) ? 'image' : /^(avi|flv|m4v|mkv|mov|mp4|webm|wmv)$/.test(extension) ? 'video' : /^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(extension) ? 'audio' : 'file');
 
 
   let videoDuration = $derived.by(() => {

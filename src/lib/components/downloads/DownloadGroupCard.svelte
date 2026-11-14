@@ -24,6 +24,7 @@
   import IconDocument from '~icons/fluent/document-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
+  import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import { getMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
@@ -58,8 +59,9 @@
     catch { return encodedExtension.toLowerCase(); }
   });
   let extension = $derived(previewExtension || (representative?.filename.split('.').pop() || '').toLowerCase());
-  let isImage = $derived(/^(avif|bmp|gif|jpe?g|png|webp)$/.test(extension));
-  let isVideo = $derived(/^(m4v|mkv|mov|mp4|webm)$/.test(extension));
+  let isImage = $derived(/^(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/.test(extension));
+  let isVideo = $derived(/^(avi|flv|m4v|mkv|mov|mp4|webm|wmv)$/.test(extension));
+  let isAudio = $derived(/^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(extension));
   let pausableItems = $derived(items.filter((item) => ['resolving', 'downloading'].includes(item.status)));
   let pausedItems = $derived(items.filter((item) => item.status === 'paused'));
   let retryItems = $derived(items.filter((item) => ['failed', 'cancelled', 'missing'].includes(item.status)));
@@ -198,7 +200,7 @@
       }}
     />
   {:else}
-    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else if isImage}<IconImage />{:else}<IconDocument />{/if}</div>
+    <div class="grid-tile-placeholder group-placeholder">{#if isVideo}<IconVideo />{:else if isImage}<IconImage />{:else if isAudio}<IconMusic />{:else}<IconDocument />{/if}</div>
   {/if}
 
   {#if showVideo && isVideo && previewUrl && !previewFailed}
