@@ -24,6 +24,7 @@ const FILE_SECTIONS: Record<string, SectionId> = {
   BackgroundSection: 'appearance',
   InterfaceSection: 'interface',
   GridSection: 'grid',
+  PlayerSection: 'player',
   ProvidersSection: 'providers',
   NetworkSection: 'network',
   LinksSection: 'network',

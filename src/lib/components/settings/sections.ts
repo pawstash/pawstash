@@ -10,6 +10,8 @@ import IconInterface from '~icons/fluent/phone-laptop-24-regular';
 import IconInterfaceFilled from '~icons/fluent/phone-laptop-24-filled';
 import IconGrid from '~icons/fluent/grid-24-regular';
 import IconGridFilled from '~icons/fluent/grid-24-filled';
+import IconPlayer from '~icons/fluent/play-24-regular';
+import IconPlayerFilled from '~icons/fluent/play-24-filled';
 import IconProviders from '~icons/fluent/globe-24-regular';
 import IconProvidersFilled from '~icons/fluent/globe-24-filled';
 import IconNetwork from '~icons/fluent/arrow-routing-24-regular';
@@ -29,6 +31,7 @@ export type SectionId =
   | 'appearance'
   | 'interface'
   | 'grid'
+  | 'player'
   | 'providers'
   | 'network'
   | 'downloads'
@@ -47,6 +50,7 @@ const META: Record<SectionId, SectionMeta> = {
   appearance: { labelKey: 'settings.appearance_section', icon: IconAppearance, iconActive: IconAppearanceFilled },
   interface: { labelKey: 'settings.interface_section', icon: IconInterface, iconActive: IconInterfaceFilled },
   grid: { labelKey: 'settings.grid_section', icon: IconGrid, iconActive: IconGridFilled },
+  player: { labelKey: 'settings.player_section', icon: IconPlayer, iconActive: IconPlayerFilled },
   providers: { labelKey: 'settings.providers_section', icon: IconProviders, iconActive: IconProvidersFilled },
   network: { labelKey: 'settings.network_section', icon: IconNetwork, iconActive: IconNetworkFilled },
   downloads: { labelKey: 'nav.downloads', icon: IconDownloads, iconActive: IconDownloadsFilled },
@@ -58,7 +62,7 @@ const META: Record<SectionId, SectionMeta> = {
 
 export const SECTION_GROUPS: SectionId[][] = [
   ['appearance', 'interface', 'grid'],
-  ['providers', 'downloads', 'notifications'],
+  ['player', 'providers', 'downloads', 'notifications'],
   ['network', 'sync', 'cache'],
   ['about']
 ];

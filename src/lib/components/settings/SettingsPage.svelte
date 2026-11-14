@@ -32,6 +32,7 @@
   import AppearanceSection from './sections/AppearanceSection.svelte';
   import InterfaceSection from './sections/InterfaceSection.svelte';
   import GridSection from './sections/GridSection.svelte';
+  import PlayerSection from './sections/PlayerSection.svelte';
   import ProvidersSection from './sections/ProvidersSection.svelte';
   import ProviderSection from './sections/ProviderSection.svelte';
   import NetworkSection from './sections/NetworkSection.svelte';
@@ -50,6 +51,7 @@
     appearance: AppearanceSection,
     interface: InterfaceSection,
     grid: GridSection,
+    player: PlayerSection,
     providers: ProvidersSection,
     network: NetworkSection,
     downloads: DownloadsSection,

@@ -70,4 +70,14 @@ export interface AppSettings {
   notifications_download_progress?: boolean;
   notifications_show_preview?: boolean;
   notifications_sound?: boolean;
+  viewer_close_action?: 'close' | 'dock';
+  viewer_esc_action?: 'same' | 'close';
+  viewer_dock_size?: 'small' | 'medium' | 'large';
+  viewer_dock_autohide?: boolean;
+  viewer_dock_autohide_delay?: number;
+  viewer_dock_peek?: number;
+  viewer_dock_keep_playing?: boolean;
+  viewer_dock_on_touch?: boolean;
+  viewer_pause_on_blur?: boolean;
+  viewer_playback_rate?: number;
 }

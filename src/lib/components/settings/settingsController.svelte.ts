@@ -34,6 +34,18 @@ const SECTION_KEYS: Partial<Record<string, Key[]>> = {
   appearance: ['theme', 'dynamic_accent', 'linux_transparent_window', 'titlebar_style'],
   interface: ['layout_mode', 'toast_position', 'panic_button_enabled', 'panic_button_shortcut'],
   grid: ['grid_aspect_ratio', 'grid_scale', 'card_view_mode', 'disable_blur_placeholders'],
+  player: [
+    'viewer_close_action',
+    'viewer_esc_action',
+    'viewer_dock_size',
+    'viewer_dock_autohide',
+    'viewer_dock_autohide_delay',
+    'viewer_dock_peek',
+    'viewer_dock_keep_playing',
+    'viewer_dock_on_touch',
+    'viewer_pause_on_blur',
+    'viewer_playback_rate'
+  ],
   providers: ['provider_deadline_secs'],
   network: [
     'proxy_mode',

@@ -135,6 +135,50 @@ pub struct AppSettings {
     pub cloud_user_agent: String,
     #[serde(default)]
     pub cloud_proxy_url: String,
+    #[serde(default = "default_viewer_close_action")]
+    pub viewer_close_action: String,
+    #[serde(default = "default_viewer_esc_action")]
+    pub viewer_esc_action: String,
+    #[serde(default = "default_viewer_dock_size")]
+    pub viewer_dock_size: String,
+    #[serde(default = "default_true")]
+    pub viewer_dock_autohide: bool,
+    #[serde(default = "default_viewer_dock_autohide_delay")]
+    pub viewer_dock_autohide_delay: u32,
+    #[serde(default = "default_viewer_dock_peek")]
+    pub viewer_dock_peek: u32,
+    #[serde(default = "default_true")]
+    pub viewer_dock_keep_playing: bool,
+    #[serde(default)]
+    pub viewer_dock_on_touch: bool,
+    #[serde(default)]
+    pub viewer_pause_on_blur: bool,
+    #[serde(default = "default_viewer_playback_rate")]
+    pub viewer_playback_rate: f64,
+}
+
+fn default_viewer_close_action() -> String {
+    "close".to_string()
+}
+
+fn default_viewer_esc_action() -> String {
+    "same".to_string()
+}
+
+fn default_viewer_dock_size() -> String {
+    "medium".to_string()
+}
+
+fn default_viewer_dock_autohide_delay() -> u32 {
+    1
+}
+
+fn default_viewer_dock_peek() -> u32 {
+    12
+}
+
+fn default_viewer_playback_rate() -> f64 {
+    1.0
 }
 
 fn default_true() -> bool {
@@ -281,6 +325,16 @@ impl Default for AppSettings {
             cloud_links_in_comments_from: default_comment_cloud_source(),
             cloud_user_agent: String::new(),
             cloud_proxy_url: String::new(),
+            viewer_close_action: default_viewer_close_action(),
+            viewer_esc_action: default_viewer_esc_action(),
+            viewer_dock_size: default_viewer_dock_size(),
+            viewer_dock_autohide: true,
+            viewer_dock_autohide_delay: default_viewer_dock_autohide_delay(),
+            viewer_dock_peek: default_viewer_dock_peek(),
+            viewer_dock_keep_playing: true,
+            viewer_dock_on_touch: true,
+            viewer_pause_on_blur: false,
+            viewer_playback_rate: default_viewer_playback_rate(),
         }
     }
 }
@@ -678,6 +732,31 @@ impl AppSettings {
                 self.notifications_show_preview.to_string(),
             ),
             ("notifications_sound", self.notifications_sound.to_string()),
+            ("viewer_close_action", self.viewer_close_action.clone()),
+            ("viewer_esc_action", self.viewer_esc_action.clone()),
+            ("viewer_dock_size", self.viewer_dock_size.clone()),
+            (
+                "viewer_dock_autohide",
+                self.viewer_dock_autohide.to_string(),
+            ),
+            (
+                "viewer_dock_autohide_delay",
+                self.viewer_dock_autohide_delay.to_string(),
+            ),
+            ("viewer_dock_peek", self.viewer_dock_peek.to_string()),
+            (
+                "viewer_dock_keep_playing",
+                self.viewer_dock_keep_playing.to_string(),
+            ),
+            (
+                "viewer_dock_on_touch",
+                self.viewer_dock_on_touch.to_string(),
+            ),
+            ("viewer_pause_on_blur", self.viewer_pause_on_blur.to_string()),
+            (
+                "viewer_playback_rate",
+                self.viewer_playback_rate.to_string(),
+            ),
         ])
     }
 
@@ -753,6 +832,30 @@ impl AppSettings {
         }
         if let Some(value) = get("notifications_sound").and_then(|v| v.parse().ok()) {
             self.notifications_sound = value;
+        }
+        string!(viewer_close_action);
+        string!(viewer_esc_action);
+        string!(viewer_dock_size);
+        if let Some(value) = get("viewer_dock_autohide").and_then(|v| v.parse().ok()) {
+            self.viewer_dock_autohide = value;
+        }
+        if let Some(value) = get("viewer_dock_autohide_delay").and_then(|v| v.parse().ok()) {
+            self.viewer_dock_autohide_delay = value;
+        }
+        if let Some(value) = get("viewer_dock_peek").and_then(|v| v.parse().ok()) {
+            self.viewer_dock_peek = value;
+        }
+        if let Some(value) = get("viewer_dock_keep_playing").and_then(|v| v.parse().ok()) {
+            self.viewer_dock_keep_playing = value;
+        }
+        if let Some(value) = get("viewer_dock_on_touch").and_then(|v| v.parse().ok()) {
+            self.viewer_dock_on_touch = value;
+        }
+        if let Some(value) = get("viewer_pause_on_blur").and_then(|v| v.parse().ok()) {
+            self.viewer_pause_on_blur = value;
+        }
+        if let Some(value) = get("viewer_playback_rate").and_then(|v| v.parse().ok()) {
+            self.viewer_playback_rate = value;
         }
         if let Some(value) = get("panic_button_shortcut").or_else(|| get("boss_key_shortcut")) {
             if value == "Alt+X" {

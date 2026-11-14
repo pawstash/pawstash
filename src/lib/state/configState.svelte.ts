@@ -65,7 +65,17 @@ export class ConfigState {
     notifications_download_completed: true,
     notifications_download_progress: true,
     notifications_show_preview: true,
-    notifications_sound: false
+    notifications_sound: false,
+    viewer_close_action: 'close',
+    viewer_esc_action: 'same',
+    viewer_dock_size: 'medium',
+    viewer_dock_autohide: true,
+    viewer_dock_autohide_delay: 1,
+    viewer_dock_peek: 12,
+    viewer_dock_keep_playing: true,
+    viewer_dock_on_touch: true,
+    viewer_pause_on_blur: false,
+    viewer_playback_rate: 1
   });
 
   private loaded = false;
