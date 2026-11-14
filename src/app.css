@@ -392,6 +392,25 @@
     --on-media-rose: #ff8fa3;
     --on-media-rose-container: rgba(244, 63, 94, 0.32);
 
+    /* Player chrome always sits on media, so it never follows the page polarity. */
+    --player-ink: var(--on-media);
+    --player-ink-secondary: var(--on-media-secondary);
+    --player-scrim: var(--on-media-scrim);
+    --player-scrim-strong: var(--on-media-scrim-strong);
+    --player-state-hover: color-mix(in srgb, var(--on-media) 12%, transparent);
+    --player-state-pressed: color-mix(in srgb, var(--on-media) 20%, transparent);
+    --player-track: color-mix(in srgb, var(--on-media) 28%, transparent);
+    --player-track-buffer: color-mix(in srgb, var(--on-media) 42%, transparent);
+    --player-surface: color-mix(in srgb, var(--on-media) 6%, transparent);
+    /* Opaque media canvas: black in dark themes; light themes opt into the page surface. */
+    --player-backdrop: #000;
+    --player-fade-color: #000;
+    /* Seek is the primary rail; volume is a secondary, slimmer one. */
+    --player-seek-height: 4px;
+    --player-seek-height-active: 6px;
+    --player-volume-height: 2px;
+    --player-volume-height-active: 3px;
+
     --accent-primary: #ffb4a8;
     --accent-primary-hover: #f0a99e;
     --accent-on-primary: #561e17;
@@ -443,10 +462,12 @@
     --z-overlay: 100;
     --z-modal: 200;
     --z-dock: 999;
+    --z-mini-player: 1500;
     --z-bottom-sheet: 2100;
     --z-viewer: 2147483000;
     --z-tooltip: 2147483647;
-    --z-toast: 2200;
+    /* Feedback must stay visible over the viewer; it is the topmost app layer. */
+    --z-toast: 2147483002;
 
 
     --backdrop-blur: 24px;
@@ -636,6 +657,12 @@ select:focus-visible,
 [tabindex]:focus-visible {
   outline: 1.5px solid var(--accent-primary) !important;
   outline-offset: -1.5px !important;
+  box-shadow: none !important;
+}
+
+/* The viewer container is a focus host for keyboard shortcuts, not an interactive control. */
+.media-viewer[tabindex]:focus-visible {
+  outline: none !important;
   box-shadow: none !important;
 }
 
@@ -1602,6 +1629,39 @@ html.is-paint-selecting * {
   box-sizing: border-box;
 }
 
+/* Player menus float above the media viewer, which is the top app layer. */
+.popover-portal.player-settings-menu,
+.popover-portal.player-view-menu {
+  z-index: calc(var(--z-viewer) + 1) !important;
+}
+
+.player-menu-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 32px));
+}
+
+/* Icon buttons that sit on media, independent of the page polarity. */
+.btn.player-icon-btn {
+  color: var(--player-ink-secondary) !important;
+}
+
+.btn.player-icon-btn:hover {
+  background: var(--player-state-hover) !important;
+  color: var(--player-ink) !important;
+}
+
+.btn.player-icon-btn[aria-expanded='true'] {
+  background: var(--player-state-pressed) !important;
+  color: var(--player-ink) !important;
+}
+
+.btn.player-icon-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .floating-item {
   display: flex;
   align-items: center;
@@ -2012,4 +2072,20 @@ html.webkitgtk .page-content * {
 html.webkitgtk .grid-tile-blur-placeholder,
 html.webkitgtk .grid-tile-media.placeholder-blur {
   filter: none !important;
+}
+
+/* Light theme: the viewer backdrop follows the page surface, so the media chrome flips
+   to page ink and light fades instead of forcing white-on-black. */
+html.light {
+  --player-backdrop: var(--surface);
+  --player-ink: var(--text-primary);
+  --player-ink-secondary: var(--text-secondary);
+  --player-scrim: color-mix(in srgb, var(--surface) 72%, transparent);
+  --player-scrim-strong: color-mix(in srgb, var(--surface) 88%, transparent);
+  --player-state-hover: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --player-state-pressed: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  --player-track: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  --player-track-buffer: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  --player-surface: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --player-fade-color: var(--surface);
 }

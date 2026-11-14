@@ -50,6 +50,7 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { syncState } from '$lib/state/syncState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
+import WindowControls from '$lib/components/layout/WindowControls.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
   import { apiGetSettings, apiGetPendingDeepLink, apiSetAppHidden, apiShowMainWindow } from '$lib/utils/ipc';
@@ -75,6 +76,7 @@
   import { initRestartNotice } from '$lib/utils/restartNotice';
   import Toaster from '$lib/components/ui/Toaster.svelte';
   import ContextMenu from '$lib/components/ui/ContextMenu.svelte';
+  import ViewerHost from '$lib/components/content/ViewerHost.svelte';
 
   navigationState.init();
   preloadView(navigationState.route.name);
@@ -218,15 +220,24 @@
   <Toaster />
   <ContextMenu />
 
+  {#if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'windows'}
+    <div class="app-window-controls is-windows">
+      <WindowControls variant="windows" />
+    </div>
+  {:else if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'macos'}
+    <div class="app-window-controls is-macos">
+      <WindowControls variant="macos" />
+    </div>
+  {/if}
+
   {#if !layoutState.isMobile}
-    {#if navigationState.route.name === 'settings'}
-      <SettingsNav />
-    {:else}
-      <SidebarNav />
-    {/if}
+    <SidebarNav />
   {/if}
 
   <div class="app-content flex-1 flex overflow-hidden relative min-w-0">
+    {#if !layoutState.isMobile && navigationState.route.name === 'settings'}
+      <SettingsNav />
+    {/if}
     <main class="flex-1 flex overflow-hidden w-full h-full">
       {#key navigationState.entryKey}
         {#if navigationState.route.name === 'feed'}
@@ -297,6 +308,7 @@
 
   <UpdateModal />
   <NoticeModal />
+  <ViewerHost />
   {#if scaleIndicator.kind}
     <div class="scale-indicator" role="status">
       {#if scaleIndicator.kind === 'grid'}<IconGrid />{:else}<IconWindow />{/if}
@@ -306,3 +318,38 @@
   <SubscriptionModal />
   <UnsubscribeDialog />
 </div>
+
+<style>
+  /* The one and only window-controls instance: fixed above every app layer, hidden by
+     native fullscreen because only the fullscreen element is painted. */
+  .app-window-controls {
+    position: fixed;
+    z-index: calc(var(--z-viewer) + 10);
+    display: flex;
+  }
+
+  .app-window-controls.is-windows {
+    top: 0;
+    right: 0;
+    height: var(--toolbar-height);
+  }
+
+  .app-window-controls.is-macos {
+    top: calc(var(--edge-top, 0px) + (var(--toolbar-height) - 12px) / 2);
+    left: calc(var(--edge-left, 0px) + 16px);
+  }
+
+  :global(html:has(.media-viewer)) .app-window-controls :global(.caption-btn) {
+    color: var(--player-ink-secondary);
+  }
+
+  :global(html:has(.media-viewer)) .app-window-controls :global(.caption-btn:hover) {
+    background: var(--player-state-hover);
+    color: var(--player-ink);
+  }
+
+  :global(html:has(.media-viewer)) .app-window-controls :global(.caption-btn.is-close:hover) {
+    background: var(--status-error);
+    color: var(--on-status);
+  }
+</style>

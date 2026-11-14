@@ -24,13 +24,13 @@
 
 <script lang="ts">
   import { sanitizeEmbedHtml } from './RichContent.svelte';
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { portal } from '$lib/actions/portal';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import { formatBytes, formatDuration } from '$lib/utils/formatters';
-  import { tooltip } from '$lib/motion';
+  import { tooltip, ripple } from '$lib/motion';
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey } from '$lib/utils/panic';
   import { mediaRegistry } from '$lib/media/mediaRegistry';
@@ -41,12 +41,20 @@
   import { openDownloadedFile } from '$lib/utils/ipc';
   import { getVideoThumbnail, isFrameBlankOrBlack } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
+  import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
+  import MenuList, { type MenuItem } from '$lib/components/ui/MenuList.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
+  import IconMoreVertical from '~icons/fluent/more-vertical-24-filled';
   import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
   import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
+  import IconChevronUp from '~icons/fluent/chevron-up-24-regular';
+  import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import IconZoomIn from '~icons/fluent/zoom-in-24-regular';
   import IconZoomOut from '~icons/fluent/zoom-out-24-regular';
+  import IconRotateLeft from '~icons/fluent/arrow-rotate-counterclockwise-24-regular';
+  import IconRotateRight from '~icons/fluent/arrow-rotate-clockwise-24-regular';
   import IconArrowReset from '~icons/fluent/arrow-reset-24-regular';
+  import IconArrowFit from '~icons/fluent/arrow-fit-24-regular';
   import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
   import IconFullscreenExit from '~icons/fluent/full-screen-minimize-24-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
@@ -57,8 +65,14 @@
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconVideoOff from '~icons/fluent/video-off-24-regular';
-  import IconPlay from '~icons/fluent/play-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
+  import IconPlay from '~icons/fluent/play-24-filled';
+  import IconDock from '~icons/fluent/rectangle-landscape-24-regular';
+  import PlayerControls from './PlayerControls.svelte';
+  import MaterialShape from '$lib/components/ui/MaterialShape.svelte';
+  import { configState } from '$lib/state/configState.svelte';
+  import { PLAYBACK_RATES, playerPrefs } from '$lib/state/playerPrefs.svelte';
+  import { layoutState } from '$lib/state/layoutState.svelte';
 
   interface Props {
     items: MediaViewerItem[];
@@ -66,12 +80,14 @@
     initialTime?: number;
     originRect?: DOMRect | null;
     onclose: (finalIndex?: number, finalTime?: number) => void;
+    ondock?: (finalIndex?: number, finalTime?: number) => void;
+    onindexchange?: (index: number) => void;
     ondownload?: (item: MediaViewerItem, index: number) => void | Promise<void>;
     onopenpost?: (item: MediaViewerItem, index: number) => void;
     ondelete?: (item: MediaViewerItem, index: number) => void | Promise<void>;
   }
 
-  let { items, initialIndex = 0, initialTime = 0, originRect = null, onclose, ondownload, onopenpost, ondelete }: Props = $props();
+  let { items, initialIndex = 0, initialTime = 0, originRect = null, onclose, ondock, onindexchange, ondownload, onopenpost, ondelete }: Props = $props();
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
@@ -89,7 +105,7 @@
 
   $effect(() => {
     if (items.length === 0) {
-      close();
+      close(true);
     } else if (index >= items.length) {
       index = items.length - 1;
     }
@@ -105,6 +121,7 @@
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);
+  let rotation = $state(0);
   let swipeOffset = $state(0);
   let swipeOpacity = $state(1);
   let dismissOffsetY = $state(0);
@@ -118,11 +135,23 @@
   let dismissOpacity = $derived(Math.max(0, 1 - Math.abs(dismissOffsetY) / 420));
   let isGestureDragging = $derived(!isDismissing && (isSwiping || dismissOffsetY !== 0));
   let controlsVisible = $state(true);
+  let filmstripOpen = $state(false);
   let fullscreen = $state(false);
+  let closeAction = $derived(configState.settings.viewer_close_action || 'close');
+  let escAction = $derived(configState.settings.viewer_esc_action || 'same');
+  let lastReportedIndex = -1;
+
+  $effect(() => {
+    if (index !== lastReportedIndex) {
+      lastReportedIndex = index;
+      onindexchange?.(index);
+    }
+  });
   let root = $state<HTMLDivElement>();
   let stage = $state<HTMLDivElement>();
   let fitFrame = $state<HTMLDivElement>();
   let mediaElement = $state<HTMLImageElement>();
+  let mediaBoxEl = $state<HTMLDivElement>();
   let loadedWidth = $state(0);
   let loadedHeight = $state(0);
   let frameWidth = $state(0);
@@ -136,9 +165,53 @@
       }
     }
   });
+  let lastViewerClickAt = 0;
   let controlsTimer: ReturnType<typeof setTimeout> | undefined;
   let closing = false;
   let hasAppliedInitialTime = false;
+
+  let playerEl = $state<HTMLMediaElement | null>(null);
+  let playerPlaying = $state(false);
+  let playerBuffering = $state(false);
+  let playerDuration = $state(0);
+
+  function syncPlayer() {
+    if (!playerEl) return;
+    playerPlaying = !playerEl.paused;
+    if (Number.isFinite(playerEl.duration) && playerEl.duration > 0) playerDuration = playerEl.duration;
+  }
+
+  function togglePlayback() {
+    if (!currentPlayable) return;
+    const element = playerEl ?? currentElement();
+    if (!element) return;
+    if (element.paused) void element.play().catch(() => {});
+    else element.pause();
+    if (controlsVisible) registerActivity();
+  }
+
+  function toggleMuted() {
+    if (!currentPlayable) return;
+    const element = playerEl ?? currentElement();
+    if (!element) return;
+    element.muted = !element.muted;
+    if (!element.muted && element.volume === 0) element.volume = 0.5;
+    syncPlayer();
+  }
+
+  function seekBy(seconds: number) {
+    const element = playerEl;
+    if (!element) return;
+    element.currentTime = Math.max(0, Math.min(playerDuration || element.duration || 0, element.currentTime + seconds));
+  }
+
+  function changeVolume(delta: number) {
+    const element = playerEl;
+    if (!element) return;
+    element.volume = Math.max(0, Math.min(1, element.volume + delta));
+    element.muted = element.volume === 0;
+    syncPlayer();
+  }
 
   function growFromOrigin() {
     const origin = originRect;
@@ -169,6 +242,10 @@
   }
 
   function handleMediaAttached(element: HTMLMediaElement) {
+    playerPrefs.initFromSettings(configState.settings.viewer_playback_rate);
+    applyPlaybackPrefs(element);
+    playerEl = element;
+    syncPlayer();
     if (element instanceof HTMLVideoElement) {
       if (element.error && current) {
         element.pause();
@@ -303,16 +380,40 @@
   });
 
   let currentId = $derived(current?.id);
-  let currentWidth = $derived(current?.width || mediaInfoState.info(current?.id || current?.url)?.width || loadedWidth);
-  let currentHeight = $derived(current?.height || mediaInfoState.info(current?.id || current?.url)?.height || loadedHeight);
-  let currentResolution = $derived(currentWidth > 0 && currentHeight > 0 ? `${currentWidth} × ${currentHeight}` : '');
+  let currentFailed = $derived(
+    Boolean(
+      current &&
+        current.kind === 'video' &&
+        (!current.url ||
+          current.isUnarchived ||
+          current.isUnavailable ||
+          videoErrors[index] ||
+          (isH265Video(current.name, current.url) && !supportsHevcPlayback()) ||
+          getUnsupportedContainerFormat(current.name, current.url))
+    )
+  );
+  let currentPlayable = $derived(
+    Boolean(
+      current &&
+        (current.kind === 'video' || current.kind === 'audio') &&
+        !current.html &&
+        !currentFailed &&
+        !current.isUnarchived &&
+        Boolean(current.url)
+    )
+  );
+  let canDockNow = $derived(
+    Boolean(ondock) &&
+      items.length > 0 &&
+      !current?.html
+  );
   let currentDownloadActive = $derived(Boolean(current && ['queued', 'resolving', 'downloading', 'paused', 'verifying'].includes(current.downloadStatus || '')));
   let currentDownloaded = $derived(current?.downloadStatus === 'completed');
   let currentDownloadBytes = $derived(Math.max(current?.totalBytes || 0, current?.downloadedBytes || 0, current?.size || 0));
   let currentDownloadProgress = $derived(current?.totalBytes ? Math.min(100, Math.round((current.downloadedBytes || 0) / current.totalBytes * 100)) : 0);
-  let transform = $derived(`translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`);
+  let transform = $derived(`translate3d(${translateX}px, ${translateY}px, 0) scale(${scale}) rotate(${rotation}deg)`);
+  let zoomLabel = $derived(scale <= MIN_SCALE + 0.001 ? i18n.t('post.viewer_fit') : `${Math.round(scale * 100)}%`);
   let frameTransform = $derived(`translate3d(${swipeOffset}px, ${dismissOffsetY}px, 0) scale(${dismissScale})`);
-  let frameOpacity = $derived(swipeOpacity);
 
   let filmstripContainer = $state<HTMLDivElement>();
   let thumbnailRefs = $state<Record<number, HTMLButtonElement>>({});
@@ -559,6 +660,7 @@
     scale = MIN_SCALE;
     translateX = 0;
     translateY = 0;
+    rotation = 0;
     swipeOffset = 0;
     swipeOpacity = 1;
     dismissOffsetY = 0;
@@ -566,38 +668,29 @@
     pointers.clear();
   }
 
-  function imageContentSize(): { width: number; height: number } {
-    const boxWidth = mediaElement?.clientWidth ?? 0;
-    const boxHeight = mediaElement?.clientHeight ?? 0;
-    const naturalWidth = mediaElement?.naturalWidth ?? 0;
-    const naturalHeight = mediaElement?.naturalHeight ?? 0;
-    if (!boxWidth || !boxHeight || !naturalWidth || !naturalHeight) {
-      return { width: boxWidth, height: boxHeight };
-    }
-    const boxRatio = boxWidth / boxHeight;
-    const imageRatio = naturalWidth / naturalHeight;
-    return imageRatio > boxRatio
-      ? { width: boxWidth, height: boxWidth / imageRatio }
-      : { width: boxHeight * imageRatio, height: boxHeight };
+  function rotateBy(delta: number) {
+    if (!current || (current.kind !== 'image' && current.kind !== 'video')) return;
+    rotation = (rotation + delta + 360) % 360;
+    requestAnimationFrame(() => clampTranslation());
   }
 
   function clampTranslation(nextX = translateX, nextY = translateY) {
-    if (!fitFrame || !mediaElement || scale <= MIN_SCALE) {
+    if (!fitFrame || !mediaBoxEl || scale <= MIN_SCALE) {
       translateX = 0;
       translateY = 0;
       return;
     }
-    const content = mediaBox
-      ? { width: mediaElement.clientWidth, height: mediaElement.clientHeight }
-      : imageContentSize();
-    const maxX = Math.max(0, (content.width * scale - fitFrame.clientWidth) / 2);
-    const maxY = Math.max(0, (content.height * scale - fitFrame.clientHeight) / 2);
+    const rotated = rotation % 180 !== 0;
+    const contentWidth = rotated ? mediaBoxEl.clientHeight : mediaBoxEl.clientWidth;
+    const contentHeight = rotated ? mediaBoxEl.clientWidth : mediaBoxEl.clientHeight;
+    const maxX = Math.max(0, (contentWidth * scale - fitFrame.clientWidth) / 2);
+    const maxY = Math.max(0, (contentHeight * scale - fitFrame.clientHeight) / 2);
     translateX = Math.max(-maxX, Math.min(maxX, nextX));
     translateY = Math.max(-maxY, Math.min(maxY, nextY));
   }
 
   function setScale(nextScale: number, clientX?: number, clientY?: number) {
-    if (current?.kind !== 'image') return;
+    if (!current || (current.kind !== 'image' && current.kind !== 'video')) return;
     const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, nextScale));
     if (!fitFrame || clamped === scale) return;
 
@@ -722,19 +815,74 @@
     void ondownload?.(current, index);
   }
 
+  let topActions = $derived.by<MenuItem[]>(() => {
+    if (!current) return [];
+    const actions: MenuItem[] = [];
+    if (ondownload) {
+      actions.push({
+        label: i18n.t(currentDownloaded ? 'post.downloaded' : currentDownloadActive ? 'post.downloading' : 'post.download'),
+        icon: currentDownloaded ? IconCheck : currentDownloadActive ? IconLoading : IconDownload,
+        detail: currentDownloadActive && currentDownloadProgress
+          ? `${currentDownloadProgress}%`
+          : currentDownloadBytes
+            ? formatBytes(currentDownloadBytes)
+            : undefined,
+        detailMono: true,
+        disabled: currentDownloadActive || currentDownloaded,
+        onclick: requestDownload
+      });
+    }
+    if (onopenpost) {
+      actions.push({
+        label: i18n.t('downloads.open_in_post'),
+        icon: IconOpen,
+        onclick: () => onopenpost?.(current!, index)
+      });
+    }
+    if (ondelete) {
+      actions.push({
+        label: i18n.t('downloads.remove'),
+        icon: IconDelete,
+        danger: true,
+        onclick: () => void handleDelete()
+      });
+    }
+    return actions;
+  });
+
   function registerActivity() {
     controlsVisible = true;
     if (controlsTimer) clearTimeout(controlsTimer);
     controlsTimer = setTimeout(() => {
-      if (document.activeElement?.closest('.media-viewer-controls')) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest('.media-viewer-controls') && active.matches(':focus-visible')) return;
+      if (filmstripOpen) return;
+      if (document.querySelector('.player-settings-menu, .player-view-menu')) return;
+      if (document.querySelector('.media-viewer-topbar:hover, .media-viewer-bottom:hover')) return;
+      if (currentPlayable && !playerPlaying) return;
       controlsVisible = false;
     }, 3200);
   }
 
+  function toggleFilmstrip() {
+    filmstripOpen = !filmstripOpen;
+    if (controlsVisible) registerActivity();
+  }
+
+  $effect(() => {
+    if (!currentPlayable) return;
+    if (!playerPlaying) {
+      if (controlsTimer) clearTimeout(controlsTimer);
+      controlsVisible = true;
+    } else {
+      registerActivity();
+    }
+  });
+
   let wheelNavThrottle = 0;
 
   function handleWheel(event: WheelEvent) {
-    if (current?.kind === 'image' && (event.ctrlKey || scale > MIN_SCALE)) {
+    if ((current?.kind === 'image' || current?.kind === 'video') && (event.ctrlKey || scale > MIN_SCALE)) {
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.002);
       setScale(scale * factor, event.clientX, event.clientY);
@@ -756,7 +904,7 @@
       }
     }
 
-    if (current?.kind === 'image') {
+    if (current?.kind === 'image' || current?.kind === 'video') {
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.0015);
       setScale(scale * factor, event.clientX, event.clientY);
@@ -765,6 +913,11 @@
   }
 
   function handleDoubleClick(event: MouseEvent) {
+    if (currentPlayable) {
+      event.preventDefault();
+      void toggleFullscreen();
+      return;
+    }
     if (current?.kind !== 'image') return;
     setScale(scale > 1.05 ? 1 : 2.5, event.clientX, event.clientY);
     if (controlsVisible) registerActivity();
@@ -805,7 +958,7 @@
     pointers.set(event.pointerId, next);
     const after = [...pointers.values()];
 
-    if (after.length >= 2 && current?.kind === 'image') {
+    if (after.length >= 2 && (current?.kind === 'image' || current?.kind === 'video')) {
       const [oldA, oldB] = before;
       const [newA, newB] = after;
       const oldDistance = Math.hypot(oldB.x - oldA.x, oldB.y - oldA.y);
@@ -824,7 +977,7 @@
     const deltaX = event.clientX - previous.x;
     const deltaY = event.clientY - previous.y;
 
-    if (scale > MIN_SCALE + 0.05 && current?.kind === 'image') {
+    if (scale > MIN_SCALE + 0.05 && (current?.kind === 'image' || current?.kind === 'video')) {
       clampTranslation(translateX + deltaX, translateY + deltaY);
       event.preventDefault();
       return;
@@ -933,22 +1086,59 @@
     }
   }
 
-  function close() {
+  function applyPlaybackPrefs(element: HTMLMediaElement) {
+    playerPrefs.apply(element);
+  }
+
+  function currentElement(): HTMLMediaElement | undefined {
+    return current ? mediaRegistry.element(current.id || current.url) : undefined;
+  }
+
+  function setPlaybackRate(rate: number) {
+    playerPrefs.setRate(rate);
+    const element = currentElement();
+    if (element) element.playbackRate = playerPrefs.rate;
+  }
+
+  function cyclePlaybackRate(direction: 1 | -1) {
+    const at = PLAYBACK_RATES.findIndex((rate) => Math.abs(rate - playerPrefs.rate) < 0.01);
+    const nextIndex = at < 0 ? PLAYBACK_RATES.indexOf(1) : Math.max(0, Math.min(PLAYBACK_RATES.length - 1, at + direction));
+    setPlaybackRate(PLAYBACK_RATES[nextIndex]);
+  }
+
+  function toggleLoop() {
+    playerPrefs.setLoop(!playerPrefs.loop);
+    const element = currentElement();
+    if (element) element.loop = playerPrefs.loop;
+  }
+
+  function leave(action: 'close' | 'dock') {
     if (closing) return;
     closing = true;
-    const finalTime = current ? mediaRegistry.element(current.id || current.url)?.currentTime : undefined;
+    const finalTime = currentElement()?.currentTime;
+    const canDock = action === 'dock' && Boolean(ondock) && items.length > 0;
+    const exit = () => {
+      if (canDock) ondock?.(index, finalTime);
+      else onclose(index, finalTime);
+    };
     if (document.fullscreenElement === root) {
-      void document.exitFullscreen().finally(() => onclose(index, finalTime));
+      void document.exitFullscreen().finally(exit);
     } else {
-      onclose(index, finalTime);
+      exit();
     }
+  }
+
+  function close(force = false) {
+    // Swipe, Back and the explicit close action honour the touch setting; the dock button does not.
+    const dockBlockedOnTouch = layoutState.isMobile && !(configState.settings.viewer_dock_on_touch ?? true);
+    leave(force || dockBlockedOnTouch ? 'close' : closeAction === 'dock' ? 'dock' : 'close');
   }
 
   function handleKeydown(event: KeyboardEvent) {
     if (handleGlobalPanicKey(event)) return;
 
     if (event.key === 'Tab' && root) {
-      const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), video[controls], audio[controls], [tabindex]:not([tabindex="-1"])')];
+      const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter((el) => !el.closest('[inert]') && el.getClientRects().length > 0);
       if (focusable.length > 0) {
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
@@ -966,16 +1156,36 @@
     const target = event.target;
     const nativeMediaControl = target instanceof HTMLVideoElement || target instanceof HTMLAudioElement;
     if (nativeMediaControl && !['Escape', 'f', 'F'].includes(event.key)) return;
+    const interactive = target instanceof Element ? target.closest('button, a, input, select, textarea, [role="menuitem"]') : null;
+    if (interactive && event.key === ' ') return;
 
     if (event.key === 'Escape') {
       event.preventDefault();
-      close();
+      close(escAction === 'close');
+    } else if (event.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      if (ondock && items.length > 0) leave('dock');
+    } else if (event.key === ']' || event.key === '[') {
+      event.preventDefault();
+      cyclePlaybackRate(event.key === ']' ? 1 : -1);
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      navigate(-1, false);
+      if (currentPlayable) seekBy(-5);
+      else navigate(-1, false);
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
-      navigate(1, false);
+      if (currentPlayable) seekBy(5);
+      else navigate(1, false);
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      if (currentPlayable) {
+        event.preventDefault();
+        changeVolume(event.key === 'ArrowUp' ? 0.05 : -0.05);
+      }
+    } else if (event.key.toLowerCase() === 'j' || event.key.toLowerCase() === 'l') {
+      if (currentPlayable) {
+        event.preventDefault();
+        seekBy(event.key.toLowerCase() === 'j' ? -10 : 10);
+      }
     } else if (event.key === '+' || event.key === '=') {
       event.preventDefault();
       setScale(scale * 1.25);
@@ -988,6 +1198,12 @@
     } else if (event.key.toLowerCase() === 'f') {
       event.preventDefault();
       void toggleFullscreen();
+    } else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      togglePlayback();
+    } else if (event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      toggleMuted();
     }
     if (controlsVisible) registerActivity();
   }
@@ -998,14 +1214,33 @@
       return;
     }
     const target = event.target as HTMLElement;
-    if (target.closest('button, input, select, textarea, video, audio, .media-viewer-controls')) return;
-    controlsVisible = !controlsVisible;
-    if (controlsVisible) {
+    if (target.closest('button, input, select, textarea, .media-viewer-controls, .viewer-filmstrip-drawer')) return;
+    if (scale > MIN_SCALE && (current?.kind === 'video' || current?.kind === 'image')) {
       registerActivity();
-    } else if (controlsTimer) {
-      clearTimeout(controlsTimer);
+      return;
     }
+    if (currentPlayable) {
+      // Act on the first click; the second click of a double-click is swallowed so the
+      // following fullscreen toggle does not also flip playback back.
+      const now = performance.now();
+      if (now - lastViewerClickAt < 260) {
+        lastViewerClickAt = now;
+        return;
+      }
+      lastViewerClickAt = now;
+      togglePlayback();
+      controlsVisible = true;
+      registerActivity();
+      return;
+    }
+    controlsVisible = true;
+    registerActivity();
   }
+
+  $effect(() => {
+    void currentId;
+    void playerPlaying;
+  });
 
   $effect(() => {
     index;
@@ -1013,7 +1248,10 @@
     resetTransform();
     loadedWidth = 0;
     loadedHeight = 0;
-    if (controlsVisible) {
+    playerDuration = current?.duration || 0;
+    playerPlaying = false;
+    playerBuffering = false;
+    if (untrack(() => controlsVisible)) {
       registerActivity();
     }
 
@@ -1030,13 +1268,21 @@
     index = Math.max(0, Math.min(initialIndex, items.length - 1));
     const previousOverflow = document.documentElement.style.overflow;
     const previousFocus = document.activeElement as HTMLElement | null;
-    const backgroundElements = [...document.body.children]
-      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== root)
-      .map((element) => ({ element, inert: element.inert }));
+    // The app frame (title bar + sidebar) stays live above the viewer; only the page
+    // content underneath is deactivated.
+    const pageMain = document.querySelector('main');
+    const backgroundElements: { element: HTMLElement; inert: boolean }[] = pageMain
+      ? [{ element: pageMain, inert: pageMain.inert }]
+      : [];
     for (const { element } of backgroundElements) element.inert = true;
     document.documentElement.style.overflow = 'hidden';
     const handleFullscreenChange = () => fullscreen = document.fullscreenElement === root;
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    const handleWindowBlur = () => {
+      if (!configState.settings.viewer_pause_on_blur) return;
+      currentElement()?.pause();
+    };
+    window.addEventListener('blur', handleWindowBlur);
     void tick().then(() => root?.focus());
     void tick().then(growFromOrigin);
     registerActivity();
@@ -1044,6 +1290,7 @@
     return () => {
       document.documentElement.style.overflow = previousOverflow;
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('blur', handleWindowBlur);
       if (controlsTimer) clearTimeout(controlsTimer);
       for (const { element, inert } of backgroundElements) element.inert = inert;
       previousFocus?.focus();
@@ -1062,60 +1309,44 @@
   aria-modal="true"
   aria-label={i18n.t('post.viewer_title')}
   tabindex="-1"
-  onmousemove={() => { if (controlsVisible) registerActivity(); }}
+  onmousemove={() => registerActivity()}
   onclick={handleViewerClick}
   onkeydown={handleKeydown}
 >
-  <header class="media-viewer-topbar media-viewer-controls">
-    <div class="media-viewer-identity">
-      <strong use:tooltip={current?.name || i18n.t('post.file')}>{current?.name || i18n.t('post.file')}</strong>
-      <span>{currentResolution ? `${currentResolution} · ` : ''}{index + 1} / {items.length}{current?.size ? ` · ${formatBytes(current.size)}` : ''}</span>
-    </div>
-
+  <header class="media-viewer-topbar media-viewer-controls" class:has-window-controls={layoutState.effectiveTitlebarStyle === 'windows' && !fullscreen && !layoutState.isMobile}>
+    {#if current}
+      <strong class="viewer-topbar-title">{current.name || i18n.t('post.file')}</strong>
+    {/if}
     <div class="media-viewer-actions">
-      {#if current?.kind === 'image'}
-        <Button variant="ghost" class="viewer-icon-btn viewer-zoom-btn" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} title={i18n.t('post.viewer_zoom_out')} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
-        <button class="zoom-value viewer-zoom-btn" type="button" onclick={resetTransform} use:tooltip={i18n.t('post.viewer_reset')} aria-label={i18n.t('post.viewer_reset')}>{Math.round(scale * 100)}%</button>
-        <Button variant="ghost" class="viewer-icon-btn viewer-zoom-btn" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} title={i18n.t('post.viewer_zoom_in')} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
+      {#if topActions.length > 0}
+        <PopoverMenu align="right" width="auto" menuClass="player-settings-menu">
+          {#snippet trigger({ toggle, open })}
+            <Button
+              variant="ghost"
+              class="btn-icon player-icon-btn"
+              onclick={toggle}
+              title={i18n.t('common.more')}
+              aria-label={i18n.t('common.more')}
+              aria-haspopup="menu"
+              aria-expanded={open}
+            >
+              <IconMoreVertical />
+            </Button>
+          {/snippet}
+          {#snippet children({ close: closeMenu })}
+            <div class="player-menu-list">
+              <MenuList items={topActions} onrun={closeMenu} />
+            </div>
+          {/snippet}
+        </PopoverMenu>
       {/if}
-      {#if ondownload && current}
-        <Button
-          variant="ghost"
-          class={`viewer-icon-btn viewer-download-icon${currentDownloaded ? ' is-downloaded' : ''}${currentDownloadActive ? ' is-downloading' : ''}`}
-          onclick={requestDownload}
-          disabled={currentDownloadActive}
-          title={i18n.t(currentDownloaded ? 'post.downloaded' : currentDownloadActive ? 'post.downloading' : 'post.download')}
-          aria-label={i18n.t(currentDownloaded ? 'post.downloaded' : currentDownloadActive ? 'post.downloading' : 'post.download')}
-        >
-          {#if currentDownloaded}<IconCheck />{:else if currentDownloadActive}<IconLoading />{:else}<IconDownload />{/if}
-        </Button>
-      {/if}
-      {#if onopenpost && current}
-        <Button
-          variant="ghost"
-          class="viewer-icon-btn"
-          onclick={() => onopenpost(current, index)}
-          tooltip={i18n.t('downloads.open_in_post')}
-          aria-label={i18n.t('downloads.open_in_post')}
-        >
-          <IconOpen />
-        </Button>
-      {/if}
-      {#if ondelete && current}
-        <Button
-          variant="ghost"
-          class="viewer-icon-btn viewer-delete-btn"
-          onclick={handleDelete}
-          tooltip={i18n.t('downloads.remove')}
-          aria-label={i18n.t('downloads.remove')}
-        >
-          <IconDelete />
-        </Button>
-      {/if}
-      <Button variant="ghost" class="viewer-icon-btn viewer-fullscreen-btn" onclick={toggleFullscreen} title={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')} aria-label={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')}>
-        {#if fullscreen}<IconFullscreenExit />{:else}<IconFullscreen />{/if}
-      </Button>
-      <Button variant="ghost" class="viewer-icon-btn viewer-close-btn" onclick={close} title={i18n.t('post.viewer_close')} aria-label={i18n.t('post.viewer_close')}><IconDismiss /></Button>
+      <Button
+        variant="ghost"
+        class="btn-icon player-icon-btn viewer-close-btn"
+        onclick={() => close()}
+        title={i18n.t('post.viewer_close')}
+        aria-label={i18n.t('post.viewer_close')}
+      ><IconDismiss /></Button>
     </div>
   </header>
 
@@ -1142,14 +1373,16 @@
         class:is-dragging={isGestureDragging}
         class:file-frame={!['image', 'video'].includes(current.kind)}
         style:transform={frameTransform}
-        style:opacity={frameOpacity}
+        style:opacity={swipeOpacity}
       >
         {#if current.kind === 'image'}
           {#key current?.id || index}
             <div
+              bind:this={mediaBoxEl}
               class="media-box"
               style:width={mediaBox ? `${mediaBox.width}px` : '100%'}
               style:height={mediaBox ? `${mediaBox.height}px` : '100%'}
+              style:transform
             >
               <img
                 bind:this={mediaElement}
@@ -1159,7 +1392,6 @@
                 src={imageDisplaySrc || current.url || current.poster}
                 alt={current.name}
                 draggable="false"
-                style:transform
                 onload={handleImageLoad}
                 onerror={handleImageError}
               />
@@ -1176,15 +1408,12 @@
           </div>
         {:else if current.kind === 'video' && (!current.url || current.isUnarchived || current.isUnavailable || videoErrors[index] || (isH265Video(current?.name, current?.url) && !supportsHevcPlayback()) || getUnsupportedContainerFormat(current?.name, current?.url))}
           {@const failure = !current.url ? { preset: 'unavailable' as const } : current.isUnarchived ? { preset: 'unarchived' as const } : current.isUnavailable ? { preset: 'unavailable' as const } : (isH265Video(current?.name, current?.url) && !supportsHevcPlayback() ? { preset: 'unsupported_codec' as const, format: 'H.265 / HEVC' } : (videoErrors[index] || { preset: 'unsupported_format' as const, format: getUnsupportedContainerFormat(current?.name, current?.url) || undefined }))}
-          <div
-            class="viewer-file-state"
-            
-          >
-            <IconVideoOff class="w-12 h-12 text-ink/50 mb-2" />
-            <strong class="text-ink text-base font-semibold">{current.name}</strong>
+          <div class="viewer-file-state">
+            <IconVideoOff class="w-12 h-12 text-[var(--player-ink-secondary)] opacity-50 mb-2" />
+            <strong class="text-[var(--player-ink)] text-base font-medium">{current.name}</strong>
             {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
             {#if failure.preset === 'unsupported_format'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">
                 {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(current.name) })}
               </p>
               {#if currentDownloaded && current?.downloadedPath}
@@ -1193,10 +1422,10 @@
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
               {:else}
-                <p class="text-ink/50 text-xs mt-1">{i18n.t('post.unsupported_format_hint')}</p>
+                <p class="text-[var(--player-ink-secondary)] opacity-50 text-xs mt-1">{i18n.t('post.unsupported_format_hint')}</p>
               {/if}
             {:else if failure.preset === 'unsupported_codec'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
               {#if currentDownloaded && current?.downloadedPath}
                 <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
@@ -1204,11 +1433,11 @@
                 </Button>
               {/if}
             {:else if failure.preset === 'network'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.network_stream_error')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{i18n.t('post.network_stream_error')}</p>
             {:else if failure.preset === 'decode'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.decode_error')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{i18n.t('post.decode_error')}</p>
               {#if failure.message}
-                <p class="text-ink/50 font-mono text-xs mt-1">{failure.message}</p>
+                <p class="text-[var(--player-ink-secondary)] opacity-50 font-mono text-xs mt-1">{failure.message}</p>
               {/if}
               {#if currentDownloaded && current?.downloadedPath}
                 <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
@@ -1217,30 +1446,32 @@
                 </Button>
               {/if}
             {:else if failure.preset === 'forbidden' || failure.httpStatus === 403}
-              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden')}</p>
-              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
+              <p class="text-[var(--status-warning)] font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden')}</p>
+              <p class="text-[var(--player-ink-secondary)] opacity-70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
             {:else if failure.preset === 'not_found' || failure.httpStatus === 404}
               <p class="text-[var(--status-error)] font-medium text-base text-center mt-2">{i18n.t('post.error_not_found')}</p>
-              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
+              <p class="text-[var(--player-ink-secondary)] opacity-70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
             {:else if failure.preset === 'rate_limited' || failure.httpStatus === 429}
-              <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited')}</p>
-              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
+              <p class="text-[var(--status-warning)] font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited')}</p>
+              <p class="text-[var(--player-ink-secondary)] opacity-70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
             {:else if failure.preset === 'server_error' || (failure.httpStatus && failure.httpStatus >= 500)}
               <p class="text-[var(--status-error)] font-medium text-base text-center mt-2">{failure.message || i18n.t('post.error_server')}</p>
-              <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
+              <p class="text-[var(--player-ink-secondary)] opacity-70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
             {:else if failure.preset === 'unarchived'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
             {:else if failure.preset === 'unavailable'}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{i18n.t('post.cloud_file_unavailable')}</p>
             {:else}
-              <p class="text-ink/80 text-sm max-w-md text-center mt-2">{failure.message || i18n.t('post.video_load_failed')}</p>
+              <p class="text-[var(--player-ink-secondary)] text-sm max-w-md text-center mt-2">{failure.message || i18n.t('post.video_load_failed')}</p>
             {/if}
           </div>
         {:else if current.kind === 'video'}
           <div
+            bind:this={mediaBoxEl}
             class="media-box"
             style:width={mediaBox ? `${mediaBox.width}px` : '100%'}
             style:height={mediaBox ? `${mediaBox.height}px` : '100%'}
+            style:transform
           >
             <MediaSurface
               mediaKey={current.id || current.url}
@@ -1249,9 +1480,23 @@
               poster={videoPoster(current.poster || videoThumbnails[index])}
               autoplay
               resume
+              priority
+              controls={false}
               onmedia={handleMediaAttached}
-              onplaying={handleMainVideoLoaded}
+              onplaying={(e) => {
+                playerBuffering = false;
+                handleMainVideoLoaded(e);
+              }}
+              oncanplay={() => (playerBuffering = false)}
+              onwaiting={() => (playerBuffering = true)}
+              onstalled={() => (playerBuffering = true)}
+              onplay={syncPlayer}
+              onpause={() => {
+                playerBuffering = false;
+                syncPlayer();
+              }}
               onerror={async (e) => {
+                playerBuffering = false;
                 const el = e.currentTarget as HTMLVideoElement;
                 if (!el.error) return;
                 el.pause();
@@ -1274,40 +1519,63 @@
                 clearVideoError(index);
                 handleVideoMetadata(e);
               }}
-              ontimeupdate={handleVideoTimeUpdate}
+              ontimeupdate={(e) => {
+                handleVideoTimeUpdate(e);
+                syncPlayer();
+              }}
               onended={handleVideoEnded}
             />
           </div>
+        {:else if (current.kind === 'audio' || current.kind === 'file') && current.isUnarchived}
+          <div class="viewer-file-state">
+            <IconVideoOff />
+            <p class="viewer-state-text">{i18n.t('post.file_not_archived')}</p>
+          </div>
         {:else if current.kind === 'audio'}
-          <div
-            class="viewer-file-state"
-            
-          >
-            <IconMusic />
-            <strong>{current.name}</strong>
-            {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
-            <MediaSurface
-              mediaKey={current.id || current.url}
-              kind="audio"
-              src={current.url}
-              autoplay
-              resume
-              onmedia={handleMediaAttached}
-              onerror={(e) => {
-                const el = e.currentTarget as HTMLAudioElement;
-                logMediaError('audio', el.src, current.name, el.error);
-              }}
-            />
+          <div class="viewer-audio">
+            <div class="viewer-audio-art">
+              {#if current.poster}
+                <img src={current.poster} alt="" draggable="false" />
+              {/if}
+              <MaterialShape name="cookie9Sided" size={168} class="viewer-audio-shape" />
+              <IconMusic class="viewer-audio-icon" />
+            </div>
+            <div class="viewer-audio-host" aria-hidden="true">
+              <MediaSurface
+                mediaKey={current.id || current.url}
+                kind="audio"
+                src={current.url}
+                autoplay
+                resume
+                priority
+                controls={false}
+                onmedia={handleMediaAttached}
+                onplay={syncPlayer}
+                onpause={() => {
+                  playerBuffering = false;
+                  syncPlayer();
+                }}
+                oncanplay={() => (playerBuffering = false)}
+                onwaiting={() => (playerBuffering = true)}
+                onstalled={() => (playerBuffering = true)}
+                ontimeupdate={syncPlayer}
+                onloadedmetadata={syncPlayer}
+                onerror={(e) => {
+                  playerBuffering = false;
+                  const el = e.currentTarget as HTMLAudioElement;
+                  logMediaError('audio', el.src, current.name, el.error);
+                }}
+              />
+            </div>
           </div>
         {:else}
-          <div
-            class="viewer-file-state"
-            
-          >
+          <div class="viewer-file-state">
             <IconDocument />
-            <strong>{current.name}</strong>
-            {#if current.size}<span>{formatBytes(current.size)}</span>{/if}
-            {#if ondownload}
+            {#if current.downloadedPath}
+              <Button variant="tonal" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
+                <IconOpen /><span>{i18n.t('downloads.open_externally')}</span>
+              </Button>
+            {:else if ondownload}
               <Button
                 variant="ghost"
                 class={`viewer-download-pill${currentDownloaded ? ' is-downloaded' : ''}${currentDownloadActive ? ' is-downloading' : ''}`}
@@ -1329,39 +1597,98 @@
       {/if}
   </div>
 
-  {#if items.length > 1}
-    <Button variant="ghost" class="viewer-nav viewer-prev media-viewer-controls" onclick={() => navigate(-1, false)} title={i18n.t('post.previous')} aria-label={i18n.t('post.previous')}><IconChevronLeft /></Button>
-    <Button variant="ghost" class="viewer-nav viewer-next media-viewer-controls" onclick={() => navigate(1, false)} title={i18n.t('post.next')} aria-label={i18n.t('post.next')}><IconChevronRight /></Button>
+  {#if currentPlayable && playerBuffering}
+    <div class="viewer-buffering" aria-hidden="true"><IconLoading /></div>
   {/if}
 
-  {#if current?.kind === 'image' || items.length > 1}
-    <footer class="media-viewer-bottom media-viewer-controls">
-      {#if current?.kind === 'image'}
-        <div class="mobile-zoom-controls">
-          <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale / 1.25)} disabled={scale <= MIN_SCALE} aria-label={i18n.t('post.viewer_zoom_out')}><IconZoomOut /></Button>
-          <Button variant="ghost" class="viewer-reset-btn" onclick={resetTransform}><IconArrowReset /><span>{Math.round(scale * 100)}%</span></Button>
-          <Button variant="ghost" class="viewer-icon-btn" onclick={() => setScale(scale * 1.25)} disabled={scale >= MAX_SCALE} aria-label={i18n.t('post.viewer_zoom_in')}><IconZoomIn /></Button>
-        </div>
-      {/if}
+  {#if items.length > 1}
+    <Button variant="ghost" class="viewer-nav viewer-prev media-viewer-controls" inert={!controlsVisible} onclick={() => navigate(-1, false)} title={i18n.t('post.previous')} aria-label={i18n.t('post.previous')}><IconChevronLeft /></Button>
+    <Button variant="ghost" class="viewer-nav viewer-next media-viewer-controls" inert={!controlsVisible} onclick={() => navigate(1, false)} title={i18n.t('post.next')} aria-label={i18n.t('post.next')}><IconChevronRight /></Button>
+  {/if}
+
+  {#if current}
+    <footer class="media-viewer-bottom media-viewer-controls" class:is-strip-open={filmstripOpen}>
+      <div class="viewer-player">
+        {#snippet viewerActions()}
+          {#if current.kind === 'image' || current.kind === 'video'}
+            <PopoverMenu align="right" width="auto" menuClass="player-view-menu">
+              {#snippet trigger({ toggle, open })}
+                <button
+                  class="viewer-player-rate"
+                  class:is-open={open}
+                  type="button"
+                  onclick={toggle}
+                  use:tooltip={i18n.t('post.viewer_view_options')}
+                  aria-label={`${i18n.t('post.viewer_view_options')}: ${zoomLabel}`}
+                  aria-haspopup="menu"
+                  aria-expanded={open}
+                ><IconArrowFit /><span>{zoomLabel}</span></button>
+              {/snippet}
+              {#snippet children()}
+                <div class="player-menu-list">
+                  <button class="floating-item" type="button" role="menuitem" disabled={scale >= MAX_SCALE} use:ripple onclick={() => setScale(scale * 1.25)}>
+                    <IconZoomIn />
+                    <span class="floating-item-label">{i18n.t('post.viewer_zoom_in')}</span>
+                  </button>
+                  <button class="floating-item" type="button" role="menuitem" disabled={scale <= MIN_SCALE} use:ripple onclick={() => setScale(scale / 1.25)}>
+                    <IconZoomOut />
+                    <span class="floating-item-label">{i18n.t('post.viewer_zoom_out')}</span>
+                  </button>
+                  <button class="floating-item" type="button" role="menuitem" disabled={scale <= MIN_SCALE && rotation === 0} use:ripple onclick={resetTransform}>
+                    <IconArrowReset />
+                    <span class="floating-item-label">{i18n.t('post.viewer_reset')}</span>
+                    <span class="floating-item-detail">{zoomLabel}</span>
+                  </button>
+                  <div class="floating-divider" role="separator"></div>
+                  <button class="floating-item" type="button" role="menuitem" use:ripple onclick={() => rotateBy(-90)}>
+                    <IconRotateLeft />
+                    <span class="floating-item-label">{i18n.t('post.viewer_rotate_left')}</span>
+                  </button>
+                  <button class="floating-item" type="button" role="menuitem" use:ripple onclick={() => rotateBy(90)}>
+                    <IconRotateRight />
+                    <span class="floating-item-label">{i18n.t('post.viewer_rotate_right')}</span>
+                  </button>
+                </div>
+              {/snippet}
+            </PopoverMenu>
+          {/if}
+          {#if canDockNow}
+            <button class="player-controls-btn" type="button" onclick={() => leave('dock')} use:tooltip={i18n.t('post.dock_action')} aria-label={i18n.t('post.dock_action')}><IconDock /></button>
+          {/if}
+          <button class="player-controls-btn" type="button" onclick={toggleFullscreen} use:tooltip={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')} aria-label={i18n.t(fullscreen ? 'post.viewer_exit_fullscreen' : 'post.viewer_fullscreen')}>
+            {#if fullscreen}<IconFullscreenExit />{:else}<IconFullscreen />{/if}
+          </button>
+        {/snippet}
+        <PlayerControls
+          media={playerEl}
+          playable={currentPlayable}
+          timePosition="meta"
+          actions={viewerActions}
+          onactivity={registerActivity}
+        />
+      </div>
 
       {#if items.length > 1}
-        <div class="viewer-filmstrip-wrapper">
-          <div
-            bind:this={filmstripContainer}
-            class="viewer-filmstrip"
-            role="region"
-            aria-label={i18n.t('post.viewer_thumbnails')}
-            onwheel={handleFilmstripWheel}
-            onpointerdown={onFilmstripPointerDown}
-            onpointermove={onFilmstripPointerMove}
-            onpointerup={onFilmstripPointerUp}
-            onpointercancel={onFilmstripPointerUp}
-          >
-            {#each items as item, itemIndex (item.id || itemIndex)}
+        <div class="viewer-filmstrip-drawer" class:is-open={filmstripOpen}>
+          <div class="viewer-filmstrip-wrapper">
+            <div
+              bind:this={filmstripContainer}
+              id="viewer-filmstrip"
+              class="viewer-filmstrip"
+              role="region"
+              aria-label={i18n.t('post.viewer_thumbnails')}
+              onwheel={handleFilmstripWheel}
+              onpointerdown={onFilmstripPointerDown}
+              onpointermove={onFilmstripPointerMove}
+              onpointerup={onFilmstripPointerUp}
+              onpointercancel={onFilmstripPointerUp}
+            >
+            {#each items as item, itemIndex (`${item.id || item.url || 'item'}:${itemIndex}`)}
               <button
                 bind:this={thumbnailRefs[itemIndex]}
                 class="filmstrip-item"
                 class:active={itemIndex === index}
+                aria-current={itemIndex === index ? 'true' : undefined}
                 type="button"
                 onclick={() => handleThumbnailClick(itemIndex)}
                 aria-label={`${itemIndex + 1}: ${item.name}`}
@@ -1439,6 +1766,18 @@
               </button>
             {/each}
           </div>
+          </div>
+          <button
+            class="viewer-filmstrip-handle"
+            type="button"
+            aria-expanded={filmstripOpen}
+            aria-controls="viewer-filmstrip"
+            aria-label={i18n.t('post.viewer_thumbnails')}
+            use:tooltip={i18n.t('post.viewer_thumbnails')}
+            onclick={toggleFilmstrip}
+          >
+            {#if filmstripOpen}<IconChevronDown />{:else}<IconChevronUp />{/if}
+          </button>
         </div>
       {/if}
     </footer>
@@ -1447,16 +1786,24 @@
 
 <style>
   .media-viewer {
+    /* Same left/right edge as the page bar title so the viewer reads as part of the shell. */
+    --viewer-gutter: max(var(--gutter), env(safe-area-inset-left));
+    --viewer-gutter-end: max(var(--gutter), env(safe-area-inset-right));
     position: fixed;
-    inset: 0;
+    inset: 0 0 0 var(--viewer-shell-left, 0px);
     z-index: var(--z-viewer, 2147483000);
     overflow: hidden;
     /* Opaque: with a translucent window backdrop any alpha lets the page and the desktop through. */
-    background: #000;
-    color: var(--text-primary);
+    background: var(--player-backdrop);
+    color: var(--player-ink);
     outline: none;
     animation: viewer-enter 220ms cubic-bezier(0.2, 0, 0, 1);
     overscroll-behavior: none;
+  }
+
+  /* Native fullscreen owns the whole screen; the app frame is not painted at all. */
+  .media-viewer:fullscreen {
+    inset: 0;
   }
 
   .media-viewer.is-dismissing {
@@ -1482,128 +1829,181 @@
 
   .media-viewer-topbar {
     top: 0;
-    min-height: 72px;
     justify-content: space-between;
-    gap: 16px;
-    padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left));
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.15) 60%, transparent 100%);
+    gap: var(--space-4);
+    /* Exactly the toolbar row: the title and window controls share one optical line. */
+    min-height: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) var(--viewer-gutter-end) 0 var(--viewer-gutter);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--player-fade-color) 55%, transparent) 0%, color-mix(in srgb, var(--player-fade-color) 18%, transparent) 60%, transparent 100%);
+    pointer-events: none;
   }
 
   .media-viewer-bottom {
     bottom: 0;
-    min-height: 84px;
     justify-content: center;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px max(18px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-    background: linear-gradient(to top, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.15) 60%, transparent 100%);
-  }
-
-  .media-viewer-identity {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-  }
-
-  .media-viewer-identity strong {
-    overflow: hidden;
-    color: var(--text-primary);
-    font-size: 14px;
-    font-weight: 650;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    user-select: text;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
-  }
-
-  .media-viewer-identity span {
-    color: var(--text-secondary);
-    font-size: 12px;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--viewer-gutter-end) max(var(--space-4), env(safe-area-inset-bottom)) var(--viewer-gutter);
+    background: linear-gradient(to top, color-mix(in srgb, var(--player-fade-color) 68%, transparent) 0%, color-mix(in srgb, var(--player-fade-color) 18%, transparent) 65%, transparent 100%);
   }
 
   .media-viewer-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-1);
     flex-shrink: 0;
+    pointer-events: auto;
   }
 
-  .mobile-zoom-controls {
-    display: none !important;
+  .media-viewer-topbar.has-window-controls {
+    padding-inline-end: calc(var(--window-control-width) * 3 + var(--space-3));
   }
 
-  :global(.media-viewer .viewer-icon-btn),
-  :global(.media-viewer .viewer-reset-btn) {
-    height: 44px !important;
-    min-height: 44px !important;
-    border: 0 !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: none !important;
-    color: var(--text-primary) !important;
-    transition: color 150ms ease, background 150ms ease, transform 150ms ease !important;
+  .viewer-player {
+    --pc-gap: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    width: 100%;
+    margin: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
   }
 
-  :global(.media-viewer .viewer-icon-btn) {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    width: 44px !important;
-    min-width: 44px !important;
-    padding: 0 !important;
-    border-radius: var(--radius-full, 9999px) !important;
+  .media-viewer-bottom.is-strip-open .viewer-player {
+    opacity: 0;
+    pointer-events: none;
   }
 
-  :global(.media-viewer .viewer-icon-btn:hover),
-  :global(.media-viewer .viewer-reset-btn:hover) {
-    background: rgba(var(--surface-tint-rgb), 0.12) !important;
-    color: var(--text-primary) !important;
+  .viewer-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--player-ink);
+    font-family: var(--font-display);
+    font-size: var(--type-title-lg-size);
+    line-height: var(--type-title-lg-line);
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    pointer-events: none;
   }
 
-  :global(.media-viewer .viewer-delete-btn:hover) {
-    color: var(--status-error) !important;
-    background: color-mix(in srgb, var(--status-error) 15%, transparent) !important;
-  }
-
-  :global(.media-viewer .viewer-icon-btn:active),
-  :global(.media-viewer .viewer-reset-btn:active) {
-    background: rgba(var(--surface-tint-rgb), 0.2) !important;
-    transform: scale(0.94) !important;
-  }
-
-  :global(.media-viewer .viewer-icon-btn svg),
-  :global(.media-viewer .viewer-reset-btn svg) {
-    width: 22px !important;
-    height: 22px !important;
-    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
-  }
-
-  .zoom-value {
-    height: 36px;
-    min-width: 48px;
-    padding: 0 8px;
+  .viewer-player-rate {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--space-1);
+    width: auto;
+    min-width: calc(var(--control-height) + var(--space-4));
+    height: var(--control-height);
+    padding: 0 var(--space-2);
     border: 0;
     border-radius: var(--radius-full);
-    background: transparent;
-    color: var(--text-primary);
+    background: var(--player-state-hover);
+    color: var(--player-ink);
     font-family: var(--font-sans);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
-    transition: color 150ms ease, background 150ms ease;
+    font-size: var(--type-body-md-size);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+    transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
   }
 
-  .zoom-value:hover {
-    background: rgba(var(--surface-tint-rgb), 0.12);
-    color: var(--text-primary);
+  .viewer-player-rate :global(svg) {
+    width: var(--control-icon-size);
+    height: var(--control-icon-size);
+  }
+
+  .viewer-player-rate:hover {
+    background: var(--player-state-pressed);
+    color: var(--player-ink);
+  }
+
+  .viewer-player-rate.is-open {
+    background: var(--player-state-pressed);
+    color: var(--player-ink);
+  }
+
+  .viewer-player-rate:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  .viewer-buffering {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 19;
+    display: grid;
+    place-items: center;
+    width: calc(var(--control-height-lg) + var(--space-4));
+    height: calc(var(--control-height-lg) + var(--space-4));
+    border-radius: var(--radius-full);
+    background: var(--player-scrim-strong);
+    color: var(--player-ink);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .viewer-buffering :global(svg) {
+    width: var(--control-icon-lg);
+    height: var(--control-icon-lg);
+  }
+
+  .viewer-audio {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    text-align: center;
+  }
+
+  .viewer-audio-art {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: clamp(128px, 24vw, 200px);
+    height: clamp(128px, 24vw, 200px);
+    margin-bottom: var(--space-3);
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    background: var(--player-surface);
+  }
+
+  .viewer-audio-art img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.45;
+    filter: blur(1px);
+  }
+
+  :global(.viewer-audio-shape) {
+    position: relative;
+    color: color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  }
+
+  :global(.viewer-audio-icon) {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: clamp(44px, 9vw, 58px);
+    height: clamp(44px, 9vw, 58px);
+    color: var(--accent-primary);
+  }
+
+  .viewer-audio-host {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
 
   .media-viewer-stage {
@@ -1624,7 +2024,7 @@
 
   .media-fit-frame {
     position: absolute;
-    inset: 84px clamp(18px, 7vw, 104px) 100px;
+    inset: 0;
     display: grid;
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
@@ -1711,42 +2111,42 @@
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
-    background: #000;
+    background: var(--player-backdrop);
   }
 
   :global(.viewer-nav) {
     position: absolute !important;
     top: 50%;
     z-index: 20;
-    width: 56px !important;
-    height: 56px !important;
-    min-width: 56px !important;
+    width: var(--control-height-lg) !important;
+    height: var(--control-height-lg) !important;
+    min-width: var(--control-height-lg) !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 50% !important;
+    border-radius: var(--radius-full) !important;
     background: transparent !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    color: var(--text-secondary) !important;
+    color: var(--player-ink-secondary) !important;
     transform: translateY(-50%);
-    transition: opacity 180ms ease, transform 180ms ease, background 150ms ease, color 150ms ease !important;
+    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard) !important;
   }
 
   :global(.viewer-nav:hover) {
-    background: rgba(var(--surface-tint-rgb), 0.12) !important;
-    color: var(--text-primary) !important;
+    background: var(--player-state-hover) !important;
+    color: var(--player-ink) !important;
     transform: translateY(-50%) scale(1.08) !important;
   }
 
   :global(.viewer-nav:active) {
-    background: rgba(var(--surface-tint-rgb), 0.2) !important;
+    background: var(--player-state-pressed) !important;
     transform: translateY(-50%) scale(0.96) !important;
   }
 
   :global(.viewer-nav svg) {
-    width: 32px;
-    height: 32px;
+    width: var(--control-icon-lg) !important;
+    height: var(--control-icon-lg) !important;
     filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
     transition: transform 150ms var(--ease-expo, ease-out);
   }
@@ -1757,6 +2157,58 @@
   :global(.viewer-prev) { left: max(18px, env(safe-area-inset-left)); }
   :global(.viewer-next) { right: max(18px, env(safe-area-inset-right)); }
 
+  .viewer-filmstrip-drawer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 21;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--viewer-gutter-end) var(--space-1) var(--viewer-gutter);
+    pointer-events: none;
+  }
+
+  .viewer-filmstrip-drawer.is-open {
+    background: linear-gradient(to top, color-mix(in srgb, var(--player-fade-color) 86%, transparent) 0%, color-mix(in srgb, var(--player-fade-color) 60%, transparent) 70%, transparent 100%);
+  }
+
+  .viewer-filmstrip-drawer > * {
+    pointer-events: auto;
+  }
+
+  .viewer-filmstrip-handle {
+    display: grid;
+    place-items: center;
+    align-self: center;
+    width: calc(var(--control-height) + var(--space-4));
+    height: var(--space-6);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--player-state-hover);
+    color: var(--player-ink-secondary);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+  }
+
+  .viewer-filmstrip-handle:hover {
+    background: var(--player-state-pressed);
+    color: var(--player-ink);
+  }
+
+  .viewer-filmstrip-handle:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  .viewer-filmstrip-handle :global(svg) {
+    width: var(--control-icon-sm);
+    height: var(--control-icon-sm);
+  }
+
   .viewer-filmstrip-wrapper {
     position: relative;
     display: flex;
@@ -1764,9 +2216,18 @@
     justify-content: center;
     width: 100%;
     max-width: 100%;
+    max-height: 0;
     margin: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 260ms var(--ease-standard), opacity 180ms var(--ease-standard);
     mask-image: linear-gradient(to right, transparent 0%, black 28px, black calc(100% - 28px), transparent 100%);
     -webkit-mask-image: linear-gradient(to right, transparent 0%, black 28px, black calc(100% - 28px), transparent 100%);
+  }
+
+  .viewer-filmstrip-drawer.is-open .viewer-filmstrip-wrapper {
+    max-height: 96px;
+    opacity: 1;
   }
 
   .viewer-filmstrip {
@@ -1810,6 +2271,12 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  .filmstrip-item:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
   .filmstrip-thumb {
     position: relative;
     height: 58px;
@@ -1821,8 +2288,8 @@
     padding: 0;
     border: 0;
     border-radius: var(--radius-sm, 8px);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-secondary);
+    background: var(--player-surface);
+    color: var(--player-ink-secondary);
     transition: opacity 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard);
     contain: layout paint;
   }
@@ -1865,7 +2332,7 @@
     place-items: center;
     width: 100%;
     height: 100%;
-    color: var(--text-secondary);
+    color: var(--player-ink-secondary);
     pointer-events: none;
   }
 
@@ -1884,14 +2351,13 @@
     gap: 3px;
     padding: 2px 6px;
     height: 18px;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     background: var(--on-media-scrim-strong);
     color: var(--on-media);
-    font-size: 11px;
-    font-weight: 550;
+    font-size: var(--type-label-sm-size);
+    font-weight: 500;
     line-height: 1;
     pointer-events: none;
-    letter-spacing: 0.02em;
     user-select: none;
     white-space: nowrap;
   }
@@ -1920,7 +2386,7 @@
   .viewer-embed-iframe-wrapper {
     width: 100%;
     aspect-ratio: 16 / 9;
-    background: #000;
+    background: var(--player-backdrop);
     border-radius: var(--radius-lg, 12px);
     overflow: hidden;
   }
@@ -1937,78 +2403,65 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
+    gap: var(--space-4);
     max-width: min(520px, 90vw);
-    padding: 32px;
+    padding: var(--space-8);
     text-align: center;
   }
 
   .viewer-file-state > :global(svg) {
-    width: 72px;
-    height: 72px;
-    color: var(--text-muted);
+    width: calc(var(--control-icon-lg) * 3);
+    height: calc(var(--control-icon-lg) * 3);
+    color: var(--player-ink-secondary);
   }
 
-  .viewer-file-state strong {
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    font-size: 16px;
-    user-select: text;
-  }
-
-  .viewer-file-state span { color: var(--text-secondary); font-size: 13px; }
   .viewer-file-state :global(.media-surface audio) { width: min(420px, 80vw); }
 
-  :global(.media-viewer .viewer-download-icon.is-downloaded) {
-    background: transparent !important;
-    color: var(--accent-primary) !important;
-    box-shadow: none !important;
+  .viewer-state-text {
+    margin: 0;
+    max-width: 40ch;
+    color: var(--player-ink-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    text-align: center;
   }
 
-  :global(.media-viewer .viewer-download-icon.is-downloaded svg) {
-    color: var(--accent-primary) !important;
-    stroke-width: 2.25;
-    filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.6));
-  }
-
-  :global(.media-viewer .viewer-download-icon.is-downloading:disabled),
   :global(.media-viewer .viewer-download-pill.is-downloading:disabled) {
     opacity: 1 !important;
   }
 
   :global(.media-viewer .viewer-download-pill) {
     position: relative;
-    width: 220px !important;
+    width: auto !important;
+    min-width: 200px;
     max-width: 100%;
-    height: 44px !important;
+    height: var(--control-height) !important;
+    padding-inline: var(--space-4) !important;
     border-radius: var(--radius-full) !important;
-    background: transparent !important;
-    border: 1px solid rgba(var(--surface-tint-rgb), 0.2) !important;
-    color: var(--text-primary) !important;
+    background: var(--player-state-hover) !important;
+    border: 0 !important;
+    color: var(--player-ink) !important;
     box-shadow: none !important;
-    transition: background 150ms ease, border-color 150ms ease !important;
+    transition: background-color var(--duration-fast) var(--ease-standard) !important;
   }
 
   :global(.media-viewer .viewer-download-pill:hover) {
-    background: rgba(var(--surface-tint-rgb), 0.12) !important;
-    border-color: rgba(var(--surface-tint-rgb), 0.35) !important;
+    background: var(--player-state-pressed) !important;
   }
 
   :global(.media-viewer .viewer-download-pill.is-downloaded) {
-    border-color: var(--accent-primary) !important;
     color: var(--accent-primary) !important;
   }
 
   :global(.media-viewer .viewer-ghost-action) {
-    border: 1px solid rgba(var(--surface-tint-rgb), 0.25) !important;
-    background: transparent !important;
-    color: var(--text-primary) !important;
+    border: 0 !important;
+    background: var(--player-state-hover) !important;
+    color: var(--player-ink) !important;
     box-shadow: none !important;
   }
 
   :global(.media-viewer .viewer-ghost-action:hover) {
-    background: rgba(var(--surface-tint-rgb), 0.12) !important;
-    border-color: rgba(var(--surface-tint-rgb), 0.4) !important;
+    background: var(--player-state-pressed) !important;
   }
 
   .controls-hidden .media-viewer-topbar {
@@ -2035,60 +2488,28 @@
     transform: translate(10px, -50%);
   }
 
-  @media (max-width: 700px), (pointer: coarse) {
-    .media-viewer-topbar {
-      min-height: 58px;
-      padding-top: max(8px, env(safe-area-inset-top));
-      padding-right: max(8px, env(safe-area-inset-right));
-      padding-left: max(12px, env(safe-area-inset-left));
+  @media (pointer: coarse) {
+    .media-viewer {
+      /* The touch bar row uses a 16px inline gutter. */
+      --viewer-gutter: max(var(--space-4), env(safe-area-inset-left));
+      --viewer-gutter-end: max(var(--space-4), env(safe-area-inset-right));
     }
+  }
 
+  @media (max-width: 700px), (pointer: coarse) {
     .media-viewer-stage {
       padding: 0;
     }
 
-    .media-fit-frame { inset: 60px 0 102px; }
+    .media-fit-frame { inset: 0; }
 
-    .media-viewer-actions { gap: 3px; }
+    .media-viewer-actions { gap: var(--space-1); }
     :global(.viewer-nav) { display: none !important; }
-    :global(.media-viewer .viewer-zoom-btn) { display: none !important; }
-
-    :global(.media-viewer .viewer-icon-btn) {
-      width: 38px !important;
-      min-width: 38px !important;
-      height: 38px !important;
-      min-height: 38px !important;
-    }
-
-    :global(.media-viewer .viewer-icon-btn svg) {
-      width: 20px !important;
-      height: 20px !important;
-    }
-
-    .mobile-zoom-controls {
-      display: flex !important;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-
-    :global(.media-viewer .viewer-reset-btn) {
-      display: inline-flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      gap: 6px !important;
-      min-width: 80px !important;
-      height: 38px !important;
-      padding: 0 12px !important;
-      border-radius: var(--radius-full) !important;
-      font-size: 12.5px !important;
-      font-weight: 600 !important;
-    }
 
     .media-viewer-bottom {
       min-height: auto;
-      padding: 4px max(8px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-      gap: 6px;
+      padding: var(--space-2) var(--viewer-gutter-end) max(var(--space-3), env(safe-area-inset-bottom)) var(--viewer-gutter);
+      gap: var(--space-2);
     }
 
     .viewer-filmstrip-wrapper {
@@ -2108,13 +2529,9 @@
       max-width: 150px;
       border-radius: var(--radius-sm, 8px);
     }
-
-    .media-viewer-identity strong { font-size: 13px; }
-    .media-viewer-identity { max-width: calc(100vw - 145px); }
   }
 
   @media (max-width: 380px) {
-    .media-viewer-identity { max-width: calc(100vw - 110px); }
     :global(.media-viewer .viewer-fullscreen-btn) { display: none !important; }
     .filmstrip-thumb {
       height: 56px;
