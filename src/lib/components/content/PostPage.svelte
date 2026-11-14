@@ -24,7 +24,7 @@
   import { MirrorSources, mirrorsOf } from '$lib/state/mirrorSources.svelte';
   import { PostCloudLinks } from '$lib/state/postCloudLinks.svelte';
   import { edgeFade } from '$lib/actions/edgeFade';
-  import { onMount, untrack, getContext, tick } from 'svelte';
+  import { onMount, onDestroy, untrack, getContext, tick } from 'svelte';
   import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import PostDownloadPanel from './PostDownloadPanel.svelte';
   import ArchivePreview from './ArchivePreview.svelte';
@@ -56,7 +56,6 @@
   import { getVideoThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
   import { extraField } from '$lib/utils/fields';
-  import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
   import { tooltip, ripple } from '$lib/motion';
@@ -72,10 +71,10 @@
 
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
   import PostPoll from './PostPoll.svelte';
-  import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
-  import MediaSurface from '$lib/components/ui/MediaSurface.svelte';
+  import { type MediaViewerItem, type MediaViewerKind } from './MediaViewer.svelte';
+  import { viewerState } from '$lib/state/viewerState.svelte';
+  import InlinePlayer from './InlinePlayer.svelte';
   import { mediaRegistry } from '$lib/media/mediaRegistry';
-  import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
   import IconCloud from '~icons/fluent/cloud-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
@@ -848,8 +847,7 @@
     mediaSearchOpen = false;
     mediaSearchQuery = '';
   }
-  let viewerIndex = $state<number | null>(null);
-  let viewerFiles = $state<Attachment[]>([]);
+  let viewerToken: number | null = null;
   let contentExpanded = $state(false);
   let contentHeight = $state(0);
   const MAX_CONTENT_HEIGHT = 480;
@@ -1281,39 +1279,38 @@
     html: embedHtml || undefined
   } as Attachment & { html?: string }) : null);
 
-  let viewerItems = $derived.by((): MediaViewerItem[] => viewerFiles.map((file, itemIndex) => {
-    const isEmbed = file === embedAttachment || Boolean((file as any)?.html);
-    const url = file.path ? fileUrl(file) : '';
-    const job = attachmentDownload(file);
-    const mediaIndex = media.findIndex((m) => isSameAttachment(m, file));
-    const kind = isEmbed ? 'video' : mediaViewerKind(file, url);
-    const measured = kind === 'video' && mediaIndex >= 0 ? videoRatios[mediaIndex] : undefined;
-    const width = typeof file.width === 'number' && file.width > 0 ? file.width : measured?.width;
-    const height = typeof file.height === 'number' && file.height > 0 ? file.height : measured?.height;
-    const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
-    const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
-    const key = mediaElementKey(file) || `vid_${itemIndex}`;
-    return {
-      id: key,
-      thumbnailKey: thumbnailKey(key, post),
-      url,
-      poster: cachedVideoThumb || attachmentThumbnailUrl(file, service, post),
-      name: file.name || i18n.t('post.file'),
-      kind,
-      size: getEffectiveFileSize(file) || file.size,
-      width,
-      height,
-      html: (file as any)?.html,
-      downloadStatus: job?.status,
-      downloadedBytes: job?.downloaded_bytes,
-      totalBytes: job?.total_bytes,
-      downloadedPath: job?.final_path,
-      isUnarchived
-    };
-  }));
-
-  let viewerInitialTime = $state(0);
-  let viewerOriginRect = $state<DOMRect | null>(null);
+  function buildViewerItems(files: Attachment[]): MediaViewerItem[] {
+    return files.map((file, itemIndex) => {
+      const isEmbed = file === embedAttachment || Boolean((file as any)?.html);
+      const url = file.path ? fileUrl(file) : '';
+      const job = attachmentDownload(file);
+      const mediaIndex = media.findIndex((m) => isSameAttachment(m, file));
+      const kind = isEmbed ? 'video' : mediaViewerKind(file, url);
+      const measured = kind === 'video' && mediaIndex >= 0 ? videoRatios[mediaIndex] : undefined;
+      const width = typeof file.width === 'number' && file.width > 0 ? file.width : measured?.width;
+      const height = typeof file.height === 'number' && file.height > 0 ? file.height : measured?.height;
+      const isUnarchived = isFileUnarchived(file, Boolean(job?.final_path && job.status === 'completed'));
+      const cachedVideoThumb = mediaIndex >= 0 ? videoThumbnails[mediaIndex] : undefined;
+      const key = mediaElementKey(file) || `vid_${itemIndex}`;
+      return {
+        id: key,
+        thumbnailKey: thumbnailKey(key, post),
+        url,
+        poster: cachedVideoThumb || attachmentThumbnailUrl(file, service, post),
+        name: file.name || i18n.t('post.file'),
+        kind,
+        size: getEffectiveFileSize(file) || file.size,
+        width,
+        height,
+        html: (file as any)?.html,
+        downloadStatus: job?.status,
+        downloadedBytes: job?.downloaded_bytes,
+        totalBytes: job?.total_bytes,
+        downloadedPath: job?.final_path,
+        isUnarchived
+      } satisfies MediaViewerItem;
+    });
+  }
 
   function handleVideoPlay(e: Event) {
     const currentVideo = e.currentTarget as HTMLVideoElement;
@@ -1343,10 +1340,10 @@
       if (el !== shared && !el.paused) el.pause();
     });
 
-    viewerInitialTime = shared ? 0 : (originVideoEl?.currentTime || 0);
+    let initialTime = shared ? shared.currentTime : (originVideoEl?.currentTime || 0);
 
     const originElement = (document.activeElement as HTMLElement | null)?.closest('.video-frame, .media-open-surface');
-    viewerOriginRect = originElement ? originElement.getBoundingClientRect() : null;
+    const origin = originElement ? originElement.getBoundingClientRect() : null;
 
     const sourceList = source && source.length > 0 ? source : [file];
     const sourceItems = sourceList
@@ -1359,12 +1356,30 @@
       nextIndex = 0;
     }
 
-    viewerFiles = sourceItems;
-    viewerIndex = nextIndex;
+    const files = [...sourceItems];
+    const viewerItems = buildViewerItems(files);
+
+    viewerToken = viewerState.open({
+      items: viewerItems,
+      index: nextIndex,
+      time: initialTime,
+      originRect: origin,
+      ondownload: async (item) => {
+        const index = viewerItems.indexOf(item);
+        const target = files[index]
+          ?? files.find((candidate) => (candidate.path || candidate.name) === item.id || candidate.name === item.name);
+        if (!target) return;
+        const job = attachmentDownload(target);
+        if (job && !['failed', 'cancelled', 'missing'].includes(job.status)) return;
+        await download(target, Math.max(0, index));
+      }
+    });
   }
 
   let initialViewerHandled = $state(false);
   let lastHandledViewerKey = $state('');
+
+  onDestroy(() => viewerState.detachCallbacks(viewerToken ?? undefined));
 
   function findTargetAttachment(needleStr: string): Attachment | undefined {
     if (!needleStr || !needleStr.trim()) return undefined;
@@ -1483,18 +1498,6 @@
     }
   });
 
-  $effect(() => {
-    if (viewerIndex !== null && activeGalleryItems.length > viewerFiles.length) {
-      viewerFiles = activeGalleryItems;
-    }
-  });
-
-  function handleCloseViewer() {
-    viewerIndex = null;
-    viewerInitialTime = 0;
-    viewerOriginRect = null;
-  }
-
   function openPreviewViewer() {
     if (!post) return;
     const targetFile = (post.file && (isAttachmentImage(post.file, post.file.path) || isAttachmentVideo(post.file, post.file.path)))
@@ -1503,15 +1506,6 @@
     if (!targetFile) return;
     const source = [targetFile, ...media.filter((file) => file.path !== targetFile?.path)];
     openMediaViewer(targetFile, source);
-  }
-
-  async function downloadViewerItem(item: MediaViewerItem) {
-    const fileIndex = viewerFiles.findIndex((file) => (file.path || file.name) === item.id || file.name === item.name);
-    const file = viewerFiles[fileIndex];
-    if (!file) return;
-    const job = attachmentDownload(file);
-    if (job && !['failed', 'cancelled', 'missing'].includes(job.status)) return;
-    await download(file, Math.max(0, fileIndex));
   }
   
   let saved = $derived(post ? libraryState.isSaved(post) : false);
@@ -1571,14 +1565,26 @@
   let videoRatios = $state<Record<number, { width: number; height: number }>>({});
 
   function startVideo(index: number, surface: HTMLElement) {
+    const file = media[index];
+    if (file && isDockedSameItem(file)) {
+      viewerState.expand();
+      return;
+    }
     const { width, height } = surface.getBoundingClientRect();
     videoFrames[index] = { width, height };
     activeVideoIndexes = new Set(activeVideoIndexes).add(index);
-    const file = media[index];
     if (file) playMediaAfterMount(file);
   }
 
+  function isDockedSameItem(file: Attachment): boolean {
+    return viewerState.mode === 'docked' && mediaElementKey(file) === viewerState.currentKey;
+  }
+
   function playMediaAfterMount(file: Attachment) {
+    if (isDockedSameItem(file)) {
+      viewerState.expand();
+      return;
+    }
     const key = mediaElementKey(file);
     if (!key) return;
     void tick().then(() => mediaRegistry.element(key)?.play().catch(() => {}));
@@ -2475,7 +2481,7 @@
           {#if filteredMedia.length > 0 || (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch)}
             <div class="media-gallery-wrapper section-scroll-anchor" bind:this={galleryWrapperEl}>
               <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
-                <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
+                <section class="media-gallery" class:is-single={filteredMedia.length === 1 && !postEmbed} bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
                 {#if postEmbed && !isEmbedResolvedToCloud && isEmbedVisibleInTab && embedMatchesSearch}
                   {#if isEmbedLinkedPost}
                     <div class="media-item is-embed-item is-linked-post-item">
@@ -2532,16 +2538,15 @@
                           {@html embedHtml}
                         </div>
                       {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
-                        <!-- svelte-ignore a11y_media_has_caption -->
-                        <video
-                          src={embedAttachment ? fileUrl(embedAttachment) : postEmbed.url}
+                        <InlinePlayer
+                          mediaKey={embedAttachment ? mediaElementKey(embedAttachment) : `embed:${postEmbed.url}`}
+                          kind="video"
+                          src={(embedAttachment ? fileUrl(embedAttachment) : postEmbed.url) ?? ''}
                           poster={videoPoster()}
-                          controls
-                          playsinline
-                          preload="none"
-                          use:panicCapture
-                          onkeydown={handleGlobalPanicKey}
-                        ></video>
+                          variant="block"
+                          onopenviewer={() => { if (embedAttachment) openMediaViewer(embedAttachment, filteredMedia); }}
+                          onplay={handleVideoPlay}
+                        />
                       {:else}
                         <button
                           class="file-placeholder media-open-surface"
@@ -2556,16 +2561,6 @@
                           <IconGlobe class="placeholder-icon text-[var(--text-secondary)]" />
                           <p class="placeholder-text">{postEmbed.subject || postEmbed.description || 'External Link'}</p>
                         </button>
-                      {/if}
-
-                      {#if embedAttachment && isEmbedVideo}
-                        <button
-                          class="media-viewer-open-btn"
-                          type="button"
-                          onclick={() => embedAttachment && openMediaViewer(embedAttachment, filteredMedia)}
-                          use:tooltip={i18n.t('post.viewer_open')}
-                          aria-label={i18n.t('post.viewer_open')}
-                        ><IconFullscreen /></button>
                       {/if}
 
                       {#if postEmbed.url}
@@ -2587,12 +2582,13 @@
                   {/if}
                 {/if}
 
-                {#each filteredMedia as file, index}
+                {#each filteredMedia as file, viewIndex}
                   {@const isCloudFolder = (file as any)?.is_cloud_folder === true}
                   {@const isDeferred = file?.deferred === true || (!file?.path && Boolean(file?.name))}
                   {@const url = file?.path ? fileUrl(file) : ''}
                   {@const isCloud = (file as any)?.is_cloud === true}
                   {@const downloaded = attachmentDownload(file)}
+                  {@const index = media.indexOf(file)}
                   <div class="media-item" class:is-deferred={isDeferred} class:is-folder-item={isCloudFolder}>
                     {#if isCloudFolder}
                       {@const fRes = (file as any).cloud_folder_result}
@@ -2785,13 +2781,14 @@
                           >
                             {#if activeVideoIndexes.has(index)}
                               {#key videoAttempts[index] ?? 0}
-                                <MediaSurface
+                                <InlinePlayer
                                   mediaKey={mediaElementKey(file)}
                                   kind="video"
                                   src={url}
                                   poster={videoPoster(thumbUrl)}
                                   autoplay
                                   resume
+                                  onopenviewer={() => openMediaViewer(file!, activeGalleryItems)}
                                   onmedia={(el) => {
                                     if (el instanceof HTMLVideoElement) checkVideoElement(el, file!, index);
                                   }}
@@ -2827,13 +2824,6 @@
                                 <p class="placeholder-text">{getFileExtension(file?.name).toUpperCase() || 'VIDEO'}</p>
                               </button>
                             {/if}
-                            <button
-                              class="media-viewer-open-btn"
-                              type="button"
-                              onclick={(e) => openMediaViewer(file!, activeGalleryItems, e.currentTarget.parentElement?.querySelector('video'))}
-                              use:tooltip={i18n.t('post.viewer_open')}
-                              aria-label={i18n.t('post.viewer_open')}
-                            ><IconFullscreen /></button>
                           </div>
                         {:else}
                           {@const thumbUrl = attachmentThumbnailUrl(file!, service, post)}
@@ -2847,7 +2837,7 @@
                             <img
                               src={displaySrc}
                               alt={file?.name || post.title}
-                              loading={index < 2 ? 'eager' : 'lazy'}
+                              loading={viewIndex < 2 ? 'eager' : 'lazy'}
                               decoding="async"
                               onerror={(e) => {
                                 const target = e.currentTarget as HTMLImageElement;
@@ -2877,13 +2867,15 @@
                         </div>
                       {:else if activeAudioIndexes.has(index)}
                         <div class="audio-player-wrapper">
-                          <IconMusicFilled class="placeholder-icon video-play-accent mb-2" />
-                          <MediaSurface
+                          <IconMusicFilled class="placeholder-icon video-play-accent" />
+                          <InlinePlayer
                             mediaKey={mediaElementKey(file)}
                             kind="audio"
                             src={url}
+                            variant="block"
                             autoplay
                             resume
+                            onopenviewer={() => openMediaViewer(file!, activeGalleryItems)}
                             onplay={handleVideoPlay}
                           />
                         </div>
@@ -2892,6 +2884,10 @@
                           class="file-placeholder media-open-surface"
                           type="button"
                           onclick={() => {
+                            if (file && isDockedSameItem(file)) {
+                              viewerState.expand();
+                              return;
+                            }
                             activeAudioIndexes = new Set(activeAudioIndexes).add(index);
                             if (file) playMediaAfterMount(file);
                           }}
@@ -2900,15 +2896,6 @@
                           <span class="play-btn-circle"><IconMusicFilled /></span>
                           <p class="placeholder-text">{ext}</p>
                         </button>
-                      {/if}
-                      {#if !isUnarchived}
-                        <button
-                          class="media-viewer-open-btn"
-                          type="button"
-                          onclick={() => openMediaViewer(file!, activeGalleryItems)}
-                          use:tooltip={i18n.t('post.viewer_open')}
-                          aria-label={i18n.t('post.viewer_open')}
-                        ><IconFullscreen /></button>
                       {/if}
                       {@render mediaDownloadAction(file!, index)}
                     {:else}
@@ -3127,16 +3114,6 @@
   </div>
 </PageShell>
 
-{#if viewerIndex !== null && viewerItems.length > 0}
-  <MediaViewer
-    items={viewerItems}
-    initialIndex={viewerIndex}
-    initialTime={viewerInitialTime}
-    originRect={viewerOriginRect}
-    onclose={handleCloseViewer}
-    ondownload={downloadViewerItem}
-  />
-{/if}
 
 <CloudFolderModal
   folder={activeCloudModalFolder}
@@ -3423,10 +3400,12 @@
   }
 
   .media-gallery {
+    --media-tile-min: 380px;
+    --media-tile-ratio: 16 / 9;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-    gap: 24px 16px;
-    padding-block: 8px 16px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--media-tile-min)), 1fr));
+    gap: var(--space-6) var(--space-4);
+    padding-block: var(--space-2) var(--space-4);
   }
   
   .media-embed-player {
@@ -3465,7 +3444,7 @@
     row-gap: 4px;
     text-align: start;
     content-visibility: auto;
-    contain-intrinsic-size: 320px 420px;
+    contain-intrinsic-size: 280px 220px;
   }
 
   .media-item > :global(*) {
@@ -3480,46 +3459,18 @@
     grid-area: actions;
   }
 
-  .media-viewer-open-btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 15;
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius-full);
-    background: var(--on-media-scrim-strong);
-    color: var(--on-media);
-    transition: background-color var(--duration-fast) var(--ease-standard);
-  }
-
-  @media (hover: hover) {
-    .media-viewer-open-btn:hover {
-      background: var(--on-media-scrim-strong) linear-gradient(var(--state-layer-hover), var(--state-layer-hover));
-    }
-  }
-
-  .media-viewer-open-btn :global(svg) {
-    width: 20px;
-    height: 20px;
-  }
-
   .media-header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     min-width: 0;
-    padding-inline: 4px;
+    padding-inline: var(--space-1);
   }
 
   .media-filename {
     min-width: 0;
     overflow: hidden;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: var(--type-body-sm-size);
     line-height: var(--type-body-sm-line);
@@ -3532,10 +3483,10 @@
   }
 
   .media-filesize {
-    font-size: 11.5px;
+    font-size: var(--type-body-sm-size);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    opacity: 0.55;
+    opacity: 0.7;
     flex-shrink: 0;
     white-space: nowrap;
   }
@@ -3576,6 +3527,83 @@
     }
   }
 
+  /* Every tile shares one 16:9 frame, whatever the media kind. */
+  .media-item > .media-open-surface:not(.file-placeholder),
+  .media-item > .video-frame,
+  .media-item > .audio-player-wrapper {
+    position: relative;
+    width: 100%;
+    height: auto;
+    aspect-ratio: var(--media-tile-ratio, 16 / 9);
+    max-height: none;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+  }
+
+  /* The media frames need a plate while posters load; the picture button does not. */
+  .media-item > .video-frame,
+  .media-item > .audio-player-wrapper {
+    background: var(--surface-container-low);
+  }
+
+  .media-item > .media-open-surface:not(.file-placeholder) img {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    object-fit: contain;
+    border-radius: 0;
+  }
+
+  /* A lone photo gets the whole row and the whole picture, not a cropped tile. */
+  .media-gallery.is-single {
+    grid-template-columns: 1fr;
+  }
+
+  .media-gallery.is-single > .media-item {
+    grid-column: 1 / -1;
+    width: min(100%, 640px);
+    justify-self: center;
+  }
+
+  .media-gallery.is-single > .media-item > .media-open-surface:not(.file-placeholder) {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: auto;
+    max-height: var(--media-tile-single-max, 70vh);
+  }
+
+  .media-gallery.is-single > .media-item > .media-open-surface:not(.file-placeholder) img {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: var(--media-tile-single-max, 70vh);
+    object-fit: contain;
+    border-radius: 0;
+  }
+
+  .media-item > .video-frame .video-thumbnail-surface,
+  .media-item > .video-frame .file-placeholder {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .media-item > .video-frame .video-thumbnail-surface img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .media-item > .video-frame :global(.media-surface video) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    object-fit: contain;
+    background: #000;
+  }
+
   .media-item img {
     position: relative;
     z-index: 2;
@@ -3588,38 +3616,22 @@
     justify-self: center;
   }
 
-  .media-item > video,
-  .media-item :global(.media-surface video) {
-    position: relative;
-    z-index: 2;
-    display: block;
-    width: auto;
-    max-width: 100%;
-    height: auto;
-    min-height: 240px;
-    max-height: 520px;
-    object-fit: contain;
-    border-radius: var(--radius-md, 10px);
-    background: transparent;
-    align-self: center;
-  }
-
   .audio-player-wrapper {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: var(--space-2);
     height: 240px;
     max-height: 520px;
     width: 100%;
     box-sizing: border-box;
-    padding: 16px;
+    padding: var(--space-3);
   }
 
-  .audio-player-wrapper :global(.media-surface audio) {
-    width: 100%;
-    max-width: 320px;
+  .audio-player-wrapper :global(.placeholder-icon) {
+    width: 32px;
+    height: 32px;
   }
 
   .file-placeholder :global(.placeholder-icon.video-play-accent) {
@@ -3642,11 +3654,6 @@
 
   .video-frame:not(:has(.video-thumbnail-surface)) {
     width: 100%;
-  }
-
-  .video-frame :global(.media-viewer-open-btn) {
-    top: var(--tile-chip-inset, 8px);
-    right: var(--tile-chip-inset, 8px);
   }
 
   .video-frame.is-sized :global(.media-surface video) {
@@ -3678,8 +3685,8 @@
   .play-btn-circle {
     display: grid;
     place-items: center;
-    width: 64px;
-    height: 64px;
+    width: calc(var(--control-height-lg) + var(--space-3));
+    height: calc(var(--control-height-lg) + var(--space-3));
     border-radius: var(--radius-full);
     background: var(--on-media-scrim-strong);
     color: var(--on-media);
@@ -3687,8 +3694,8 @@
   }
 
   .play-btn-circle :global(svg) {
-    width: 28px;
-    height: 28px;
+    width: var(--control-icon-lg);
+    height: var(--control-icon-lg);
   }
 
   .play-btn-circle.is-overlay {
