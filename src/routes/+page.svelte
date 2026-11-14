@@ -256,27 +256,27 @@
     {/await}
   {/if}
 
+  {#if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'windows'}
+    <div class="app-window-controls is-windows">
+      {#await overlays.windowControls() then viewModule}
+        {@const WindowControls = viewModule.default}
+        <WindowControls variant="windows" />
+      {/await}
+    </div>
+  {:else if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'macos'}
+    <div class="app-window-controls is-macos">
+      {#await overlays.windowControls() then viewModule}
+        {@const WindowControls = viewModule.default}
+        <WindowControls variant="macos" />
+      {/await}
+    </div>
+  {/if}
+
   {#if uiReady}
     {#await overlays.toaster() then viewModule}
       {@const Toaster = viewModule.default}
       <Toaster />
     {/await}
-
-    {#if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'windows'}
-      <div class="app-window-controls is-windows">
-        {#await overlays.windowControls() then viewModule}
-          {@const WindowControls = viewModule.default}
-          <WindowControls variant="windows" />
-        {/await}
-      </div>
-    {:else if !layoutState.isMobile && layoutState.effectiveTitlebarStyle === 'macos'}
-      <div class="app-window-controls is-macos">
-        {#await overlays.windowControls() then viewModule}
-          {@const WindowControls = viewModule.default}
-          <WindowControls variant="macos" />
-        {/await}
-      </div>
-    {/if}
   {/if}
 
   {#if !layoutState.isMobile}

@@ -17,10 +17,6 @@ export function syncBootTheme() {
     if (!palette || !screen) return;
     screen.style.background = palette.surface;
     screen.style.color = palette.textPrimary;
-    const track = screen.querySelector<HTMLElement>('.boot-track');
-    const bar = track?.querySelector<HTMLElement>('span');
-    if (track) track.style.background = palette.surfaceContainerHigh;
-    if (bar) bar.style.background = palette.primary;
   } catch {}
 }
 

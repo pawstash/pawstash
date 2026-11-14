@@ -17,7 +17,7 @@
         "title": "Pawstash",
         "width": 1280,
         "height": 830,
-        "visible": false,
+        "visible": true,
         "minWidth": 400,
         "minHeight": 600,
         "resizable": true,
