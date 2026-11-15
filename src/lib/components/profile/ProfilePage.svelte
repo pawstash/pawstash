@@ -20,15 +20,17 @@
   import IconSync from '~icons/fluent/arrow-sync-24-regular';
   import IconDice from '~icons/fluent/cube-24-regular';
   import IconPerson from '~icons/fluent/person-24-regular';
+  import IconGallery from '~icons/fluent/image-multiple-24-regular';
+  import IconTrash from '~icons/fluent/delete-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconLaptop from '~icons/fluent/laptop-24-regular';
   import IconDevices from '~icons/fluent/phone-laptop-24-regular';
   import IconShield from '~icons/fluent/shield-lock-24-regular';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
-  import IconCamera from '~icons/fluent/camera-24-regular';
   import { notify } from '$lib/utils/toast';
   import { copyText } from '$lib/utils/clipboard';
   import { layoutState } from '$lib/state/layoutState.svelte';
+  import { tooltip } from '$lib/motion';
   import { onboardingState } from '$lib/state/onboardingState.svelte';
   import { apiTestSyncConnection } from '$lib/utils/ipc';
   import { readRecentLogs } from '$lib/utils/logger';
@@ -346,36 +348,6 @@
 >
   <div class="profile-body">
     {#if activeView === 'menu'}
-      <section class="avatar-card">
-        <button
-          type="button"
-          class="avatar-preview"
-          aria-label={i18n.t('profile.change_photo')}
-          disabled={avatarState.busy}
-          onclick={() => avatarInput?.click()}
-        >
-          {#if avatarState.dataUrl}
-            <img src={avatarState.dataUrl} alt="" />
-          {:else}
-            <IconPerson />
-          {/if}
-          <span class="avatar-camera" aria-hidden="true"><IconCamera /></span>
-        </button>
-        <div class="avatar-text">
-          <h2 class="avatar-title">{i18n.t('profile.avatar_title')}</h2>
-          <p class="avatar-hint">{i18n.t('profile.avatar_hint')}</p>
-          <div class="avatar-actions">
-            <Button variant="tonal" disabled={avatarState.busy} onclick={() => avatarInput?.click()}>
-              {i18n.t('profile.change_photo')}
-            </Button>
-            {#if avatarState.dataUrl}
-              <Button variant="ghost" disabled={avatarState.busy} onclick={() => void handleClearAvatar()}>
-                {i18n.t('profile.remove_photo')}
-              </Button>
-            {/if}
-          </div>
-        </div>
-      </section>
       <input
         class="avatar-input"
         type="file"
@@ -386,6 +358,35 @@
 
       {#if syncState.status.configured}
         <section class="account-card">
+          <div class="account-avatar">
+            <button
+              type="button"
+              class="account-avatar-change"
+              aria-label={i18n.t('profile.change_photo')}
+              disabled={avatarState.busy}
+              use:tooltip={{ text: i18n.t('profile.change_photo'), placement: 'top' }}
+              onclick={() => avatarInput?.click()}
+            >
+              {#if avatarState.dataUrl}
+                <img src={avatarState.dataUrl} alt="" />
+              {:else}
+                <IconPerson />
+              {/if}
+              <span class="account-avatar-overlay" aria-hidden="true"><IconGallery /></span>
+            </button>
+            {#if avatarState.dataUrl}
+              <button
+                type="button"
+                class="account-avatar-remove"
+                aria-label={i18n.t('profile.remove_photo')}
+                disabled={avatarState.busy}
+                use:tooltip={{ text: i18n.t('profile.remove_photo'), placement: 'top' }}
+                onclick={() => void handleClearAvatar()}
+              >
+                <IconTrash />
+              </button>
+            {/if}
+          </div>
           <div class="account-text">
             <h2 class="account-id">{syncState.status.account_id}</h2>
             <span class="account-status">
@@ -671,104 +672,119 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 20px 16px 20px 20px;
+    padding: 16px 16px 16px 20px;
     border-radius: var(--radius-xl);
-    background: var(--surface-container);
+    background: var(--settings-tile, var(--content-surface));
   }
 
-  .avatar-card {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px 20px;
-    border-radius: var(--radius-xl);
-    background: var(--surface-container);
-  }
-
-  .avatar-preview {
+  .account-avatar {
     position: relative;
     flex: none;
-    width: 72px;
-    height: 72px;
+    width: 64px;
+    height: 64px;
+  }
+
+  .account-avatar-change {
+    position: relative;
+    width: 100%;
+    height: 100%;
     padding: 0;
     border: 0;
     border-radius: 50%;
     overflow: hidden;
     display: grid;
     place-items: center;
-    background: var(--surface-container-high);
+    background: var(--content-surface-high);
     color: var(--text-secondary);
     cursor: pointer;
   }
 
-  .avatar-preview:focus-visible {
+  .account-avatar-change:focus-visible {
     outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
   }
 
-  .avatar-preview:disabled {
+  .account-avatar-change:disabled {
     cursor: default;
     opacity: 0.7;
   }
 
-  .avatar-preview img {
+  .account-avatar-change img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
 
-  .avatar-preview :global(svg) {
-    width: 30px;
-    height: 30px;
+  .account-avatar-change > :global(svg) {
+    width: 28px;
+    height: 28px;
   }
 
-  .avatar-camera {
+  .account-avatar-overlay {
     position: absolute;
-    right: 0;
-    bottom: 0;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgb(0 0 0 / 0.42);
+    color: #fff;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .account-avatar-overlay :global(svg) {
+    width: 22px;
+    height: 22px;
+  }
+
+  .account-avatar-change:hover .account-avatar-overlay,
+  .account-avatar-change:focus-visible .account-avatar-overlay {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .account-avatar-overlay {
+      opacity: 1;
+      background: rgb(0 0 0 / 0.32);
+    }
+  }
+
+  :global([data-layout='mobile']) .account-avatar-overlay {
+    opacity: 1;
+    background: rgb(0 0 0 / 0.32);
+  }
+
+  .account-avatar-remove {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
     display: grid;
     place-items: center;
     width: 24px;
     height: 24px;
+    padding: 0;
+    border: 0;
     border-radius: 50%;
     background: var(--surface-container-high);
-    color: var(--text-primary);
+    color: var(--status-error);
     box-shadow: 0 0 0 2px var(--surface-container);
+    cursor: pointer;
   }
 
-  .avatar-camera :global(svg) {
+  .account-avatar-remove :global(svg) {
     width: 14px;
     height: 14px;
   }
 
-  .avatar-text {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
+  .account-avatar-remove:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
   }
 
-  .avatar-title {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--type-title-md-size);
-    line-height: var(--type-title-md-line);
-    font-weight: 500;
-  }
-
-  .avatar-hint {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--type-body-sm-size);
-    line-height: var(--type-body-sm-line);
-  }
-
-  .avatar-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 6px;
+  .account-avatar-remove:disabled {
+    opacity: 0.7;
+    cursor: default;
   }
 
   .avatar-input {
@@ -802,6 +818,15 @@
 
   .account-card :global(.btn) {
     flex: none;
+  }
+
+  :global([data-layout='mobile']) .account-card {
+    flex-wrap: wrap;
+  }
+
+  :global([data-layout='mobile']) .account-card :global(.btn) {
+    flex: 1 1 100%;
+    justify-content: center;
   }
 
   .profile-setup {

@@ -417,6 +417,10 @@
     overflow: visible !important;
   }
 
+  .sidebar-aside.compact .profile-btn:has(.sidebar-icon.has-avatar) {
+    padding-inline: 8px !important;
+  }
+
   .profile-label {
     display: flex !important;
     flex-direction: column !important;
@@ -658,15 +662,28 @@
   }
 
   .sidebar-icon.has-avatar {
+    width: 28px;
+    height: 28px;
     opacity: 1;
   }
 
+  .sidebar-icon.has-avatar :global(.sidebar-shape) {
+    display: none;
+  }
+
   .sidebar-icon .profile-avatar {
-    width: 26px;
-    height: 26px;
+    flex: none;
+    width: 28px;
+    height: 28px;
     border-radius: 9999px;
     object-fit: cover;
-    transition: transform var(--duration-normal) var(--ease-expo);
+    transition:
+      transform var(--duration-normal) var(--ease-expo),
+      box-shadow var(--duration-normal) var(--ease-standard);
+  }
+
+  .sidebar-icon.has-avatar.active .profile-avatar {
+    box-shadow: 0 0 0 2px var(--accent-primary);
   }
 
   .sidebar-icon.has-progress .profile-avatar {
