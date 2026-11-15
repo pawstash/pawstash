@@ -1,5 +1,7 @@
 const AVATAR_SIZE = 256;
 const AVATAR_MAX_BYTES = 28 * 1024;
+const INPUT_MAX_BYTES = 25 * 1024 * 1024;
+const DECODE_MAX_EDGE = 1024;
 
 function decodedLength(dataUrl: string): number {
   const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
@@ -7,16 +9,41 @@ function decodedLength(dataUrl: string): number {
   return Math.floor((base64.length * 3) / 4) - padding;
 }
 
-export async function fileToAvatarDataUrl(file: File): Promise<string> {
-  if (!file.type.startsWith('image/')) {
-    throw new Error('Not an image file');
+async function decodeForAvatar(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(
+        file,
+        file.size > 2 * 1024 * 1024
+          ? { resizeWidth: DECODE_MAX_EDGE, resizeQuality: 'high' }
+          : undefined
+      );
+    } catch {
+    }
   }
   const objectUrl = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = objectUrl;
     await image.decode();
-    if (!image.naturalWidth || !image.naturalHeight) {
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+export async function fileToAvatarDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Not an image file');
+  }
+  if (file.size > INPUT_MAX_BYTES) {
+    throw new Error('Image is too large');
+  }
+  const source = await decodeForAvatar(file);
+  try {
+    const sourceWidth = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
+    const sourceHeight = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
+    if (!sourceWidth || !sourceHeight) {
       throw new Error('Image has no pixels');
     }
     const canvas = document.createElement('canvas');
@@ -28,11 +55,11 @@ export async function fileToAvatarDataUrl(file: File): Promise<string> {
     }
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    const scale = Math.max(AVATAR_SIZE / image.naturalWidth, AVATAR_SIZE / image.naturalHeight);
-    const width = Math.round(image.naturalWidth * scale);
-    const height = Math.round(image.naturalHeight * scale);
+    const scale = Math.max(AVATAR_SIZE / sourceWidth, AVATAR_SIZE / sourceHeight);
+    const width = Math.round(sourceWidth * scale);
+    const height = Math.round(sourceHeight * scale);
     context.drawImage(
-      image,
+      source,
       Math.round((AVATAR_SIZE - width) / 2),
       Math.round((AVATAR_SIZE - height) / 2),
       width,
@@ -46,6 +73,8 @@ export async function fileToAvatarDataUrl(file: File): Promise<string> {
     }
     return canvas.toDataURL('image/jpeg', 0.45);
   } finally {
-    URL.revokeObjectURL(objectUrl);
+    if (!(source instanceof HTMLImageElement)) {
+      source.close();
+    }
   }
 }
