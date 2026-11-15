@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -238,6 +238,11 @@ CREATE TABLE IF NOT EXISTS sync_records (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sync_records_dirty ON sync_records(dirty, kind);
+CREATE TABLE IF NOT EXISTS profile_avatar (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    image TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 INSERT OR IGNORE INTO collections (id, kind, name, position, is_system)
 VALUES ('00000000-0000-0000-0000-000000000001', 'inbox', 'Main Stash', 0, 1);
@@ -579,6 +584,18 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                                     THEN json_extract(snapshot_json, '$.has_full') = 0
                                          AND coalesce(json_extract(snapshot_json, '$.detail_fetched'), 0) = 0
                                     ELSE 0 END",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            13 => {
+                transaction
+                    .execute(
+                        "CREATE TABLE IF NOT EXISTS profile_avatar (
+                            id INTEGER PRIMARY KEY CHECK (id = 1),
+                            image TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        )",
                         [],
                     )
                     .map_err(|e| e.to_string())?;

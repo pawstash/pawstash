@@ -261,8 +261,8 @@ export const apiResolveCreatorAvatarUrl = (service: string, creatorId: string, p
 export const apiResolveCreatorBannerUrl = (service: string, creatorId: string, providerId?: string) =>
   invoke<string>('resolve_creator_banner_url', { service, creatorId, providerId });
 
-export const apiFetchAccountFavorites = (favoriteType?: FavoriteType) =>
-  invoke<Favorite[]>('fetch_account_favorites', { favoriteType });
+export const apiFetchAccountFavorites = (favoriteType?: FavoriteType, refreshRemote = true) =>
+  invoke<Favorite[]>('fetch_account_favorites', { favoriteType, refreshRemote });
 
 export const apiSetPostFavorite = (
   service: string,
@@ -426,6 +426,10 @@ export const apiCountSubscriptionPosts = (subscriptionId: string) =>
   invoke<number>('count_subscription_posts', { subscriptionId });
 
 export const apiGetSyncStatus = () => invoke<SyncStatus>('get_sync_status');
+export const apiGetAccountAvatar = () => invoke<string | null>('get_account_avatar');
+export const apiSetAccountAvatar = (image: string) =>
+  invoke<string | null>('set_account_avatar', { image });
+export const apiClearAccountAvatar = () => invoke<string | null>('clear_account_avatar');
 export const apiCreateSyncAccount = (serverUrl: string, accountId: string, masterPassword: string, deviceName: string) =>
   invoke<SyncStatus>('create_sync_account', { serverUrl, accountId, masterPassword, deviceName });
 export const apiConnectSyncAccount = (serverUrl: string, accountId: string, masterPassword: string, deviceName: string) =>

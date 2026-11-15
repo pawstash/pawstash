@@ -6,6 +6,7 @@
   import { i18n } from '$lib/i18n';
   import { motion, tooltip } from '$lib/motion';
   import { syncState } from '$lib/state/syncState.svelte';
+  import { avatarState } from '$lib/state/avatarState.svelte';
   import { COMMUNITY_LINKS, openCommunity } from '$lib/utils/community';
   import { scrollable } from '$lib/actions/scrollable';
   import IconFeed from '~icons/fluent/grid-24-regular';
@@ -172,6 +173,7 @@
           class="sidebar-icon relative"
           class:active={activeRoot === 'profile'}
           class:has-progress={syncState.isSyncing}
+          class:has-avatar={!!avatarState.dataUrl}
         >
           <MaterialShape
             name={activeRoot === 'profile' ? activeMaterialShapeFor('profile') : 'circle'}
@@ -181,10 +183,14 @@
           {#if syncState.isSyncing}
             <ProgressRing value={syncState.progress} variant="segmented" size={32} />
           {/if}
-          <SwapIcon
-            icon={syncState.status.configured || syncState.isSyncing ? IconCloudSync : IconUser}
-            size={24}
-          />
+          {#if avatarState.dataUrl}
+            <img class="profile-avatar" src={avatarState.dataUrl} alt="" />
+          {:else}
+            <SwapIcon
+              icon={syncState.status.configured || syncState.isSyncing ? IconCloudSync : IconUser}
+              size={24}
+            />
+          {/if}
         </div>
         <span class="sidebar-label profile-label">
           <span class="profile-name">{profileName}</span>
@@ -649,6 +655,22 @@
     width: 24px;
     height: 24px;
     transition: transform var(--duration-normal) var(--ease-expo);
+  }
+
+  .sidebar-icon.has-avatar {
+    opacity: 1;
+  }
+
+  .sidebar-icon .profile-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 9999px;
+    object-fit: cover;
+    transition: transform var(--duration-normal) var(--ease-expo);
+  }
+
+  .sidebar-icon.has-progress .profile-avatar {
+    transform: scale(0.74);
   }
 
   .sidebar-icon :global(.sidebar-shape) {

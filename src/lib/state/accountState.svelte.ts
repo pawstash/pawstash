@@ -9,12 +9,14 @@ class AccountState {
   favoritePosts = $state<Favorite[] | null>(null);
   favoriteCreators = $state<Favorite[] | null>(null);
 
-  async refresh() {
+  async refresh(options: { fetchFavorites?: boolean } = {}) {
     this.loading = true;
     try {
       this.session = await apiGetAccountSession();
-      void this.fetchFavorites('post');
-      void this.fetchFavorites('creator');
+      if (options.fetchFavorites !== false) {
+        void this.fetchFavorites('post');
+        void this.fetchFavorites('creator');
+      }
     } finally {
       this.loading = false;
       this.checked = true;
@@ -26,15 +28,22 @@ class AccountState {
     this.favoriteCreators = null;
   }
 
-  async fetchFavorites(type: 'post' | 'creator', force = false) {
+  async reloadFavorites() {
+    await Promise.allSettled([
+      this.fetchFavorites('post', true, false),
+      this.fetchFavorites('creator', true, false)
+    ]);
+  }
+
+  async fetchFavorites(type: 'post' | 'creator', force = false, refreshRemote = true) {
     if (type === 'post') {
       if (this.favoritePosts !== null && !force) return this.favoritePosts;
-      const res = await apiFetchAccountFavorites('post');
+      const res = await apiFetchAccountFavorites('post', refreshRemote);
       this.favoritePosts = res;
       return res;
     } else {
       if (this.favoriteCreators !== null && !force) return this.favoriteCreators;
-      const res = await apiFetchAccountFavorites('artist');
+      const res = await apiFetchAccountFavorites('artist', refreshRemote);
       this.favoriteCreators = res;
       return res;
     }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { syncState } from '$lib/state/syncState.svelte';
+  import { avatarState } from '$lib/state/avatarState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -24,6 +25,7 @@
   import IconDevices from '~icons/fluent/phone-laptop-24-regular';
   import IconShield from '~icons/fluent/shield-lock-24-regular';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
+  import IconCamera from '~icons/fluent/camera-24-regular';
   import { notify } from '$lib/utils/toast';
   import { copyText } from '$lib/utils/clipboard';
   import { layoutState } from '$lib/state/layoutState.svelte';
@@ -57,6 +59,7 @@
   let testingConnection = $state(false);
   let copyingLogs = $state(false);
   let confirmDisconnect = $state(false);
+  let avatarInput = $state<HTMLInputElement | null>(null);
 
   const VIEW_TITLES: Record<SubView, string> = {
     menu: 'profile.title',
@@ -153,6 +156,28 @@
       });
     } finally {
       testingConnection = false;
+    }
+  }
+
+  async function handleAvatarPicked(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      await avatarState.setFromFile(file);
+      notify.success(i18n.t('profile.avatar_saved'));
+    } catch (error) {
+      notify.error(i18n.t('profile.avatar_failed'), error);
+    }
+  }
+
+  async function handleClearAvatar() {
+    try {
+      await avatarState.clear();
+      notify.success(i18n.t('profile.avatar_removed'));
+    } catch (error) {
+      notify.error(i18n.t('profile.avatar_failed'), error);
     }
   }
 
@@ -321,6 +346,44 @@
 >
   <div class="profile-body">
     {#if activeView === 'menu'}
+      <section class="avatar-card">
+        <button
+          type="button"
+          class="avatar-preview"
+          aria-label={i18n.t('profile.change_photo')}
+          disabled={avatarState.busy}
+          onclick={() => avatarInput?.click()}
+        >
+          {#if avatarState.dataUrl}
+            <img src={avatarState.dataUrl} alt="" />
+          {:else}
+            <IconPerson />
+          {/if}
+          <span class="avatar-camera" aria-hidden="true"><IconCamera /></span>
+        </button>
+        <div class="avatar-text">
+          <h2 class="avatar-title">{i18n.t('profile.avatar_title')}</h2>
+          <p class="avatar-hint">{i18n.t('profile.avatar_hint')}</p>
+          <div class="avatar-actions">
+            <Button variant="tonal" disabled={avatarState.busy} onclick={() => avatarInput?.click()}>
+              {i18n.t('profile.change_photo')}
+            </Button>
+            {#if avatarState.dataUrl}
+              <Button variant="ghost" disabled={avatarState.busy} onclick={() => void handleClearAvatar()}>
+                {i18n.t('profile.remove_photo')}
+              </Button>
+            {/if}
+          </div>
+        </div>
+      </section>
+      <input
+        class="avatar-input"
+        type="file"
+        accept="image/*"
+        bind:this={avatarInput}
+        onchange={handleAvatarPicked}
+      />
+
       {#if syncState.status.configured}
         <section class="account-card">
           <div class="account-text">
@@ -611,6 +674,105 @@
     padding: 20px 16px 20px 20px;
     border-radius: var(--radius-xl);
     background: var(--surface-container);
+  }
+
+  .avatar-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    border-radius: var(--radius-xl);
+    background: var(--surface-container);
+  }
+
+  .avatar-preview {
+    position: relative;
+    flex: none;
+    width: 72px;
+    height: 72px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    background: var(--surface-container-high);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .avatar-preview:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  .avatar-preview:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+
+  .avatar-preview img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .avatar-preview :global(svg) {
+    width: 30px;
+    height: 30px;
+  }
+
+  .avatar-camera {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--surface-container-high);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--surface-container);
+  }
+
+  .avatar-camera :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+
+  .avatar-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .avatar-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--type-title-md-size);
+    line-height: var(--type-title-md-line);
+    font-weight: 500;
+  }
+
+  .avatar-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+  }
+
+  .avatar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .avatar-input {
+    display: none;
   }
 
   .account-text {

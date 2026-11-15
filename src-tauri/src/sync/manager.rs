@@ -5,13 +5,36 @@ use super::client::{
 use super::crypto::{
     decrypt_record, encrypt_record, unwrap_vault, wrap_vault, KdfEnvelope, VaultSecrets, KEY_BYTES,
 };
-use super::repository::{PawchiveSessionRecord, RemoteApply, SyncRepository, SyncState};
+use super::repository::{
+    PawchiveSessionRecord, RemoteApply, SyncRepository, SyncState, MAX_AVATAR_DATA_URL_LEN,
+};
 use super::secrets::SecretStore;
 use crate::config::settings::ConfigManager;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use uuid::Uuid;
+
+const SESSION_REUSE: Duration = Duration::from_secs(25 * 24 * 60 * 60);
+
+struct CachedSession {
+    account_id: String,
+    device_id: String,
+    token: String,
+    created: Instant,
+}
+
+fn is_unauthorized(error: &str) -> bool {
+    error.contains("HTTP 401")
+}
+
+fn valid_avatar_data_url(image: &str) -> bool {
+    image.len() <= MAX_AVATAR_DATA_URL_LEN
+        && (image.starts_with("data:image/jpeg;base64,")
+            || image.starts_with("data:image/png;base64,")
+            || image.starts_with("data:image/webp;base64,"))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncStatus {
@@ -69,6 +92,7 @@ pub struct SyncManager {
     repository: Arc<SyncRepository>,
     config: Arc<ConfigManager>,
     syncing: Mutex<bool>,
+    session: Mutex<Option<CachedSession>>,
     on_change_notify: Arc<tokio::sync::Notify>,
 }
 impl SyncManager {
@@ -81,8 +105,63 @@ impl SyncManager {
             repository,
             config,
             syncing: Mutex::new(false),
+            session: Mutex::new(None),
             on_change_notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    async fn session_token(
+        &self,
+        client: &SyncHttpClient,
+        account_id: &str,
+        auth_token: &str,
+        device_id: &str,
+    ) -> Result<String, String> {
+        if let Ok(cache) = self.session.lock() {
+            if let Some(cached) = cache.as_ref() {
+                if cached.account_id == account_id
+                    && cached.device_id == device_id
+                    && cached.created.elapsed() < SESSION_REUSE
+                {
+                    return Ok(cached.token.clone());
+                }
+            }
+        }
+        let session = client
+            .session(account_id, auth_token, Some(device_id))
+            .await?;
+        if let Ok(mut cache) = self.session.lock() {
+            *cache = Some(CachedSession {
+                account_id: account_id.to_string(),
+                device_id: device_id.to_string(),
+                token: session.token.clone(),
+                created: Instant::now(),
+            });
+        }
+        Ok(session.token)
+    }
+
+    fn forget_session(&self) {
+        if let Ok(mut cache) = self.session.lock() {
+            *cache = None;
+        }
+    }
+
+    pub fn avatar(&self) -> Result<Option<String>, String> {
+        self.repository.avatar()
+    }
+
+    pub fn set_avatar(&self, image: &str) -> Result<Option<String>, String> {
+        if !valid_avatar_data_url(image) {
+            return Err("Avatar must be a JPEG, PNG, or WebP image under 64 KB".to_string());
+        }
+        self.repository.save_avatar(image)?;
+        Ok(Some(image.to_string()))
+    }
+
+    pub fn clear_avatar(&self) -> Result<Option<String>, String> {
+        self.repository.clear_avatar()?;
+        Ok(None)
     }
     pub fn start(self: &Arc<Self>, app: tauri::AppHandle) {
         let manager = self.clone();
@@ -454,11 +533,12 @@ impl SyncManager {
             &remote.encrypted_key_bundle,
             &remote.nonce,
         )?;
-        let session = client
-            .session(
+        let token = self
+            .session_token(
+                &client,
                 &state.account_id,
                 &secrets.auth_token,
-                Some(&state.device_id),
+                &state.device_id,
             )
             .await?;
         let new_kdf = KdfEnvelope::generate();
@@ -470,7 +550,7 @@ impl SyncManager {
         self.repository.save_state(&state)?;
         if let Err(error) = client
             .replace_bundle(
-                &session.token,
+                &token,
                 &state.account_id,
                 &ReplaceBundleRequest {
                     kdf: &kdf_value,
@@ -494,14 +574,29 @@ impl SyncManager {
         let secrets = SecretStore::load_vault(&state.account_id)?
             .ok_or_else(|| "Sync vault is locked".to_string())?;
         let client = SyncHttpClient::new(&state.server_url, &self.config.load()?)?;
-        let session = client
-            .session(
+        let token = self
+            .session_token(
+                &client,
                 &state.account_id,
                 &secrets.auth_token,
-                Some(&state.device_id),
+                &state.device_id,
             )
             .await?;
-        client.list_devices(&session.token).await
+        match client.list_devices(&token).await {
+            Err(error) if is_unauthorized(&error) => {
+                self.forget_session();
+                let token = self
+                    .session_token(
+                        &client,
+                        &state.account_id,
+                        &secrets.auth_token,
+                        &state.device_id,
+                    )
+                    .await?;
+                client.list_devices(&token).await
+            }
+            result => result,
+        }
     }
     pub async fn revoke_device(&self, device_id: &str) -> Result<Vec<SyncDevice>, String> {
         let state = self
@@ -514,15 +609,30 @@ impl SyncManager {
         let secrets = SecretStore::load_vault(&state.account_id)?
             .ok_or_else(|| "Sync vault is locked".to_string())?;
         let client = SyncHttpClient::new(&state.server_url, &self.config.load()?)?;
-        let session = client
-            .session(
+        let token = self
+            .session_token(
+                &client,
                 &state.account_id,
                 &secrets.auth_token,
-                Some(&state.device_id),
+                &state.device_id,
             )
             .await?;
-        client.revoke_device(&session.token, device_id).await?;
-        client.list_devices(&session.token).await
+        if let Err(error) = client.revoke_device(&token, device_id).await {
+            if !is_unauthorized(&error) {
+                return Err(error);
+            }
+            self.forget_session();
+            let token = self
+                .session_token(
+                    &client,
+                    &state.account_id,
+                    &secrets.auth_token,
+                    &state.device_id,
+                )
+                .await?;
+            client.revoke_device(&token, device_id).await?;
+        }
+        client.list_devices(&token).await
     }
     pub async fn sync(self: &Arc<Self>, app: tauri::AppHandle) -> Result<SyncStatus, String> {
         struct SyncingGuard<'a>(&'a Mutex<bool>, tauri::AppHandle);
@@ -633,6 +743,9 @@ impl SyncManager {
                         tracing::error!(error = %e, record_id = %change.record_id, "Sync: failed to apply synced Pawchive session");
                     }
                 }
+                if batch.iter().any(|c| c.kind == "profile") {
+                    let _ = app.emit("account-avatar-updated", ());
+                }
             }
 
             let page_max = pull.changes.iter().map(|c| c.position).max().unwrap_or(0);
@@ -702,19 +815,38 @@ impl SyncManager {
             None,
             Some("Checking session..."),
         );
-        let session = client
-            .session(
+        let mut token = self
+            .session_token(
+                &client,
                 &state.account_id,
                 &secrets.auth_token,
-                Some(&state.device_id),
+                &state.device_id,
             )
             .await?;
         tracing::debug!("Sync: session authenticated successfully");
 
         let mut current_cursor = state.cursor;
-        self.pull_all(app, &client, &session.token, &key, &mut current_cursor)
-            .await?;
+        if let Err(error) = self
+            .pull_all(app, &client, &token, &key, &mut current_cursor)
+            .await
+        {
+            if !is_unauthorized(&error) {
+                return Err(error);
+            }
+            self.forget_session();
+            token = self
+                .session_token(
+                    &client,
+                    &state.account_id,
+                    &secrets.auth_token,
+                    &state.device_id,
+                )
+                .await?;
+            self.pull_all(app, &client, &token, &key, &mut current_cursor)
+                .await?;
+        }
 
+        let mut snapshot_refreshed = false;
         for _ in 0..5 {
             let dirty_records = self.repository.detect_and_get_dirty_records()?;
             if dirty_records.is_empty() {
@@ -765,9 +897,23 @@ impl SyncManager {
                     })
                     .collect();
 
-                let push_result = client
-                    .push(&session.token, &Uuid::new_v4().to_string(), &inputs)
-                    .await;
+                let idempotency = Uuid::new_v4().to_string();
+                let mut push_result = client.push(&token, &idempotency, &inputs).await;
+                if let Err(error) = &push_result {
+                    if is_unauthorized(error) {
+                        tracing::warn!("Sync: session rejected, re-authenticating");
+                        self.forget_session();
+                        token = self
+                            .session_token(
+                                &client,
+                                &state.account_id,
+                                &secrets.auth_token,
+                                &state.device_id,
+                            )
+                            .await?;
+                        push_result = client.push(&token, &idempotency, &inputs).await;
+                    }
+                }
 
                 match push_result {
                     Ok(push_response) => {
@@ -802,7 +948,11 @@ impl SyncManager {
                             None,
                             Some("Resolving conflict..."),
                         );
-                        self.pull_all(app, &client, &session.token, &key, &mut current_cursor)
+                        if !snapshot_refreshed {
+                            snapshot_refreshed = true;
+                            current_cursor = 0;
+                        }
+                        self.pull_all(app, &client, &token, &key, &mut current_cursor)
                             .await?;
                         had_conflict = true;
                         break;
@@ -841,5 +991,31 @@ impl SyncManager {
 impl RecoveryKit {
     fn device_name_invalid(&self, device_name: &str) -> bool {
         device_name.trim().is_empty() || device_name.chars().count() > 100
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avatar_payloads_must_be_small_image_data_urls() {
+        assert!(valid_avatar_data_url("data:image/jpeg;base64,AAAA"));
+        assert!(valid_avatar_data_url("data:image/png;base64,AAAA"));
+        assert!(!valid_avatar_data_url("data:text/html;base64,AAAA"));
+        assert!(!valid_avatar_data_url("https://example.com/avatar.jpg"));
+        let huge = format!(
+            "data:image/jpeg;base64,{}",
+            "A".repeat(MAX_AVATAR_DATA_URL_LEN)
+        );
+        assert!(!valid_avatar_data_url(&huge));
+    }
+
+    #[test]
+    fn unauthorized_errors_are_detected() {
+        assert!(is_unauthorized(
+            "Sync server HTTP 401 Unauthorized: {\"error\":\"invalid or expired session\"}"
+        ));
+        assert!(!is_unauthorized("Sync server HTTP 409 Conflict: {}"));
     }
 }

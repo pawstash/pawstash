@@ -1747,6 +1747,7 @@ async fn enrich_favorite_artist(state: &State<'_, AppState>, item: &mut Favorite
 #[tauri::command]
 pub async fn fetch_account_favorites(
     favorite_type: Option<String>,
+    refresh_remote: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Favorite>, String> {
     let kind = favorite_type.as_deref().unwrap_or("post");
@@ -1784,7 +1785,7 @@ pub async fn fetch_account_favorites(
         }
     }
 
-    if is_authenticated {
+    if is_authenticated && refresh_remote.unwrap_or(true) {
         if let Ok(remote_items) = state
             .provider_manager
             .fetch_account_favorites(None, Some(kind))
@@ -3319,6 +3320,34 @@ pub async fn run_sync(
     state: State<'_, AppState>,
 ) -> Result<SyncStatus, String> {
     state.sync_manager.clone().sync(app_handle).await
+}
+
+#[tauri::command]
+pub fn get_account_avatar(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    state.sync_manager.avatar()
+}
+
+#[tauri::command]
+pub fn set_account_avatar(
+    image: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let stored = state.sync_manager.set_avatar(&image)?;
+    let _ = app_handle.emit("account-avatar-updated", ());
+    state.sync_manager.trigger_sync_on_change(app_handle);
+    Ok(stored)
+}
+
+#[tauri::command]
+pub fn clear_account_avatar(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let cleared = state.sync_manager.clear_avatar()?;
+    let _ = app_handle.emit("account-avatar-updated", ());
+    state.sync_manager.trigger_sync_on_change(app_handle);
+    Ok(cleared)
 }
 
 #[tauri::command]

@@ -197,9 +197,8 @@ class SyncState {
         libraryState.refreshSavedKeys(),
         libraryState.refresh(),
         subscriptionState.reload(),
-        accountState.refresh(),
-        accountState.fetchFavorites('post', true),
-        accountState.fetchFavorites('creator', true)
+        accountState.refresh({ fetchFavorites: false }),
+        accountState.reloadFavorites()
       ]);
     } catch (e) {
       console.warn('Failed to refresh library after sync:', e);

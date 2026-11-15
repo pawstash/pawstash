@@ -561,7 +561,14 @@
     "viewer_settings": "Player settings"
   },
   "profile": {
+    "avatar_failed": "Could not update the profile photo",
+    "avatar_hint": "Cropped to a square and synced encrypted with your vault.",
+    "avatar_removed": "Profile photo removed",
+    "avatar_saved": "Profile photo updated",
+    "avatar_title": "Profile photo",
+    "change_photo": "Change photo",
     "offline_session": "Local vault",
+    "remove_photo": "Remove",
     "title": "Profile & accounts",
     "title_short": "Account"
   },

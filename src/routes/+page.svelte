@@ -63,6 +63,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { subscriptionState } from '$lib/state/subscriptionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { avatarState } from '$lib/state/avatarState.svelte';
   import { syncState } from '$lib/state/syncState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
@@ -99,6 +100,7 @@
       void downloadState.init().catch((error) => logger.warn('Failed to initialize downloads', error));
       void subscriptionState.init().catch((error) => logger.warn('Failed to initialize subscriptions', error));
       void accountState.refresh().catch((error) => logger.warn('Failed to check Pawchive session', error));
+      void avatarState.init().catch((error) => logger.warn('Failed to initialize the profile avatar', error));
       void syncState.init().catch((error) => logger.warn('Failed to initialize encrypted sync', error));
       void innerFormatsState.init().catch((error) => logger.warn('Failed to load indexed post contents', error));
       void providerState.loadProviders().catch((error) => logger.warn('Failed to load providers', error));

@@ -1,7 +1,7 @@
 use crate::db::storage::open_database;
 #[cfg(test)]
 use crate::db::storage::prepare_connection;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
@@ -97,6 +97,14 @@ pub struct PawchiveSessionRecord {
 }
 
 pub const PAWCHIVE_SESSION_RECORD_ID: &str = "sec:pawchive_session";
+pub const PROFILE_AVATAR_RECORD_ID: &str = "sec:avatar";
+pub const MAX_AVATAR_DATA_URL_LEN: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProfileAvatarRecord {
+    pub image: String,
+    pub updated_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FavoritePostRecord {
@@ -123,6 +131,30 @@ pub struct DirtySyncRecord {
     pub expected_revision: i64,
     pub payload: Option<Vec<u8>>,
     pub tombstone: bool,
+}
+
+fn stable_sync_hash(kind: &str, record_id: &str, bytes: &[u8]) -> String {
+    let pinned_at = match kind {
+        "fav_post" => serde_json::from_slice::<FavoritePostRecord>(bytes)
+            .ok()
+            .map(|record| record.created_at),
+        "fav_creator" => serde_json::from_slice::<FavoriteCreatorRecord>(bytes)
+            .ok()
+            .map(|record| record.created_at),
+        _ => None,
+    };
+    match pinned_at {
+        Some(pinned_at) => {
+            let mut hasher = Sha256::new();
+            hasher.update(kind.as_bytes());
+            hasher.update([0]);
+            hasher.update(record_id.as_bytes());
+            hasher.update([0]);
+            hasher.update(pinned_at.as_bytes());
+            format!("{:x}", hasher.finalize())
+        }
+        None => format!("{:x}", Sha256::digest(bytes)),
+    }
 }
 
 pub fn collection_record_id(id: &str) -> String {
@@ -170,6 +202,69 @@ pub fn slim_post_snapshot(raw_json: &str) -> String {
         }
     }
     raw_json.to_string()
+}
+
+fn stable_media_url(url: Option<String>) -> Option<String> {
+    let url = url?;
+    let base = url.split(['?', '#']).next().unwrap_or("").trim();
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+pub fn favorite_post_snapshot(raw_json: &str) -> String {
+    let Ok(post) = crate::api::models::Post::from_json_str(raw_json) else {
+        return raw_json.to_string();
+    };
+    let mut slim = post.to_slim();
+    slim.added = None;
+    slim.edited = None;
+    slim.detail_fetched = None;
+    slim.preview_state = None;
+    slim.preview_path = None;
+    slim.has_full = None;
+    slim.favorite_count = None;
+    slim.attachment_count = None;
+    slim.thumbnail_url = stable_media_url(slim.thumbnail_url);
+    slim.media_url = stable_media_url(slim.media_url);
+    slim.cloud_urls.clear();
+    slim.extra.clear();
+    for attachment in slim
+        .file
+        .iter_mut()
+        .chain(slim.attachments.iter_mut().flatten())
+    {
+        attachment.url = None;
+        attachment.thumbnail_url = stable_media_url(attachment.thumbnail_url.take());
+        attachment.extra.clear();
+    }
+    serde_json::to_string(&slim).unwrap_or_else(|_| raw_json.to_string())
+}
+
+pub fn favorite_creator_snapshot(raw_json: &str) -> String {
+    let Ok(serde_json::Value::Object(object)) = serde_json::from_str(raw_json) else {
+        return raw_json.to_string();
+    };
+    let mut stable = serde_json::Map::new();
+    for key in [
+        "id",
+        "name",
+        "service",
+        "public_id",
+        "relation_id",
+        "avatar_url",
+        "banner_url",
+        "page_url",
+    ] {
+        if let Some(value) = object.get(key) {
+            if !value.is_null() {
+                stable.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    serde_json::to_string(&stable).unwrap_or_else(|_| raw_json.to_string())
 }
 
 pub struct SyncRepository {
@@ -264,9 +359,42 @@ impl SyncRepository {
         Ok(())
     }
 
+    pub fn avatar(&self) -> Result<Option<String>, String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        connection
+            .query_row("SELECT image FROM profile_avatar WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn save_avatar(&self, image: &str) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO profile_avatar(id,image,updated_at)
+                 VALUES(1,?1,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                 ON CONFLICT(id) DO UPDATE SET image=excluded.image, updated_at=excluded.updated_at",
+                params![image],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn clear_avatar(&self) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        connection
+            .execute("DELETE FROM profile_avatar WHERE id=1", [])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     pub fn detect_and_get_dirty_records(&self) -> Result<Vec<DirtySyncRecord>, String> {
         let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         let mut dirty_records = Vec::new();
 
         let collections = collect(
@@ -713,19 +841,70 @@ impl SyncRepository {
             }
         }
 
+        let avatar = tx
+            .query_row(
+                "SELECT image, updated_at FROM profile_avatar WHERE id=1",
+                [],
+                |row| {
+                    Ok(ProfileAvatarRecord {
+                        image: row.get(0)?,
+                        updated_at: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        match avatar {
+            Some(record) => {
+                let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
+                stage_dirty_record(
+                    &tx,
+                    &mut dirty_records,
+                    PROFILE_AVATAR_RECORD_ID,
+                    "profile",
+                    bytes,
+                )?;
+            }
+            None => {
+                let existing: Option<i64> = tx
+                    .query_row(
+                        "SELECT revision FROM sync_records WHERE record_id=?1 AND kind='profile' AND tombstone=0",
+                        params![PROFILE_AVATAR_RECORD_ID],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                if let Some(revision) = existing {
+                    tx.execute(
+                        "UPDATE sync_records SET dirty=1, tombstone=1, content_hash=NULL, updated_at=CURRENT_TIMESTAMP WHERE record_id=?1",
+                        params![PROFILE_AVATAR_RECORD_ID],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    dirty_records.push(DirtySyncRecord {
+                        record_id: PROFILE_AVATAR_RECORD_ID.to_string(),
+                        kind: "profile".into(),
+                        expected_revision: revision,
+                        payload: None,
+                        tombstone: true,
+                    });
+                }
+            }
+        }
+
         let fav_posts = collect(
             &tx,
-            "SELECT pin.service, pin.creator_id, pin.post_id, p.snapshot_json, pin.created_at
+            "SELECT pin.service, pin.creator_id, pin.post_id, p.snapshot_json, MAX(pin.created_at)
              FROM content_pins pin
              JOIN posts p USING(service, creator_id, post_id)
-             WHERE pin.entity_kind = 'post' AND pin.reason = 'favorite'",
+             WHERE pin.entity_kind = 'post' AND pin.reason = 'favorite'
+             GROUP BY pin.service, pin.creator_id, pin.post_id",
             |r| {
                 let raw_snapshot: String = r.get(3)?;
                 Ok(FavoritePostRecord {
                     service: r.get(0)?,
                     creator_id: r.get(1)?,
                     post_id: r.get(2)?,
-                    snapshot_json: slim_post_snapshot(&raw_snapshot),
+                    snapshot_json: favorite_post_snapshot(&raw_snapshot),
                     created_at: r.get(4)?,
                 })
             },
@@ -735,7 +914,7 @@ impl SyncRepository {
             let record_id = favorite_post_record_id(&fp.service, &fp.creator_id, &fp.post_id);
             live_fav_post_ids.insert(record_id.clone());
             let bytes = serde_json::to_vec(&fp).map_err(|e| e.to_string())?;
-            let hash = format!("{:x}", Sha256::digest(&bytes));
+            let hash = stable_sync_hash("fav_post", &record_id, &bytes);
 
             let current: Option<(i64, Option<String>, bool, bool)> = tx
                 .query_row(
@@ -804,16 +983,18 @@ impl SyncRepository {
 
         let fav_creators = collect(
             &tx,
-            "SELECT pin.service, pin.creator_id, c.name, c.snapshot_json, pin.created_at
+            "SELECT pin.service, pin.creator_id, c.name, c.snapshot_json, MAX(pin.created_at)
              FROM content_pins pin
              JOIN creators c USING(service, creator_id)
-             WHERE pin.entity_kind = 'creator' AND pin.reason = 'favorite'",
+             WHERE pin.entity_kind = 'creator' AND pin.reason = 'favorite'
+             GROUP BY pin.service, pin.creator_id",
             |r| {
+                let raw_snapshot: String = r.get(3)?;
                 Ok(FavoriteCreatorRecord {
                     service: r.get(0)?,
                     creator_id: r.get(1)?,
                     name: r.get(2)?,
-                    snapshot_json: r.get(3)?,
+                    snapshot_json: favorite_creator_snapshot(&raw_snapshot),
                     created_at: r.get(4)?,
                 })
             },
@@ -823,7 +1004,7 @@ impl SyncRepository {
             let record_id = favorite_creator_record_id(&fc.service, &fc.creator_id);
             live_fav_creator_ids.insert(record_id.clone());
             let bytes = serde_json::to_vec(&fc).map_err(|e| e.to_string())?;
-            let hash = format!("{:x}", Sha256::digest(&bytes));
+            let hash = stable_sync_hash("fav_creator", &record_id, &bytes);
 
             let current: Option<(i64, Option<String>, bool, bool)> = tx
                 .query_row(
@@ -919,7 +1100,9 @@ impl SyncRepository {
         tombstone: bool,
     ) -> Result<(), String> {
         let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         Self::apply_change(&tx, record_id, kind, revision, plaintext, tombstone)?;
         tx.commit()
             .map_err(|e| format!("Failed to commit sync change ({record_id}): {e}"))
@@ -927,7 +1110,9 @@ impl SyncRepository {
 
     pub fn apply_remote_changes(&self, changes: &[RemoteApply<'_>]) -> Result<(), String> {
         let mut connection = self.connection.lock().map_err(|e| e.to_string())?;
-        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         for change in changes {
             Self::apply_change(
                 &tx,
@@ -1029,6 +1214,14 @@ impl SyncRepository {
                     }
                 }
                 "post" | "session" => {}
+                "profile" => {
+                    tx.execute("DELETE FROM profile_avatar WHERE id=1", [])
+                        .map_err(|e| {
+                            format!(
+                                "Failed to clear profile avatar for tombstone ({record_id}): {e}"
+                            )
+                        })?;
+                }
                 unknown => {
                     tracing::warn!(kind = %unknown, record_id = %record_id, "Skipping tombstone for unsupported sync record kind");
                     return Ok(());
@@ -1046,7 +1239,7 @@ impl SyncRepository {
 
         let bytes =
             plaintext.ok_or_else(|| "Missing plaintext payload for live record".to_string())?;
-        let hash = format!("{:x}", Sha256::digest(bytes));
+        let hash = stable_sync_hash(kind, record_id, bytes);
 
         match kind {
             "collection" => {
@@ -1197,6 +1390,22 @@ impl SyncRepository {
             }
             // Applied by SyncManager after commit; opening settings here deadlocks on this transaction.
             "session" => {}
+            "profile" => {
+                let rec: ProfileAvatarRecord = serde_json::from_slice(bytes).map_err(|e| {
+                    format!("Failed to deserialize profile avatar ({record_id}): {e}")
+                })?;
+                if !rec.image.starts_with("data:image/")
+                    || rec.image.len() > MAX_AVATAR_DATA_URL_LEN
+                {
+                    return Err(format!("Invalid profile avatar payload ({record_id})"));
+                }
+                tx.execute(
+                    "INSERT INTO profile_avatar(id,image,updated_at) VALUES(1,?1,?2)
+                     ON CONFLICT(id) DO UPDATE SET image=excluded.image, updated_at=excluded.updated_at",
+                    params![rec.image, rec.updated_at],
+                )
+                .map_err(|e| format!("Failed to store profile avatar ({record_id}): {e}"))?;
+            }
             "fav_post" => {
                 let rec: FavoritePostRecord = serde_json::from_slice(bytes).map_err(|e| {
                     format!("Failed to deserialize fav_post record ({record_id}): {e}")
@@ -1253,7 +1462,9 @@ impl SyncRepository {
                      VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
                      ON CONFLICT(service,creator_id) DO UPDATE SET
                        name=coalesce(excluded.name, creators.name),
-                       snapshot_json=excluded.snapshot_json",
+                       snapshot_json=CASE WHEN json_valid(creators.snapshot_json)
+                         THEN json_patch(creators.snapshot_json, excluded.snapshot_json)
+                         ELSE excluded.snapshot_json END",
                     params![
                         rec.service,
                         rec.creator_id,
@@ -1301,6 +1512,64 @@ pub struct RemoteApply<'a> {
     pub revision: i64,
     pub plaintext: Option<Vec<u8>>,
     pub tombstone: bool,
+}
+
+fn stage_dirty_record(
+    tx: &rusqlite::Transaction<'_>,
+    dirty: &mut Vec<DirtySyncRecord>,
+    record_id: &str,
+    kind: &str,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let current: Option<(i64, Option<String>, bool, bool)> = tx
+        .query_row(
+            "SELECT revision, content_hash, dirty, tombstone FROM sync_records WHERE record_id=?1",
+            params![record_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get::<_, i64>(3)? != 0,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match current {
+        Some((revision, stored_hash, dirty_flag, tombstone)) => {
+            if stored_hash.as_deref() != Some(&hash) || dirty_flag || tombstone {
+                tx.execute(
+                    "UPDATE sync_records SET content_hash=?1, dirty=1, tombstone=0, updated_at=CURRENT_TIMESTAMP WHERE record_id=?2",
+                    params![hash, record_id],
+                )
+                .map_err(|e| e.to_string())?;
+                dirty.push(DirtySyncRecord {
+                    record_id: record_id.to_string(),
+                    kind: kind.to_string(),
+                    expected_revision: revision,
+                    payload: Some(bytes),
+                    tombstone: false,
+                });
+            }
+        }
+        None => {
+            tx.execute(
+                "INSERT INTO sync_records(record_id,kind,revision,content_hash,dirty,tombstone,updated_at) VALUES(?1,?2,0,?3,1,0,CURRENT_TIMESTAMP)",
+                params![record_id, kind, hash],
+            )
+            .map_err(|e| e.to_string())?;
+            dirty.push(DirtySyncRecord {
+                record_id: record_id.to_string(),
+                kind: kind.to_string(),
+                expected_revision: 0,
+                payload: Some(bytes),
+                tombstone: false,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn collect<T, F>(connection: &Connection, sql: &str, mapper: F) -> Result<Vec<T>, String>
@@ -1606,5 +1875,201 @@ mod tests {
         assert_eq!(parsed.content, None);
         assert_eq!(parsed.detail_fetched, Some(false));
         assert_eq!(parsed.file.unwrap().name.as_deref(), Some("thumb.jpg"));
+    }
+
+    #[test]
+    fn favorite_snapshots_ignore_volatile_provider_fields() {
+        let first = r#"{
+            "id":"p1","user":"c1","service":"fanbox","title":"Art",
+            "published":"2026-08-01T00:00:00Z","favorite_count":10,"attachment_count":2,
+            "preview_path":"/cache/a.jpg","thumbnail_url":"https://cdn.example/x.jpg?sig=1",
+            "file":{"name":"a.jpg","path":"/a.jpg","url":"https://cdn.example/a?sig=1",
+                    "thumbnail_url":"https://cdn.example/a_t.jpg?sig=1"}
+        }"#;
+        let second = r#"{
+            "id":"p1","user":"c1","service":"fanbox","title":"Art",
+            "published":"2026-08-01T00:00:00Z","favorite_count":99,"attachment_count":3,
+            "preview_path":"/cache/b.jpg","thumbnail_url":"https://cdn.example/x.jpg?sig=2",
+            "file":{"name":"a.jpg","path":"/a.jpg","url":"https://cdn.example/a?sig=2",
+                    "thumbnail_url":"https://cdn.example/a_t.jpg?sig=2"}
+        }"#;
+        let snapshot = favorite_post_snapshot(first);
+        assert_eq!(snapshot, favorite_post_snapshot(second));
+        assert!(!snapshot.contains("/cache/"));
+        assert!(!snapshot.contains("sig="));
+        let parsed: crate::api::models::Post = serde_json::from_str(&snapshot).unwrap();
+        assert_eq!(parsed.title, "Art");
+        assert_eq!(parsed.file.unwrap().path.as_deref(), Some("/a.jpg"));
+
+        let creator_first = r#"{
+            "id":"c1","name":"Artist","service":"fanbox",
+            "avatar_url":"https://cdn.example/a.png","avatar_path":"/cache/a.png",
+            "updated":"2026-08-01","indexed":5,"extra":{"followers":10}
+        }"#;
+        let creator_second = r#"{
+            "id":"c1","name":"Artist","service":"fanbox",
+            "avatar_url":"https://cdn.example/a.png","avatar_path":"/cache/b.png",
+            "updated":"2026-09-01","indexed":9,"extra":{"followers":12}
+        }"#;
+        let creator = favorite_creator_snapshot(creator_first);
+        assert_eq!(creator, favorite_creator_snapshot(creator_second));
+        assert!(!creator.contains("avatar_path"));
+        assert!(!creator.contains("followers"));
+        assert!(creator.contains("avatar_url"));
+    }
+
+    #[test]
+    fn favorite_hashes_ignore_snapshot_drift() {
+        let post = FavoritePostRecord {
+            service: "fanbox".into(),
+            creator_id: "c".into(),
+            post_id: "p".into(),
+            snapshot_json: r#"{"title":"A","favorite_count":1}"#.into(),
+            created_at: AT.into(),
+        };
+        let mut drifted = post.clone();
+        drifted.snapshot_json = r#"{"title":"A","favorite_count":99,"attachments":[1,2]}"#.into();
+        let post_id = favorite_post_record_id("fanbox", "c", "p");
+        assert_eq!(
+            stable_sync_hash("fav_post", &post_id, &serde_json::to_vec(&post).unwrap()),
+            stable_sync_hash("fav_post", &post_id, &serde_json::to_vec(&drifted).unwrap())
+        );
+        let mut repinned = post.clone();
+        repinned.created_at = "2026-08-16T00:00:00Z".into();
+        assert_ne!(
+            stable_sync_hash("fav_post", &post_id, &serde_json::to_vec(&post).unwrap()),
+            stable_sync_hash(
+                "fav_post",
+                &post_id,
+                &serde_json::to_vec(&repinned).unwrap()
+            )
+        );
+
+        let creator = FavoriteCreatorRecord {
+            service: "fanbox".into(),
+            creator_id: "c".into(),
+            name: "N".into(),
+            snapshot_json: r#"{"indexed":1}"#.into(),
+            created_at: AT.into(),
+        };
+        let mut creator_drift = creator.clone();
+        creator_drift.snapshot_json = r#"{"indexed":2,"updated":"2026-09-01"}"#.into();
+        let creator_id = favorite_creator_record_id("fanbox", "c");
+        assert_eq!(
+            stable_sync_hash(
+                "fav_creator",
+                &creator_id,
+                &serde_json::to_vec(&creator).unwrap()
+            ),
+            stable_sync_hash(
+                "fav_creator",
+                &creator_id,
+                &serde_json::to_vec(&creator_drift).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_favorite_pins_stage_one_record() {
+        let repo = SyncRepository::in_memory();
+        exec(
+            &repo,
+            r#"
+            INSERT INTO creators(service,creator_id,name,snapshot_json) VALUES('fanbox','c','c','{}');
+            INSERT INTO posts(service,creator_id,post_id,title,snapshot_json)
+                VALUES('fanbox','c','p','Title','{"id":"p","user":"c","service":"fanbox","title":"Title"}');
+            INSERT INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id,created_at)
+                VALUES('post','fanbox','c','p','favorite','','2026-08-15T00:00:00Z'),
+                      ('post','fanbox','c','p','favorite','nichind','2026-08-16T00:00:00Z');
+            "#,
+        );
+        let dirty = repo.detect_and_get_dirty_records().unwrap();
+        let favorites: Vec<_> = dirty
+            .iter()
+            .filter(|record| record.kind == "fav_post")
+            .collect();
+        assert_eq!(favorites.len(), 1);
+        let payload: FavoritePostRecord =
+            serde_json::from_slice(favorites[0].payload.as_deref().unwrap()).unwrap();
+        assert_eq!(payload.created_at, "2026-08-16T00:00:00Z");
+
+        mark_synced(&repo, &dirty);
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn favorite_snapshot_drift_does_not_repush() {
+        let repo = SyncRepository::in_memory();
+        exec(
+            &repo,
+            r#"
+            INSERT INTO creators(service,creator_id,name,snapshot_json) VALUES('fanbox','c','c','{}');
+            INSERT INTO posts(service,creator_id,post_id,title,snapshot_json)
+                VALUES('fanbox','c','p','Title','{"id":"p","user":"c","service":"fanbox","title":"Title"}');
+            INSERT INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id)
+                VALUES('post','fanbox','c','p','favorite','');
+            "#,
+        );
+        let dirty = repo.detect_and_get_dirty_records().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].kind, "fav_post");
+        mark_synced(&repo, &dirty);
+
+        exec(
+            &repo,
+            "UPDATE posts SET snapshot_json = json_set(snapshot_json, '$.favorite_count', 42, '$.preview_path', '/cache/new.jpg') WHERE post_id='p'",
+        );
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
+
+        exec(
+            &repo,
+            "UPDATE content_pins SET created_at='2026-08-16T00:00:00Z' WHERE post_id='p'",
+        );
+        assert_eq!(repo.detect_and_get_dirty_records().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn avatar_syncs_once_and_clears_with_a_tombstone() {
+        let repo = SyncRepository::in_memory();
+        let image = "data:image/jpeg;base64,AAAA";
+        repo.save_avatar(image).unwrap();
+
+        let dirty = repo.detect_and_get_dirty_records().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].record_id, PROFILE_AVATAR_RECORD_ID);
+        assert_eq!(dirty[0].kind, "profile");
+        assert!(!dirty[0].tombstone);
+        let payload: ProfileAvatarRecord =
+            serde_json::from_slice(dirty[0].payload.as_deref().unwrap()).unwrap();
+        assert_eq!(payload.image, image);
+
+        mark_synced(&repo, &dirty);
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
+
+        repo.clear_avatar().unwrap();
+        let cleared = repo.detect_and_get_dirty_records().unwrap();
+        assert_eq!(cleared.len(), 1);
+        assert!(cleared[0].tombstone);
+        assert_eq!(cleared[0].expected_revision, 1);
+    }
+
+    #[test]
+    fn remote_avatar_applies_without_echoing_back() {
+        let repo = SyncRepository::in_memory();
+        let record = ProfileAvatarRecord {
+            image: "data:image/png;base64,BBBB".into(),
+            updated_at: AT.into(),
+        };
+        apply(&repo, PROFILE_AVATAR_RECORD_ID, "profile", 1, &record);
+        assert_eq!(
+            repo.avatar().unwrap().as_deref(),
+            Some(record.image.as_str())
+        );
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
+
+        repo.apply_remote_change(PROFILE_AVATAR_RECORD_ID, "profile", 2, None, true)
+            .unwrap();
+        assert!(repo.avatar().unwrap().is_none());
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
     }
 }

@@ -3,6 +3,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { i18n } from '$lib/i18n';
+  import { avatarState } from '$lib/state/avatarState.svelte';
   import IconFeed from '~icons/fluent/grid-24-regular';
   import IconFeedFilled from '~icons/fluent/grid-24-filled';
   import IconCreators from '~icons/fluent/people-24-regular';
@@ -59,7 +60,9 @@
           {#if hasProgressRing(item.id)}
             <ProgressRing value={downloadState.activeProgress} size={30} />
           {/if}
-          {#if isActive}
+          {#if item.id === 'library' && avatarState.dataUrl}
+            <img class="dock-avatar" src={avatarState.dataUrl} alt="" />
+          {:else if isActive}
             <item.iconActive class="dock-icon" />
           {:else}
             <item.icon class="dock-icon" />
@@ -200,6 +203,18 @@
   }
 
   .dock-icon-wrapper.has-progress :global(.dock-icon) {
+    transform: scale(0.75);
+  }
+
+  .dock-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 9999px;
+    object-fit: cover;
+    transition: transform var(--duration-normal) var(--ease-standard);
+  }
+
+  .dock-icon-wrapper.has-progress .dock-avatar {
     transform: scale(0.75);
   }
 
