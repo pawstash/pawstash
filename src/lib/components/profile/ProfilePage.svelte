@@ -739,6 +739,7 @@
   }
 
   .account-avatar-change:hover .account-avatar-overlay,
+  .account-avatar:focus-within .account-avatar-overlay,
   .account-avatar-change:focus-visible .account-avatar-overlay {
     opacity: 1;
   }
@@ -764,12 +765,33 @@
     width: 24px;
     height: 24px;
     padding: 0;
-    border: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--state-layer-hover);
     border-radius: 50%;
     background: var(--surface-container-high);
     color: var(--status-error);
-    box-shadow: 0 0 0 2px var(--surface-container);
     cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .account-avatar:hover .account-avatar-remove,
+  .account-avatar:focus-within .account-avatar-remove {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (hover: none) {
+    .account-avatar-remove {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  :global([data-layout='mobile']) .account-avatar-remove {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .account-avatar-remove :global(svg) {
